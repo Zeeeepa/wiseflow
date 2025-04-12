@@ -1,4 +1,5 @@
 """
+
 Entity Extraction Module for WiseFlow.
 
 This module provides functions for extracting named entities from collected data
@@ -23,12 +24,14 @@ from ..llms.openai_wrapper import openai_llm as llm
 project_dir = os.environ.get("PROJECT_DIR", "")
 if project_dir:
     os.makedirs(project_dir, exist_ok=True)
+
 entity_logger = get_logger('entity_extraction', project_dir)
 pb = PbTalker(entity_logger)
 
 model = os.environ.get("PRIMARY_MODEL", "")
 if not model:
     raise ValueError("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
+
 
 # Prompts for entity extraction
 ENTITY_EXTRACTION_PROMPT = """You are an expert in entity extraction. Your task is to identify and extract named entities from the provided text.
@@ -40,6 +43,7 @@ Please identify the following types of entities:
 - Technologies (technical terms, methodologies, frameworks)
 - Events (conferences, meetings, incidents)
 - Dates and Times
+
 
 Text to analyze:
 {text}
@@ -55,6 +59,7 @@ Format your response as a JSON array of objects with the following structure:
   {
     "name": "entity name",
     "type": "entity type",
+
     "confidence": 0.95,
     "description": "brief description or context"
   }
@@ -94,6 +99,7 @@ Only include relationships that are clearly mentioned in the text. Aim for preci
 
 async def extract_entities(text: str) -> List[Dict[str, Any]]:
     """
+
     Extract named entities from text using LLM.
     
     Args:
@@ -229,12 +235,14 @@ async def store_entities(entities: List[Dict[str, Any]], focus_id: str) -> List[
     Store extracted entities in the database.
     
     Args:
+
         entities: List of entities to store
         focus_id: ID of the focus point
         
     Returns:
         List of entity IDs
     """
+
     entity_ids = []
     
     for entity in entities:

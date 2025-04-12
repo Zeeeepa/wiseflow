@@ -1,19 +1,20 @@
 """
-Schema update utility for PocketBase database.
+Schema update utility for WiseFlow.
 
 This module provides functions to update the PocketBase schema with new collections
 and fields for the data mining features, entity linking, knowledge graph, and insights.
 """
-
 import os
 import json
 import logging
+
 from typing import Dict, Any, List, Optional
 import asyncio
 
 from .pb_api import PbTalker
 
 logger = logging.getLogger(__name__)
+
 
 async def update_schema_for_entities(pb_client: PbTalker) -> bool:
     """
@@ -180,56 +181,54 @@ async def update_schema_for_entities(pb_client: PbTalker) -> bool:
 
 async def update_schema_for_insights(pb_client: PbTalker) -> bool:
     """
-    Update the PocketBase schema to add collections for insights data.
+    Update the PocketBase schema to support entity linking.
     
     Args:
-        pb_client: PocketBase client
+        pb: PocketBase API client
         
     Returns:
         True if successful, False otherwise
     """
+    logger.info("Updating schema for entity linking")
+    
+    # Create entities table if it doesn't exist
     try:
-        # Check if insights collection exists
-        collections = await pb_client.get_collections()
-        collection_names = [c.get('name') for c in collections]
+        # Check if entities collection exists
+        collections = pb.client.collections.get_full_list()
+        collection_names = [c.name for c in collections]
         
-        # Create insights collection if it doesn't exist
-        if 'insights' not in collection_names:
-            logger.info("Creating insights collection")
-            insights_schema = {
-                "name": "insights",
+        if "entities" not in collection_names:
+            logger.info("Creating entities collection")
+            pb.client.collections.create({
+                "name": "entities",
                 "type": "base",
                 "schema": [
                     {
-                        "name": "item_id",
-                        "type": "text",
-                        "required": True,
-                        "options": {
-                            "min": 1,
-                            "max": 255
-                        }
-                    },
-                    {
-                        "name": "timestamp",
+                        "name": "name",
                         "type": "text",
                         "required": True
                     },
                     {
-                        "name": "entities",
-                        "type": "json",
-                        "required": False
+                        "name": "type",
+                        "type": "text",
+                        "required": True
                     },
                     {
-                        "name": "sentiment",
-                        "type": "json",
-                        "required": False
+                        "name": "description",
+                        "type": "text"
                     },
                     {
-                        "name": "topics",
-                        "type": "json",
-                        "required": False
+                        "name": "source_id",
+                        "type": "text",
+                        "required": True
                     },
                     {
+                        "name": "focus_id",
+                        "type": "text",
+                        "required": True
+                    },
+                    {
+
                         "name": "relationships",
                         "type": "json",
                         "required": False
@@ -245,56 +244,64 @@ async def update_schema_for_insights(pb_client: PbTalker) -> bool:
                         "required": False
                     }
                 ]
-            }
-            await pb_client.create_collection(insights_schema)
+            })
+            logger.info("Entities collection created successfully")
+        else:
+            logger.info("Entities collection already exists")
+            
+            # Check if link_id field exists, add it if not
+            entities_collection = next((c for c in collections if c.name == "entities"), None)
+            if entities_collection:
+                field_names = [f.name for f in entities_collection.schema]
+                if "link_id" not in field_names:
+                    logger.info("Adding link_id field to entities collection")
+                    entities_collection.schema.append({
+                        "name": "link_id",
+                        "type": "text"
+                    })
+                    pb.client.collections.update(entities_collection.id, {
+                        "schema": entities_collection.schema
+                    })
+                    logger.info("Added link_id field to entities collection")
         
-        # Create collective_insights collection if it doesn't exist
-        if 'collective_insights' not in collection_names:
-            logger.info("Creating collective_insights collection")
-            collective_insights_schema = {
-                "name": "collective_insights",
+        # Create entity_links collection if it doesn't exist
+        if "entity_links" not in collection_names:
+            logger.info("Creating entity_links collection")
+            pb.client.collections.create({
+                "name": "entity_links",
                 "type": "base",
                 "schema": [
                     {
-                        "name": "timestamp",
-                        "type": "text",
-                        "required": True
-                    },
-                    {
                         "name": "focus_id",
                         "type": "text",
-                        "required": True,
-                        "options": {
-                            "min": 1,
-                            "max": 255
-                        }
+                        "required": True
                     },
                     {
-                        "name": "focus_point",
+                        "name": "canonical_name",
                         "type": "text",
                         "required": True
                     },
                     {
-                        "name": "item_count",
+                        "name": "canonical_type",
+                        "type": "text",
+                        "required": True
+                    },
+                    {
+                        "name": "canonical_description",
+                        "type": "text"
+                    },
+                    {
+                        "name": "member_ids",
+                        "type": "json",
+                        "required": True
+                    },
+                    {
+                        "name": "source_count",
                         "type": "number",
-                        "required": False
+                        "default": 1
                     },
                     {
-                        "name": "item_insights",
-                        "type": "json",
-                        "required": False
-                    },
-                    {
-                        "name": "trends",
-                        "type": "json",
-                        "required": False
-                    },
-                    {
-                        "name": "clusters",
-                        "type": "json",
-                        "required": False
-                    },
-                    {
+
                         "name": "insights_report",
                         "type": "json",
                         "required": False
@@ -310,9 +317,12 @@ async def update_schema_for_insights(pb_client: PbTalker) -> bool:
                         "required": False
                     }
                 ]
-            }
-            await pb_client.create_collection(collective_insights_schema)
+            })
+            logger.info("Entity_links collection created successfully")
+        else:
+            logger.info("Entity_links collection already exists")
         
+
         # Update infos collection to add insights field if it doesn't exist
         if 'infos' in collection_names:
             logger.info("Updating infos collection to add insights field")
@@ -352,21 +362,34 @@ async def update_schema_for_insights(pb_client: PbTalker) -> bool:
         
         return True
     except Exception as e:
-        logger.error(f"Error updating schema for insights: {e}")
+        logger.error(f"Error updating focus_points schema: {e}")
         return False
 
-async def update_schema(pb_client: PbTalker) -> bool:
+def update_schema(pb: PbTalker) -> bool:
     """
-    Update the PocketBase schema with all required changes.
+    Update the PocketBase schema to support all new features.
     
     Args:
-        pb_client: PocketBase client
+        pb: PocketBase API client
         
     Returns:
-        True if all updates were successful, False otherwise
+        True if successful, False otherwise
     """
-    success = True
+    logger.info("Updating PocketBase schema")
     
+    # Update schema for entity linking
+    entity_linking_success = update_schema_for_entity_linking(pb)
+    
+    # Update focus_points schema
+    focus_points_success = update_schema_for_focus_points(pb)
+    
+    return entity_linking_success and focus_points_success
+
+if __name__ == "__main__":
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    
+
     # Update schema for entities and relationships
     entities_success = await update_schema_for_entities(pb_client)
     if not entities_success:
@@ -379,8 +402,10 @@ async def update_schema(pb_client: PbTalker) -> bool:
         logger.error("Failed to update schema for insights")
         success = False
     
-    # Add more schema updates here as needed
+    # Update schema
+    success = update_schema(pb)
     
+
     return success
 
 async def migrate_existing_data(pb_client: PbTalker) -> bool:
