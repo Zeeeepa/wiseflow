@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wiseflow Resource Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            padding-top: 20px;
+            padding-bottom: 20px;
+        }
+        .card {
+            margin-bottom: 20px;
+        }
+        .resource-value {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .resource-label {
+            font-size: 14px;
+            color: #666;
+        }
+        .task-row:hover {
+            background-color: #f5f5f5;
+            cursor: pointer;
+        }
+        .task-completed {
+            color: #28a745;
+        }
+        .task-running {
+            color: #007bff;
+        }
+        .task-failed {
+            color: #dc3545;
+        }
+        .task-pending {
+            color: #ffc107;
+        }
+        .task-cancelled {
+            color: #6c757d;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Wiseflow Resource Monitor</h1>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Current Resource Usage</h5>
+                        <button id="refreshResourcesBtn" class="btn btn-sm btn-outline-primary">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3 text-center">
+                                <div class="resource-value" id="cpuValue">0%</div>
+                                <div class="resource-label">CPU Usage</div>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <div class="resource-value" id="memoryValue">0 MB</div>
+                                <div class="resource-label">Memory Usage</div>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <div class="resource-value" id="networkSentValue">0 Mbps</div>
+                                <div class="resource-label">Network Upload</div>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <div class="resource-value" id="networkRecvValue">0 Mbps</div>
+                                <div class="resource-label">Network Download</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Resource Usage History</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="resourceChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Active Tasks</h5>
+                        <button id="refreshTasksBtn" class="btn btn-sm btn-outline-primary">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Task ID</th>
+                                        <th>Focus ID</th>
+                                        <th>Status</th>
+                                        <th>Start Time</th>
+                                        <th>Idle Time</th>
+                                        <th>Auto-Shutdown</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tasksTableBody">
+                                    <!-- Tasks will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Auto-Shutdown Settings</h5>
+                        <button id="saveSettingsBtn" class="btn btn-sm btn-outline-success">Save Settings</button>
+                    </div>
+                    <div class="card-body">
+                        <form id="settingsForm">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="enabledSwitch">
+                                        <label class="form-check-label" for="enabledSwitch">Enable Auto-Shutdown</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="manualOverrideSwitch">
+                                        <label class="form-check-label" for="manualOverrideSwitch">Manual Override</label>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <h6>Idle Timeouts (seconds)</h6>
+                            <div class="row mb-3">
+                                <div class="col-md-3">
+                                    <label for="defaultTimeout" class="form-label">Default</label>
+                                    <input type="number" class="form-control" id="defaultTimeout" min="0">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="webCrawlingTimeout" class="form-label">Web Crawling</label>
+                                    <input type="number" class="form-control" id="webCrawlingTimeout" min="0">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="dataAnalysisTimeout" class="form-label">Data Analysis</label>
+                                    <input type="number" class="form-control" id="dataAnalysisTimeout" min="0">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="insightGenerationTimeout" class="form-label">Insight Generation</label>
+                                    <input type="number" class="form-control" id="insightGenerationTimeout" min="0">
+                                </div>
+                            </div>
+                            
+                            <h6>Resource Limits</h6>
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <label for="cpuLimit" class="form-label">CPU Limit (%)</label>
+                                    <input type="number" class="form-control" id="cpuLimit" min="0" max="100">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="memoryLimit" class="form-label">Memory Limit (%)</label>
+                                    <input type="number" class="form-control" id="memoryLimit" min="0" max="100">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="networkLimit" class="form-label">Network Limit (Mbps)</label>
+                                    <input type="number" class="form-control" id="networkLimit" min="0">
+                                </div>
+                            </div>
+                            
+                            <h6>Monitoring</h6>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <label for="checkInterval" class="form-label">Check Interval (seconds)</label>
+                                    <input type="number" class="form-control" id="checkInterval" min="0">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="shutdownGracePeriod" class="form-label">Shutdown Grace Period (seconds)</label>
+                                    <input type="number" class="form-control" id="shutdownGracePeriod" min="0">
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Shutdown Events</h5>
+                        <button id="refreshEventsBtn" class="btn btn-sm btn-outline-primary">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Event Type</th>
+                                        <th>Message</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="eventsTableBody">
+                                    <!-- Events will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Task Details Modal -->
+    <div class="modal fade" id="taskDetailsModal" tabindex="-1" aria-labelledby="taskDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="taskDetailsModalLabel">Task Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="taskDetailsBody">
+                    <!-- Task details will be populated here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger" id="shutdownTaskBtn">Shutdown Task</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Global variables
+        let resourceChart;
+        let currentTaskId;
+        
+        // Initialize the dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize the resource chart
+            initResourceChart();
+            
+            // Load initial data
+            refreshResources();
+            refreshResourceHistory();
+            refreshTasks();
+            refreshEvents();
+            loadSettings();
+            
+            // Set up refresh buttons
+            document.getElementById('refreshResourcesBtn').addEventListener('click', function() {
+                refreshResources();
+                refreshResourceHistory();
+            });
+            
+            document.getElementById('refreshTasksBtn').addEventListener('click', refreshTasks);
+            document.getElementById('refreshEventsBtn').addEventListener('click', refreshEvents);
+            document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+            document.getElementById('shutdownTaskBtn').addEventListener('click', shutdownCurrentTask);
+            
+            // Set up auto-refresh
+            setInterval(refreshResources, 10000); // Refresh resources every 10 seconds
+            setInterval(refreshResourceHistory, 30000); // Refresh resource history every 30 seconds
+            setInterval(refreshTasks, 30000); // Refresh tasks every 30 seconds
+        });
+        
+        // Initialize the resource chart
+        function initResourceChart() {
+            const ctx = document.getElementById('resourceChart').getContext('2d');
+            resourceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'CPU Usage (%)',
+                            data: [],
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Memory Usage (%)',
+                            data: [],
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Network Upload (Mbps)',
+                            data: [],
+                            borderColor: 'rgba(255, 206, 86, 1)',
+                            backgroundColor: 'rgba(255, 206, 86, 0.2)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Network Download (Mbps)',
+                            data: [],
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            tension: 0.1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Refresh current resource usage
+        function refreshResources() {
+            fetch('/api/resources/current')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('cpuValue').textContent = `${data.cpu_percent.toFixed(1)}%`;
+                    document.getElementById('memoryValue').textContent = `${data.memory_mb.toFixed(1)} MB`;
+                    document.getElementById('networkSentValue').textContent = `${data.network_sent_mb.toFixed(1)} Mbps`;
+                    document.getElementById('networkRecvValue').textContent = `${data.network_recv_mb.toFixed(1)} Mbps`;
+                })
+                .catch(error => console.error('Error fetching current resources:', error));
+        }
+        
+        // Refresh resource usage history
+        function refreshResourceHistory() {
+            fetch('/api/resources/history')
+                .then(response => response.json())
+                .then(data => {
+                    // Sort data by timestamp
+                    data.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                    
+                    // Limit to the last 20 data points
+                    if (data.length > 20) {
+                        data = data.slice(data.length - 20);
+                    }
+                    
+                    // Update chart data
+                    resourceChart.data.labels = data.map(item => {
+                        const date = new Date(item.timestamp);
+                        return date.toLocaleTimeString();
+                    });
+                    
+                    resourceChart.data.datasets[0].data = data.map(item => item.cpu_percent);
+                    resourceChart.data.datasets[1].data = data.map(item => item.memory_percent);
+                    resourceChart.data.datasets[2].data = data.map(item => item.network_sent_mb);
+                    resourceChart.data.datasets[3].data = data.map(item => item.network_recv_mb);
+                    
+                    resourceChart.update();
+                })
+                .catch(error => console.error('Error fetching resource history:', error));
+        }
+        
+        // Refresh tasks
+        function refreshTasks() {
+            fetch('/api/tasks')
+                .then(response => response.json())
+                .then(data => {
+                    const tableBody = document.getElementById('tasksTableBody');
+                    tableBody.innerHTML = '';
+                    
+                    if (data.error) {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `<td colspan="7" class="text-center">${data.error}</td>`;
+                        tableBody.appendChild(row);
+                        return;
+                    }
+                    
+                    if (data.length === 0) {
+                        const row = document.createElement('tr');
+                        row.innerHTML = '<td colspan="7" class="text-center">No active tasks</td>';
+                        tableBody.appendChild(row);
+                        return;
+                    }
+                    
+                    data.forEach(task => {
+                        const row = document.createElement('tr');
+                        row.className = 'task-row';
+                        row.dataset.taskId = task.task_id;
+                        
+                        // Format idle time
+                        let idleTimeText = 'N/A';
+                        if (task.idle_time !== undefined) {
+                            const minutes = Math.floor(task.idle_time / 60);
+                            const seconds = Math.floor(task.idle_time % 60);
+                            idleTimeText = `${minutes}m ${seconds}s`;
+                        }
+                        
+                        // Format start time
+                        let startTimeText = 'N/A';
+                        if (task.start_time) {
+                            const startTime = new Date(task.start_time);
+                            startTimeText = startTime.toLocaleString();
+                        }
+                        
+                        // Set status class
+                        const statusClass = `task-${task.status.toLowerCase()}`;
+                        
+                        row.innerHTML = `
+                            <td>${task.task_id}</td>
+                            <td>${task.focus_id}</td>
+                            <td class="${statusClass}">${task.status}</td>
+                            <td>${startTimeText}</td>
+                            <td>${idleTimeText}</td>
+                            <td>${task.auto_shutdown ? 'Yes' : 'No'}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-info view-task-btn">View</button>
+                                ${task.status === 'running' ? '<button class="btn btn-sm btn-outline-danger shutdown-task-btn">Shutdown</button>' : ''}
+                            </td>
+                        `;
+                        
+                        tableBody.appendChild(row);
+                    });
+                    
+                    // Add event listeners to buttons
+                    document.querySelectorAll('.view-task-btn').forEach(button => {
+                        button.addEventListener('click', function(event) {
+                            const taskId = event.target.closest('tr').dataset.taskId;
+                            viewTaskDetails(taskId);
+                        });
+                    });
+                    
+                    document.querySelectorAll('.shutdown-task-btn').forEach(button => {
+                        button.addEventListener('click', function(event) {
+                            const taskId = event.target.closest('tr').dataset.taskId;
+                            shutdownTask(taskId);
+                        });
+                    });
+                })
+                .catch(error => console.error('Error fetching tasks:', error));
+        }
+        
+        // View task details
+        function viewTaskDetails(taskId) {
+            fetch(`/api/tasks/${taskId}`)
+                .then(response => response.json())
+                .then(data => {
+                    const modalBody = document.getElementById('taskDetailsBody');
+                    
+                    if (data.status === 'not_found') {
+                        modalBody.innerHTML = `<div class="alert alert-warning">Task ${taskId} not found</div>`;
+                        return;
+                    }
+                    
+                    // Format times
+                    let startTimeText = 'N/A';
+                    if (data.start_time) {
+                        const startTime = new Date(data.start_time);
+                        startTimeText = startTime.toLocaleString();
+                    }
+                    
+                    let endTimeText = 'N/A';
+                    if (data.end_time) {
+                        const endTime = new Date(data.end_time);
+                        endTimeText = endTime.toLocaleString();
+                    }
+                    
+                    // Format idle time
+                    let idleTimeText = 'N/A';
+                    if (data.idle_time !== undefined) {
+                        const minutes = Math.floor(data.idle_time / 60);
+                        const seconds = Math.floor(data.idle_time % 60);
+                        idleTimeText = `${minutes}m ${seconds}s`;
+                    }
+                    
+                    // Create details HTML
+                    let detailsHtml = `
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>Task ID:</strong> ${data.task_id}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Status:</strong> <span class="task-${data.status.toLowerCase()}">${data.status}</span>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>Start Time:</strong> ${startTimeText}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>End Time:</strong> ${endTimeText}
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>Idle Time:</strong> ${idleTimeText}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Auto-Shutdown:</strong> ${data.auto_shutdown ? 'Yes' : 'No'}
+                            </div>
+                        </div>
+                    `;
+                    
+                    // Add stalled warning if applicable
+                    if (data.is_stalled) {
+                        detailsHtml += `
+                            <div class="alert alert-warning">
+                                <strong>Warning:</strong> This task appears to be stalled. It has been idle for ${idleTimeText}, 
+                                which exceeds the timeout of ${Math.floor(data.idle_timeout / 60)}m ${Math.floor(data.idle_timeout % 60)}s.
+                            </div>
+                        `;
+                    }
+                    
+                    modalBody.innerHTML = detailsHtml;
+                    
+                    // Store the current task ID for the shutdown button
+                    currentTaskId = taskId;
+                    
+                    // Show or hide the shutdown button based on task status
+                    const shutdownBtn = document.getElementById('shutdownTaskBtn');
+                    if (data.status === 'running') {
+                        shutdownBtn.style.display = 'block';
+                    } else {
+                        shutdownBtn.style.display = 'none';
+                    }
+                    
+                    // Show the modal
+                    const modal = new bootstrap.Modal(document.getElementById('taskDetailsModal'));
+                    modal.show();
+                })
+                .catch(error => console.error('Error fetching task details:', error));
+        }
+        
+        // Shutdown a task
+        function shutdownTask(taskId) {
+            if (!confirm(`Are you sure you want to shut down task ${taskId}?`)) {
+                return;
+            }
+            
+            fetch(`/api/tasks/${taskId}/shutdown`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(`Task ${taskId} has been shut down successfully.`);
+                        refreshTasks();
+                    } else {
+                        alert(`Failed to shut down task ${taskId}: ${data.error || 'Unknown error'}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error shutting down task:', error);
+                    alert(`Error shutting down task: ${error.message}`);
+                });
+        }
+        
+        // Shutdown the current task (from modal)
+        function shutdownCurrentTask() {
+            if (currentTaskId) {
+                shutdownTask(currentTaskId);
+                
+                // Close the modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('taskDetailsModal'));
+                modal.hide();
+            }
+        }
+        
+        // Load settings
+        function loadSettings() {
+            fetch('/api/settings')
+                .then(response => response.json())
+                .then(data => {
+                    // Set form values
+                    document.getElementById('enabledSwitch').checked = data.enabled || false;
+                    document.getElementById('manualOverrideSwitch').checked = data.manual_override || false;
+                    
+                    // Idle timeouts
+                    if (data.idle_timeout) {
+                        document.getElementById('defaultTimeout').value = data.idle_timeout.default || 3600;
+                        document.getElementById('webCrawlingTimeout').value = data.idle_timeout.web_crawling || 1800;
+                        document.getElementById('dataAnalysisTimeout').value = data.idle_timeout.data_analysis || 7200;
+                        document.getElementById('insightGenerationTimeout').value = data.idle_timeout.insight_generation || 3600;
+                    }
+                    
+                    // Resource limits
+                    if (data.resource_limits) {
+                        document.getElementById('cpuLimit').value = data.resource_limits.cpu_percent || 90;
+                        document.getElementById('memoryLimit').value = data.resource_limits.memory_percent || 85;
+                        document.getElementById('networkLimit').value = data.resource_limits.network_mbps || 50;
+                    }
+                    
+                    // Monitoring
+                    document.getElementById('checkInterval').value = data.check_interval || 300;
+                    document.getElementById('shutdownGracePeriod').value = data.shutdown_grace_period || 60;
+                })
+                .catch(error => console.error('Error loading settings:', error));
+        }
+        
+        // Save settings
+        function saveSettings() {
+            const settings = {
+                enabled: document.getElementById('enabledSwitch').checked,
+                manual_override: document.getElementById('manualOverrideSwitch').checked,
+                idle_timeout: {
+                    default: parseInt(document.getElementById('defaultTimeout').value),
+                    web_crawling: parseInt(document.getElementById('webCrawlingTimeout').value),
+                    data_analysis: parseInt(document.getElementById('dataAnalysisTimeout').value),
+                    insight_generation: parseInt(document.getElementById('insightGenerationTimeout').value)
+                },
+                resource_limits: {
+                    cpu_percent: parseInt(document.getElementById('cpuLimit').value),
+                    memory_percent: parseInt(document.getElementById('memoryLimit').value),
+                    network_mbps: parseInt(document.getElementById('networkLimit').value)
+                },
+                check_interval: parseInt(document.getElementById('checkInterval').value),
+                shutdown_grace_period: parseInt(document.getElementById('shutdownGracePeriod').value)
+            };
+            
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(settings)
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(`Error saving settings: ${data.error}`);
+                    } else {
+                        alert('Settings saved successfully.');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error saving settings:', error);
+                    alert(`Error saving settings: ${error.message}`);
+                });
+        }
+        
+        // Refresh events
+        function refreshEvents() {
+            fetch('/api/events')
+                .then(response => response.json())
+                .then(data => {
+                    const tableBody = document.getElementById('eventsTableBody');
+                    tableBody.innerHTML = '';
+                    
+                    if (data.length === 0) {
+                        const row = document.createElement('tr');
+                        row.innerHTML = '<td colspan="4" class="text-center">No events</td>';
+                        tableBody.appendChild(row);
+                        return;
+                    }
+                    
+                    // Sort by timestamp (newest first)
+                    data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                    
+                    // Limit to the last 20 events
+                    if (data.length > 20) {
+                        data = data.slice(0, 20);
+                    }
+                    
+                    data.forEach(event => {
+                        const row = document.createElement('tr');
+                        
+                        // Format timestamp
+                        const timestamp = new Date(event.timestamp);
+                        const timestampText = timestamp.toLocaleString();
+                        
+                        // Parse metadata
+                        let metadataText = 'N/A';
+                        if (event.metadata) {
+                            try {
+                                const metadata = JSON.parse(event.metadata);
+                                metadataText = Object.entries(metadata)
+                                    .map(([key, value]) => `${key}: ${value}`)
+                                    .join(', ');
+                            } catch (error) {
+                                metadataText = event.metadata;
+                            }
+                        }
+                        
+                        row.innerHTML = `
+                            <td>${timestampText}</td>
+                            <td>${event.event_type || 'N/A'}</td>
+                            <td>${event.message || 'N/A'}</td>
+                            <td>${metadataText}</td>
+                        `;
+                        
+                        tableBody.appendChild(row);
+                    });
+                })
+                .catch(error => console.error('Error fetching events:', error));
+        }
+    </script>
+</body>
+</html>

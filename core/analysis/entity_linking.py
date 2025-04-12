@@ -1,368 +1,660 @@
 """
-Entity linking module for Wiseflow.
 
-This module provides functionality for linking entities across different data sources.
+Entity Linking module for Wiseflow.
+
+This module provides functionality for linking entities across different data sources
+to create a unified view of entities.
 """
 
+from typing import Dict, List, Any, Optional, Union, Tuple
+import logging
+import uuid
+from datetime import datetime
 import os
 import json
-import asyncio
-from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple, Set, Union
 import re
-from collections import Counter, defaultdict
-import networkx as nx
-import matplotlib.pyplot as plt
-from loguru import logger
+import difflib
+from collections import defaultdict
 import numpy as np
-from ..utils.general_utils import get_logger
-from ..utils.pb_api import PbTalker
-from ..llms.openai_wrapper import openai_llm as llm
-from . import Entity, Relationship
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-project_dir = os.environ.get("PROJECT_DIR", "")
-if project_dir:
-    os.makedirs(project_dir, exist_ok=True)
-entity_linking_logger = get_logger('entity_linking', project_dir)
-pb = PbTalker(entity_linking_logger)
+from core.analysis import Entity, Relationship, KnowledgeGraph
+from core.utils.pb_api import PbTalker
 
-model = os.environ.get("PRIMARY_MODEL", "")
-if not model:
-    raise ValueError("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
+logger = logging.getLogger(__name__)
 
-# Prompt for entity similarity calculation
-ENTITY_SIMILARITY_PROMPT = """You are an expert in entity resolution. Your task is to determine if two entities refer to the same real-world entity.
-
-Entity 1:
-Name: {entity1_name}
-Type: {entity1_type}
-Metadata: {entity1_metadata}
-
-Entity 2:
-Name: {entity2_name}
-Type: {entity2_type}
-Metadata: {entity2_metadata}
-
-Please analyze these entities and determine if they refer to the same real-world entity.
-Provide your response as a JSON object with the following structure:
-{
-  "are_same": true/false,
-  "confidence": 0.0-1.0,
-  "reasoning": "brief explanation of your decision"
-}
-"""
-
-async def calculate_similarity(entity1: Entity, entity2: Entity) -> Dict[str, Any]:
-    """
-    Calculate similarity between two entities.
+class EntityRegistry:
+    """Registry for tracking and linking entities across data sources."""
     
-    Args:
-        entity1: First entity
-        entity2: Second entity
+    def __init__(self, storage_path: str = "entity_registry"):
+        """Initialize the entity registry.
         
-    Returns:
-        Dictionary with similarity score and metadata
-    """
-    entity_linking_logger.debug(f"Calculating similarity between {entity1.name} and {entity2.name}")
-    
-    # If entity types are different, they are likely different entities
-    if entity1.entity_type != entity2.entity_type:
-        return {
-            "are_same": False,
-            "confidence": 0.9,
-            "reasoning": f"Different entity types: {entity1.entity_type} vs {entity2.entity_type}"
-        }
-    
-    # If names are exactly the same, they are likely the same entity
-    if entity1.name.lower() == entity2.name.lower():
-        return {
-            "are_same": True,
-            "confidence": 0.9,
-            "reasoning": "Exact name match"
-        }
-    
-    # For more complex cases, use LLM to determine similarity
-    prompt = ENTITY_SIMILARITY_PROMPT.format(
-        entity1_name=entity1.name,
-        entity1_type=entity1.entity_type,
-        entity1_metadata=json.dumps(entity1.metadata),
-        entity2_name=entity2.name,
-        entity2_type=entity2.entity_type,
-        entity2_metadata=json.dumps(entity2.metadata)
-    )
-    
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert in entity resolution.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.1)
-    
-    # Parse the JSON response
-    try:
-        # Find JSON object in the response
-        json_match = re.search(r'\{.*\}', result, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            similarity = json.loads(json_str)
-            entity_linking_logger.debug(f"Similarity calculation result: {similarity}")
-            return similarity
-        else:
-            entity_linking_logger.warning("No valid JSON found in similarity calculation response")
-            return {
-                "are_same": False,
-                "confidence": 0.5,
-                "reasoning": "Failed to parse response"
-            }
-    except Exception as e:
-        entity_linking_logger.error(f"Error parsing similarity calculation response: {e}")
-        return {
-            "are_same": False,
-            "confidence": 0.5,
-            "reasoning": f"Error: {str(e)}"
-        }
-
-async def link_entities(entities_list: List[Entity], similarity_threshold: float = 0.7) -> Dict[str, List[Entity]]:
-    """
-    Link entities across different sources.
-    
-    Args:
-        entities_list: List of entities to link
-        similarity_threshold: Threshold for considering entities as the same
+        Args:
+            storage_path: Path to store entity registry data
+        """
+        self.storage_path = storage_path
+        os.makedirs(storage_path, exist_ok=True)
+        self.entities: Dict[str, Entity] = {}
+        self.entity_links: Dict[str, List[str]] = defaultdict(list)
+        self.name_to_ids: Dict[str, List[str]] = defaultdict(list)
+        self.type_to_ids: Dict[str, List[str]] = defaultdict(list)
         
-    Returns:
-        Dictionary mapping entity IDs to lists of linked entities
-    """
-    entity_linking_logger.info(f"Linking {len(entities_list)} entities")
-    
-    # Group entities by type for more efficient comparison
-    entities_by_type = defaultdict(list)
-    for entity in entities_list:
-        entities_by_type[entity.entity_type].append(entity)
-    
-    # Dictionary to store linked entities
-    linked_entities = {}
-    
-    # Process each entity type separately
-    for entity_type, entities in entities_by_type.items():
-        entity_linking_logger.debug(f"Processing {len(entities)} entities of type {entity_type}")
+    def add_entity(self, entity: Entity) -> str:
+        """Add an entity to the registry.
         
-        # Compare each pair of entities
-        for i, entity1 in enumerate(entities):
-            if entity1.entity_id not in linked_entities:
-                linked_entities[entity1.entity_id] = [entity1]
+        Args:
+            entity: The entity to add
             
-            for j in range(i + 1, len(entities)):
-                entity2 = entities[j]
+        Returns:
+            The entity ID
+        """
+        self.entities[entity.entity_id] = entity
+        
+        # Update lookup dictionaries
+        normalized_name = self._normalize_name(entity.name)
+        self.name_to_ids[normalized_name].append(entity.entity_id)
+        self.type_to_ids[entity.entity_type].append(entity.entity_id)
+        
+        return entity.entity_id
+    
+    def get_entity(self, entity_id: str) -> Optional[Entity]:
+        """Get an entity by ID.
+        
+        Args:
+            entity_id: The entity ID
+            
+        Returns:
+            The entity if found, None otherwise
+        """
+        return self.entities.get(entity_id)
+    
+    def get_entities_by_name(self, name: str, fuzzy: bool = False, threshold: float = 0.8) -> List[Entity]:
+        """Get entities by name.
+        
+        Args:
+            name: The entity name to search for
+            fuzzy: Whether to use fuzzy matching
+            threshold: Similarity threshold for fuzzy matching
+            
+        Returns:
+            List of matching entities
+        """
+        normalized_name = self._normalize_name(name)
+        
+        if not fuzzy:
+            # Exact match
+            entity_ids = self.name_to_ids.get(normalized_name, [])
+            return [self.entities[entity_id] for entity_id in entity_ids]
+        else:
+            # Fuzzy match
+            matches = []
+            for entity_name, entity_ids in self.name_to_ids.items():
+                similarity = difflib.SequenceMatcher(None, normalized_name, entity_name).ratio()
+                if similarity >= threshold:
+                    for entity_id in entity_ids:
+                        matches.append(self.entities[entity_id])
+            return matches
+    
+    def link_entities(self, entity_id1: str, entity_id2: str, confidence: float = 1.0) -> bool:
+        """Link two entities as referring to the same real-world entity.
+        
+        Args:
+            entity_id1: First entity ID
+            entity_id2: Second entity ID
+            confidence: Confidence score for the link
+            
+        Returns:
+            True if the link was created, False otherwise
+        """
+        if entity_id1 not in self.entities or entity_id2 not in self.entities:
+            logger.warning(f"Cannot link entities: one or both entities not found")
+            return False
+        
+        # Add bidirectional links
+        if entity_id2 not in self.entity_links[entity_id1]:
+            self.entity_links[entity_id1].append(entity_id2)
+            
+        if entity_id1 not in self.entity_links[entity_id2]:
+            self.entity_links[entity_id2].append(entity_id1)
+            
+        # Add a relationship to both entities
+        entity1 = self.entities[entity_id1]
+        entity2 = self.entities[entity_id2]
+        
+        relationship_id = f"link_{uuid.uuid4().hex[:8]}"
+        relationship = Relationship(
+            relationship_id=relationship_id,
+            source_id=entity_id1,
+            target_id=entity_id2,
+            relationship_type="same_as",
+            metadata={
+                "confidence": confidence
+            }
+        )
+        
+        entity1.relationships.append(relationship)
+        
+        return True
+    
+    def update_entity_link(self, entity_id: str, linked_entity_id: str, link: bool = True) -> bool:
+        """Manually update entity links.
+        
+        Args:
+            entity_id: The entity ID
+            linked_entity_id: The linked entity ID
+            link: True to create a link, False to remove it
+            
+        Returns:
+            True if the operation was successful, False otherwise
+        """
+        if entity_id not in self.entities or linked_entity_id not in self.entities:
+            logger.warning(f"Cannot update entity link: one or both entities not found")
+            return False
+        
+        if link:
+            # Add the link
+            return self.link_entities(entity_id, linked_entity_id)
+        else:
+            # Remove the link
+            if linked_entity_id in self.entity_links[entity_id]:
+                self.entity_links[entity_id].remove(linked_entity_id)
+            
+            if entity_id in self.entity_links[linked_entity_id]:
+                self.entity_links[linked_entity_id].remove(entity_id)
+            
+            # Remove the relationship from both entities
+            entity1 = self.entities[entity_id]
+            entity2 = self.entities[linked_entity_id]
+            
+            entity1.relationships = [rel for rel in entity1.relationships 
+                                    if not (rel.target_id == linked_entity_id and rel.relationship_type == "same_as")]
+            
+            entity2.relationships = [rel for rel in entity2.relationships 
+                                    if not (rel.target_id == entity_id and rel.relationship_type == "same_as")]
+            
+            return True
+    
+    def get_linked_entities(self, entity_id: str) -> List[Entity]:
+        """Get all entities linked to the given entity.
+        
+        Args:
+            entity_id: The entity ID
+            
+        Returns:
+            List of linked entities
+        """
+        if entity_id not in self.entities:
+            return []
+        
+        linked_ids = self.entity_links.get(entity_id, [])
+        return [self.entities[linked_id] for linked_id in linked_ids if linked_id in self.entities]
+    
+    def merge_entities(self, entity_ids: List[str]) -> Optional[Entity]:
+        """Merge multiple entities into a single entity.
+        
+        Args:
+            entity_ids: List of entity IDs to merge
+            
+        Returns:
+            The merged entity if successful, None otherwise
+        """
+        if not entity_ids or len(entity_ids) < 2:
+            logger.warning("Cannot merge entities: need at least two entities")
+            return None
+        
+        # Check if all entities exist
+        entities = []
+        for entity_id in entity_ids:
+            entity = self.get_entity(entity_id)
+            if entity:
+                entities.append(entity)
+            else:
+                logger.warning(f"Entity {entity_id} not found, skipping")
+        
+        if len(entities) < 2:
+            logger.warning("Cannot merge entities: need at least two valid entities")
+            return None
+        
+        # Create a new entity with merged information
+        primary_entity = entities[0]
+        merged_name = primary_entity.name
+        merged_type = primary_entity.entity_type
+        merged_sources = []
+        merged_metadata = {}
+        
+        # Merge sources and metadata
+        for entity in entities:
+            merged_sources.extend(entity.sources)
+            merged_metadata.update(entity.metadata)
+        
+        # Remove duplicates from sources
+        merged_sources = list(set(merged_sources))
+        
+        # Create the merged entity
+        merged_entity_id = f"merged_{uuid.uuid4().hex[:8]}"
+        merged_entity = Entity(
+            entity_id=merged_entity_id,
+            name=merged_name,
+            entity_type=merged_type,
+            sources=merged_sources,
+            metadata=merged_metadata
+        )
+        
+        # Add the merged entity to the registry
+        self.add_entity(merged_entity)
+        
+        # Link the merged entity to all original entities
+        for entity in entities:
+            self.link_entities(merged_entity_id, entity.entity_id)
+        
+        return merged_entity
+    
+    def save(self, filepath: Optional[str] = None) -> None:
+        """Save the entity registry to a file.
+        
+        Args:
+            filepath: Path to save the registry to, defaults to storage_path/registry.json
+        """
+        if filepath is None:
+            filepath = os.path.join(self.storage_path, "registry.json")
+            
+        try:
+            data = {
+                "entities": {entity_id: entity.to_dict() for entity_id, entity in self.entities.items()},
+                "entity_links": dict(self.entity_links)
+            }
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
                 
-                # Skip if entity2 is already linked to entity1
-                if any(e.entity_id == entity2.entity_id for e in linked_entities[entity1.entity_id]):
+            logger.info(f"Entity registry saved to {filepath}")
+        except Exception as e:
+            logger.error(f"Error saving entity registry: {e}")
+    
+    @classmethod
+    def load(cls, filepath: str) -> Optional['EntityRegistry']:
+        """Load an entity registry from a file.
+        
+        Args:
+            filepath: Path to load the registry from
+            
+        Returns:
+            The loaded entity registry if successful, None otherwise
+        """
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            registry = cls()
+            
+            # Load entities
+            for entity_id, entity_data in data.get("entities", {}).items():
+                entity = Entity.from_dict(entity_data)
+                registry.entities[entity_id] = entity
+                
+                # Update lookup dictionaries
+                normalized_name = registry._normalize_name(entity.name)
+                registry.name_to_ids[normalized_name].append(entity_id)
+                registry.type_to_ids[entity.entity_type].append(entity_id)
+            
+            # Load entity links
+            registry.entity_links = defaultdict(list, data.get("entity_links", {}))
+            
+            logger.info(f"Entity registry loaded from {filepath}")
+            return registry
+        except Exception as e:
+            logger.error(f"Error loading entity registry: {e}")
+            return None
+    
+    def _normalize_name(self, name: str) -> str:
+        """Normalize an entity name for comparison.
+        
+        Args:
+            name: The name to normalize
+            
+        Returns:
+            Normalized name
+        """
+        # Convert to lowercase
+        normalized = name.lower()
+        
+        # Remove punctuation
+        normalized = re.sub(r'[^\w\s]', '', normalized)
+        
+        # Remove extra whitespace
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        
+        return normalized
+
+
+class EntityLinker:
+    """Links entities across different data sources."""
+    
+    def __init__(
+        self, 
+        registry: Optional[EntityRegistry] = None,
+        pb_client: Optional[PbTalker] = None,
+        config: Optional[Dict[str, Any]] = None
+    ):
+        """Initialize the entity linker.
+        
+        Args:
+            registry: Entity registry to use
+            pb_client: PocketBase client for database operations
+            config: Configuration options
+        """
+        self.registry = registry or EntityRegistry()
+        self.pb_client = pb_client
+        self.config = config or {}
+        self.vectorizer = TfidfVectorizer(
+            analyzer='word',
+            ngram_range=(1, 2),
+            min_df=1,
+            stop_words='english'
+        )
+        
+    def link_entities(self, entities_list: List[Entity]) -> Dict[str, List[str]]:
+        """Link entities across different sources.
+        
+        Args:
+            entities_list: List of entities to link
+            
+        Returns:
+            Dictionary mapping entity IDs to lists of linked entity IDs
+        """
+        # Add all entities to the registry
+        for entity in entities_list:
+            self.registry.add_entity(entity)
+        
+        # Group entities by type for more accurate linking
+        entities_by_type = defaultdict(list)
+        for entity in entities_list:
+            entities_by_type[entity.entity_type].append(entity)
+        
+        # Link entities within each type
+        for entity_type, type_entities in entities_by_type.items():
+            self._link_entities_by_type(type_entities)
+        
+        # Return the entity links
+        return dict(self.registry.entity_links)
+    
+    def _link_entities_by_type(self, entities: List[Entity]) -> None:
+        """Link entities of the same type.
+        
+        Args:
+            entities: List of entities of the same type
+        """
+        if len(entities) < 2:
+            return
+        
+        # Calculate similarity between all pairs of entities
+        for i, entity1 in enumerate(entities):
+            for entity2 in entities[i+1:]:
+                # Skip if they're already linked
+                if entity2.entity_id in self.registry.entity_links.get(entity1.entity_id, []):
                     continue
                 
-                # Calculate similarity
-                similarity = await calculate_similarity(entity1, entity2)
+                # Calculate similarity and confidence
+                similarity, confidence = self.calculate_similarity(entity1, entity2)
                 
-                # If entities are similar enough, link them
-                if similarity.get("are_same", False) and similarity.get("confidence", 0) >= similarity_threshold:
-                    # If entity2 is already in linked_entities, merge the lists
-                    if entity2.entity_id in linked_entities:
-                        linked_entities[entity1.entity_id].extend(linked_entities[entity2.entity_id])
-                        # Update all entities in entity2's list to point to entity1's list
-                        for e in linked_entities[entity2.entity_id]:
-                            linked_entities[e.entity_id] = linked_entities[entity1.entity_id]
-                        # Remove entity2's entry
-                        del linked_entities[entity2.entity_id]
-                    else:
-                        linked_entities[entity1.entity_id].append(entity2)
-                        linked_entities[entity2.entity_id] = linked_entities[entity1.entity_id]
+                # Link entities if similarity is above threshold
+                threshold = self.config.get("similarity_threshold", 0.8)
+                if similarity >= threshold:
+                    self.registry.link_entities(entity1.entity_id, entity2.entity_id, confidence)
     
-    entity_linking_logger.info(f"Linked entities into {len(linked_entities)} groups")
-    return linked_entities
-
-async def merge_entities(entity_list: List[Entity]) -> Entity:
-    """
-    Merge information from duplicate entities.
-    
-    Args:
-        entity_list: List of entities to merge
+    def calculate_similarity(self, entity1: Entity, entity2: Entity) -> Tuple[float, float]:
+        """Calculate similarity between two entities.
         
-    Returns:
-        Merged entity
-    """
-    if not entity_list:
-        raise ValueError("Cannot merge empty entity list")
-    
-    entity_linking_logger.debug(f"Merging {len(entity_list)} entities")
-    
-    # Use the first entity as a base
-    base_entity = entity_list[0]
-    
-    # Combine sources and metadata
-    sources = set(base_entity.sources)
-    metadata = dict(base_entity.metadata)
-    relationships = list(base_entity.relationships)
-    
-    # Add information from other entities
-    for entity in entity_list[1:]:
-        sources.update(entity.sources)
-        metadata.update(entity.metadata)
-        relationships.extend(entity.relationships)
-    
-    # Create a new merged entity
-    merged_entity = Entity(
-        entity_id=base_entity.entity_id,
-        name=base_entity.name,
-        entity_type=base_entity.entity_type,
-        sources=list(sources),
-        metadata=metadata,
-        timestamp=datetime.now()
-    )
-    
-    # Add relationships
-    merged_entity.relationships = relationships
-    
-    entity_linking_logger.debug(f"Merged entity: {merged_entity.name} with {len(merged_entity.sources)} sources and {len(merged_entity.relationships)} relationships")
-    return merged_entity
-
-def get_entity_by_id(entities: List[Entity], entity_id: str) -> Optional[Entity]:
-    """
-    Retrieve an entity by ID.
-    
-    Args:
-        entities: List of entities to search
-        entity_id: ID of the entity to retrieve
+        Args:
+            entity1: First entity
+            entity2: Second entity
+            
+        Returns:
+            Tuple of (similarity score, confidence)
+        """
+        # Start with name similarity
+        name_similarity = difflib.SequenceMatcher(None, 
+                                                 self.registry._normalize_name(entity1.name),
+                                                 self.registry._normalize_name(entity2.name)).ratio()
         
-    Returns:
-        Entity if found, None otherwise
-    """
-    for entity in entities:
-        if entity.entity_id == entity_id:
-            return entity
-    return None
-
-def get_entities_by_name(entities: List[Entity], name: str, fuzzy_match: bool = False) -> List[Entity]:
-    """
-    Retrieve entities by name.
-    
-    Args:
-        entities: List of entities to search
-        name: Name to search for
-        fuzzy_match: Whether to use fuzzy matching
+        # If names are very similar, we can be more confident
+        if name_similarity > 0.9:
+            return name_similarity, 0.9
         
-    Returns:
-        List of matching entities
-    """
-    matching_entities = []
+        # Calculate metadata similarity if available
+        metadata_similarity = 0.0
+        metadata_weight = 0.0
+        
+        # Compare common metadata fields
+        common_fields = set(entity1.metadata.keys()) & set(entity2.metadata.keys())
+        if common_fields:
+            field_similarities = []
+            for field in common_fields:
+                field_sim = difflib.SequenceMatcher(None, 
+                                                   str(entity1.metadata[field]),
+                                                   str(entity2.metadata[field])).ratio()
+                field_similarities.append(field_sim)
+            
+            if field_similarities:
+                metadata_similarity = sum(field_similarities) / len(field_similarities)
+                metadata_weight = 0.3
+        
+        # Calculate source overlap
+        source_overlap = len(set(entity1.sources) & set(entity2.sources))
+        source_similarity = source_overlap / max(len(entity1.sources) + len(entity2.sources) - source_overlap, 1)
+        source_weight = 0.2
+        
+        # Calculate text similarity using TF-IDF if we have enough text
+        text_similarity = 0.0
+        text_weight = 0.0
+        
+        entity1_text = f"{entity1.name} {' '.join(str(v) for v in entity1.metadata.values())}"
+        entity2_text = f"{entity2.name} {' '.join(str(v) for v in entity2.metadata.values())}"
+        
+        if len(entity1_text) > 20 and len(entity2_text) > 20:
+            try:
+                tfidf_matrix = self.vectorizer.fit_transform([entity1_text, entity2_text])
+                text_similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+                text_weight = 0.3
+            except:
+                # If TF-IDF fails, fall back to simpler comparison
+                pass
+        
+        # Calculate weighted similarity
+        name_weight = 1.0 - metadata_weight - source_weight - text_weight
+        
+        weighted_similarity = (
+            name_similarity * name_weight +
+            metadata_similarity * metadata_weight +
+            source_similarity * source_weight +
+            text_similarity * text_weight
+        )
+        
+        # Calculate confidence based on the amount and quality of information
+        confidence_factors = [
+            name_similarity > 0.8,
+            metadata_similarity > 0.7 and metadata_weight > 0,
+            source_similarity > 0.5,
+            text_similarity > 0.7 and text_weight > 0
+        ]
+        
+        confidence = sum(1 for factor in confidence_factors if factor) / len(confidence_factors)
+        
+        return weighted_similarity, confidence
     
-    if fuzzy_match:
-        # Simple fuzzy matching based on substring
+    def visualize_entity_network(self, entities: Optional[List[Entity]] = None) -> Dict[str, Any]:
+        """Generate a visualization of entity links.
+        
+        Args:
+            entities: List of entities to visualize, or None for all entities
+            
+        Returns:
+            Dictionary with visualization data
+        """
+        if entities is None:
+            entities = list(self.registry.entities.values())
+        
+        # Create nodes and edges for visualization
+        nodes = []
+        edges = []
+        
+        # Add nodes for each entity
         for entity in entities:
-            if name.lower() in entity.name.lower() or entity.name.lower() in name.lower():
-                matching_entities.append(entity)
-    else:
-        # Exact matching
+            nodes.append({
+                "id": entity.entity_id,
+                "label": entity.name,
+                "type": entity.entity_type,
+                "sources": entity.sources
+            })
+        
+        # Add edges for entity links
         for entity in entities:
-            if entity.name.lower() == name.lower():
-                matching_entities.append(entity)
-    
-    return matching_entities
-
-def update_entity_link(entities: List[Entity], entity_id: str, linked_entity_id: str) -> bool:
-    """
-    Manually update entity links.
-    
-    Args:
-        entities: List of entities
-        entity_id: ID of the entity to update
-        linked_entity_id: ID of the entity to link to
+            entity_id = entity.entity_id
+            linked_ids = self.registry.entity_links.get(entity_id, [])
+            
+            for linked_id in linked_ids:
+                # Only add each edge once (avoid duplicates)
+                if entity_id < linked_id:
+                    # Find the relationship to get the confidence
+                    confidence = 1.0
+                    for rel in entity.relationships:
+                        if rel.target_id == linked_id and rel.relationship_type == "same_as":
+                            confidence = rel.metadata.get("confidence", 1.0)
+                            break
+                    
+                    edges.append({
+                        "source": entity_id,
+                        "target": linked_id,
+                        "type": "same_as",
+                        "confidence": confidence
+                    })
         
-    Returns:
-        True if successful, False otherwise
-    """
-    entity = get_entity_by_id(entities, entity_id)
-    linked_entity = get_entity_by_id(entities, linked_entity_id)
+        return {
+            "nodes": nodes,
+            "edges": edges
+        }
     
-    if not entity or not linked_entity:
-        return False
-    
-    # Create a relationship between the entities
-    relationship_id = f"manual_link_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    relationship = Relationship(
-        relationship_id=relationship_id,
-        source_id=entity_id,
-        target_id=linked_entity_id,
-        relationship_type="same_as",
-        metadata={"manually_linked": True}
-    )
-    
-    entity.relationships.append(relationship)
-    return True
-
-def visualize_entity_network(entities: List[Entity], output_path: Optional[str] = None) -> nx.Graph:
-    """
-    Generate a visualization of entity links.
-    
-    Args:
-        entities: List of entities
-        output_path: Optional path to save the visualization
+    def save_to_database(self) -> bool:
+        """Save entity registry to the database.
         
-    Returns:
-        NetworkX Graph object
-    """
-    entity_linking_logger.debug(f"Visualizing network of {len(entities)} entities")
-    
-    # Create an undirected graph
-    G = nx.Graph()
-    
-    # Add nodes
-    for entity in entities:
-        G.add_node(entity.entity_id, name=entity.name, type=entity.entity_type)
-    
-    # Add edges
-    for entity in entities:
-        for relationship in entity.relationships:
-            if relationship.relationship_type == "same_as":
-                G.add_edge(
-                    relationship.source_id,
-                    relationship.target_id,
-                    type=relationship.relationship_type,
-                    metadata=relationship.metadata
-                )
-    
-    entity_linking_logger.debug(f"Entity network created with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
-    
-    # Visualize and save the graph if output_path is provided
-    if output_path and G.number_of_nodes() > 0:
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.pb_client:
+            logger.warning("Cannot save to database: no PocketBase client provided")
+            return False
+        
         try:
-            plt.figure(figsize=(12, 8))
+            # Save entities
+            for entity_id, entity in self.registry.entities.items():
+                entity_data = {
+                    "name": entity.name,
+                    "entity_type": entity.entity_type,
+                    "sources": json.dumps(entity.sources),
+                    "metadata": json.dumps(entity.metadata),
+                    "timestamp": entity.timestamp.isoformat() if entity.timestamp else None
+                }
+                
+                # Check if entity already exists in database
+                existing_entities = self.pb_client.read("entities", filter=f"entity_id='{entity_id}'")
+                
+                if existing_entities:
+                    # Update existing entity
+                    self.pb_client.update("entities", existing_entities[0]["id"], entity_data)
+                else:
+                    # Add entity_id to the data
+                    entity_data["entity_id"] = entity_id
+                    # Create new entity
+                    self.pb_client.add("entities", entity_data)
             
-            # Position nodes using spring layout
-            pos = nx.spring_layout(G)
+            # Save entity links
+            for entity_id, linked_ids in self.registry.entity_links.items():
+                for linked_id in linked_ids:
+                    # Only save each link once
+                    if entity_id < linked_id:
+                        link_data = {
+                            "source_entity_id": entity_id,
+                            "target_entity_id": linked_id,
+                            "relationship_type": "same_as"
+                        }
+                        
+                        # Find confidence from relationship
+                        entity = self.registry.entities.get(entity_id)
+                        if entity:
+                            for rel in entity.relationships:
+                                if rel.target_id == linked_id and rel.relationship_type == "same_as":
+                                    link_data["confidence"] = rel.metadata.get("confidence", 1.0)
+                                    break
+                        
+                        # Check if link already exists
+                        existing_links = self.pb_client.read(
+                            "entity_links", 
+                            filter=f"(source_entity_id='{entity_id}' AND target_entity_id='{linked_id}') OR " +
+                                  f"(source_entity_id='{linked_id}' AND target_entity_id='{entity_id}')"
+                        )
+                        
+                        if existing_links:
+                            # Update existing link
+                            self.pb_client.update("entity_links", existing_links[0]["id"], link_data)
+                        else:
+                            # Create new link
+                            self.pb_client.add("entity_links", link_data)
             
-            # Draw nodes
-            node_types = {node: data.get('type', 'unknown') for node, data in G.nodes(data=True)}
-            unique_types = set(node_types.values())
-            color_map = {t: plt.cm.tab10(i/10) for i, t in enumerate(unique_types)}
-            
-            for node_type in unique_types:
-                nodes = [node for node, t in node_types.items() if t == node_type]
-                nx.draw_networkx_nodes(G, pos, nodelist=nodes, node_color=[color_map[node_type]], label=node_type)
-            
-            # Draw edges
-            nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.7)
-            
-            # Draw labels
-            node_labels = {node: data.get('name', node) for node, data in G.nodes(data=True)}
-            nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
-            
-            plt.title("Entity Network")
-            plt.legend()
-            plt.axis('off')
-            
-            # Save the figure
-            plt.savefig(output_path, format='png', dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            entity_linking_logger.debug(f"Entity network visualization saved to {output_path}")
+            logger.info("Entity registry saved to database")
+            return True
         except Exception as e:
-            entity_linking_logger.error(f"Error visualizing entity network: {e}")
+            logger.error(f"Error saving entity registry to database: {e}")
+            return False
     
-    return G
+    def load_from_database(self) -> bool:
+        """Load entity registry from the database.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.pb_client:
+            logger.warning("Cannot load from database: no PocketBase client provided")
+            return False
+        
+        try:
+            # Clear existing registry
+            self.registry = EntityRegistry()
+            
+            # Load entities
+            entities_data = self.pb_client.read("entities")
+            
+            for entity_data in entities_data:
+                try:
+                    entity = Entity(
+                        entity_id=entity_data["entity_id"],
+                        name=entity_data["name"],
+                        entity_type=entity_data["entity_type"],
+                        sources=json.loads(entity_data["sources"]),
+                        metadata=json.loads(entity_data["metadata"]),
+                        timestamp=datetime.fromisoformat(entity_data["timestamp"]) if entity_data.get("timestamp") else None
+                    )
+                    
+                    self.registry.add_entity(entity)
+                except Exception as e:
+                    logger.warning(f"Error loading entity {entity_data.get('entity_id')}: {e}")
+            
+            # Load entity links
+            links_data = self.pb_client.read("entity_links")
+            
+            for link_data in links_data:
+                try:
+                    source_id = link_data["source_entity_id"]
+                    target_id = link_data["target_entity_id"]
+                    confidence = link_data.get("confidence", 1.0)
+                    
+                    if source_id in self.registry.entities and target_id in self.registry.entities:
+                        self.registry.link_entities(source_id, target_id, confidence)
+                except Exception as e:
+                    logger.warning(f"Error loading entity link: {e}")
+            
+            logger.info("Entity registry loaded from database")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading entity registry from database: {e}")
+            return False
