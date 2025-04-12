@@ -11,6 +11,13 @@ from datetime import datetime
 import os
 import json
 import re
+from .topic_modeling import (
+    Topic, 
+    TopicModelingResult, 
+    TopicModeler, 
+    identify_topics, 
+    load_documents_from_pb
+)
 
 logger = logging.getLogger(__name__)
 
