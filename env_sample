@@ -13,3 +13,10 @@ PB_API_AUTH="test@example.com|1234567890" ##your pb superuser account and passwo
 #VERBOSE="true" ##for detail log info. If not need, remove this item.
 #PB_API_BASE="" ##only use if your pb not run on 127.0.0.1:8090
 #LLM_CONCURRENT_NUMBER=8 ##for concurrent llm requests, make sure your llm provider supports it(leave default is 1)
+
+## Auto-shutdown settings
+#WISEFLOW_AUTO_SHUTDOWN_ENABLED="true" # Enable auto-shutdown (default: true)
+#WISEFLOW_AUTO_SHUTDOWN_IDLE_TIMEOUT="300" # Idle timeout in seconds (default: 300 = 5 minutes)
+#WISEFLOW_AUTO_SHUTDOWN_CHECK_INTERVAL="30" # Check interval in seconds (default: 30)
+#WISEFLOW_AUTO_SHUTDOWN_CPU_THRESHOLD="80.0" # CPU threshold percentage (default: 80.0)
+#WISEFLOW_AUTO_SHUTDOWN_MEMORY_THRESHOLD="80.0" # Memory threshold percentage (default: 80.0)
