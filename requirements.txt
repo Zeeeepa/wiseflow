@@ -25,3 +25,4 @@ pandas>=1.2.0
 
 # Utilities
 tqdm>=4.56.0
+

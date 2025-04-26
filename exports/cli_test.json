@@ -1,0 +1,44 @@
+[
+  {
+    "id": "1",
+    "title": "Sample Document 1",
+    "content": "This is the content of sample document 1.",
+    "tags": [
+      "sample",
+      "document",
+      "test"
+    ],
+    "created": "2025-04-26T18:00:00.000Z",
+    "updated": "2025-04-26T18:00:00.000Z",
+    "author": "John Doe",
+    "status": "active"
+  },
+  {
+    "id": "2",
+    "title": "Sample Document 2",
+    "content": "This is the content of sample document 2.",
+    "tags": [
+      "sample",
+      "document",
+      "example"
+    ],
+    "created": "2025-04-26T18:01:00.000Z",
+    "updated": "2025-04-26T18:01:00.000Z",
+    "author": "Jane Smith",
+    "status": "draft"
+  },
+  {
+    "id": "3",
+    "title": "Sample Document 3",
+    "content": "This is the content of sample document 3.",
+    "tags": [
+      "sample",
+      "test",
+      "example"
+    ],
+    "created": "2025-04-26T18:02:00.000Z",
+    "updated": "2025-04-26T18:02:00.000Z",
+    "author": "Bob Johnson",
+    "status": "archived"
+  }
+]

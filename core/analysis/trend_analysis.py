@@ -289,6 +289,7 @@ def analyze_topic_trends(
     Returns:
         Dictionary mapping topic labels to their frequency trends
     """
+    # Create a dictionary to track topic frequencies
     topic_trends = defaultdict(list)
     time_periods = list(grouped_items.keys())
     
@@ -300,21 +301,29 @@ def analyze_topic_trends(
         if label and key_terms:
             topic_terms[label] = key_terms
     
-    # For each time period, count topic term occurrences
+    # For each time period, count topic occurrences
     for period, items in grouped_items.items():
         # Combine all content for this period
         period_content = " ".join([item.get('content', '') for item in items]).lower()
         
-        # Count occurrences of key terms for each topic
+        # Count occurrences of each topic's key terms
         for topic_label, terms in topic_terms.items():
-            # Sum the occurrences of all key terms
-            count = sum(period_content.count(term) for term in terms)
-            topic_trends[topic_label].append(count)
+            # Calculate a weighted score based on term occurrences
+            score = 0
+            for term in terms:
+                term_count = period_content.count(term)
+                score += term_count
+            
+            # Normalize by number of terms
+            if terms:
+                score = score / len(terms)
+            
+            topic_trends[topic_label].append(score)
     
     return dict(topic_trends)
 
 def test_trend_significance(
-    trends: Dict[str, Dict[str, List[int]]] | Dict[str, List[int]],
+    trends: Dict[str, List[int]] | Dict[str, Dict[str, List[int]]],
     confidence_threshold: float = 0.95
 ) -> Dict[str, Any]:
     """
@@ -325,14 +334,14 @@ def test_trend_significance(
         confidence_threshold: Confidence threshold for statistical tests
         
     Returns:
-        Dictionary containing significant trends with statistics
+        Dictionary of statistically significant trends
     """
     significant_trends = {}
     
     # Handle different input formats
     if all(isinstance(v, list) for v in trends.values()):
         # Format: {topic_label: [counts]}
-        for label, counts in trends.items():
+        for topic, counts in trends.items():
             if len(counts) < 2:
                 continue
                 
@@ -340,7 +349,7 @@ def test_trend_significance(
             result = mann_kendall_test(counts)
             
             if result['p_value'] < (1 - confidence_threshold):
-                significant_trends[label] = {
+                significant_trends[topic] = {
                     'counts': counts,
                     'trend': result['trend'],
                     'p_value': result['p_value'],

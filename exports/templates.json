@@ -1,0 +1,19 @@
+{
+  "example_template": {
+    "field_mappings": {
+      "document_id": "id",
+      "document_title": "title",
+      "document_content": "content",
+      "author_name": "author",
+      "document_status": {
+        "field": "status",
+        "transform": "uppercase"
+      }
+    },
+    "include_fields": [
+      "tags",
+      "created",
+      "updated"
+    ]
+  }
+}

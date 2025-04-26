@@ -1,0 +1,22 @@
+{
+  "entity_analyzer": {
+    "model": "gpt-3.5-turbo",
+    "entity_prompt": "You are an expert in entity extraction. Extract all named entities from the following text.\nFor each entity, provide:\n1. The entity name\n2. The entity type (person, organization, location, product, technology, event, date, etc.)\n3. A brief description based on the context\n\nFormat your response as a JSON array of objects with the following structure:\n[\n  {\n    \"name\": \"entity name\",\n    \"type\": \"entity type\",\n    \"description\": \"brief description\"\n  }\n]\n\nText to analyze:\n{text}"
+  },
+  "trend_analyzer": {
+    "model": "gpt-3.5-turbo",
+    "min_word_length": 4,
+    "max_keywords": 20,
+    "stopwords": [
+      "the", "and", "a", "to", "of", "in", "is", "that", "it", "with", 
+      "for", "as", "on", "was", "be", "this", "by", "at", "an", "are", 
+      "from", "or", "have", "had", "has", "not", "but", "what", "all", 
+      "were", "when", "we", "there", "can", "been", "who", "will", "more", 
+      "if", "no", "out", "so", "said", "one", "about", "up", "them"
+    ]
+  },
+  "text_processor": {
+    "model": "gpt-3.5-turbo",
+    "max_chunk_size": 8000
+  }
+}
