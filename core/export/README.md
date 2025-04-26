@@ -12,27 +12,26 @@ This module provides capabilities to export data in various formats and integrat
 - **Incremental Exports**: Support for incremental exports for large datasets
 - **Export Validation**: Methods for validating exported data
 
+## Installation
+
+The module requires the following dependencies:
+
+```bash
+pip install reportlab weasyprint requests pandas
+```
+
 ## Usage
 
-### Programmatic Usage
+### Basic Export
 
 ```python
 from core.export import get_export_manager
-from core.utils.pb_api import PbTalker
-import logging
 
-# Initialize logger
-logger = logging.getLogger(__name__)
-
-# Initialize PocketBase client
-pb_client = PbTalker(logger)
-
-# Get data from PocketBase
-data = pb_client.read(
-    collection_name="your_collection",
-    fields=["field1", "field2", "field3"],
-    filter="field1='value'"
-)
+# Create sample data
+data = [
+    {"id": "1", "title": "Sample Document 1", "content": "Content 1"},
+    {"id": "2", "title": "Sample Document 2", "content": "Content 2"}
+]
 
 # Get export manager
 export_manager = get_export_manager()
@@ -50,23 +49,25 @@ print(f"Exported data to {filepath}")
 ### Using Export Templates
 
 ```python
+from core.export import get_export_manager
+
+# Get export manager
+export_manager = get_export_manager()
+
 # Create a template
 template = export_manager.create_export_template(
     name="my_template",
     structure={
         "field_mappings": {
-            "new_field_name": "original_field_name",
-            "uppercase_field": {
-                "field": "original_field",
+            "document_id": "id",
+            "document_title": "title",
+            "document_content": "content",
+            "document_status": {
+                "field": "status",
                 "transform": "uppercase"
-            },
-            "formatted_date": {
-                "field": "date_field",
-                "transform": "date_format",
-                "format": "%Y-%m-%d"
             }
         },
-        "include_fields": ["id", "created", "updated"]
+        "include_fields": ["tags", "created", "updated"]
     }
 )
 
@@ -109,16 +110,9 @@ responses = webhook_manager.trigger_webhook(
 ```python
 # Schedule an export
 schedule_id = export_manager.schedule_export(
-    data_query={
-        "collection": "your_collection",
-        "fields": ["field1", "field2", "field3"],
-        "filter": "field1='value'"
-    },
-    format="csv",
-    schedule={
-        "interval": 24,
-        "unit": "hours"
-    },
+    data_query={"collection": "documents", "filter": "status='active'"},
+    format="json",
+    schedule={"interval": 24, "unit": "hours"},
     template_name="my_template"
 )
 ```
@@ -130,7 +124,7 @@ The module includes a command-line interface for easy access to export functiona
 ### Export Data
 
 ```bash
-python core/export/cli/export_cli.py export --collection your_collection --format csv --output export_file.csv
+python core/export/cli/export_cli.py export --data data.json --format csv --output export_file.csv
 ```
 
 ### Manage Templates
@@ -169,7 +163,7 @@ python core/export/cli/export_cli.py webhook delete --id webhook_1
 python core/export/cli/export_cli.py schedule list
 
 # Create a scheduled export
-python core/export/cli/export_cli.py schedule create --collection your_collection --format csv --interval 24 --unit hours
+python core/export/cli/export_cli.py schedule create --data query.json --format csv --interval 24 --unit hours
 ```
 
 ## Export Formats
@@ -190,13 +184,7 @@ XML exports convert the data to a hierarchical structure with customizable eleme
 
 PDF exports create formatted tables with customizable styling and support for sections and headers.
 
-## Dependencies
-
-- `core/utils/pb_api.py` for database operations
-- `reportlab` for PDF generation (optional)
-- `weasyprint` for HTML to PDF conversion (optional)
-
-## Error Handling
+## Error Handling and Logging
 
 All export operations include comprehensive error handling and logging. Failed exports are logged with detailed error messages, and webhook failures are tracked for monitoring.
 
