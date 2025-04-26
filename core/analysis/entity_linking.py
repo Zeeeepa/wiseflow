@@ -19,12 +19,265 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from core.analysis import Entity, Relationship, KnowledgeGraph
+from core.analysis.models import Entity, Relationship, KnowledgeGraph
 from core.utils.pb_api import PbTalker
 
 logger = logging.getLogger(__name__)
 
-# ... existing EntityRegistry class ...
+class EntityRegistry:
+    """Registry for tracking and linking entities across data sources."""
+    
+    def __init__(self, storage_path: str = "entity_registry"):
+        """Initialize the entity registry.
+        
+        Args:
+            storage_path: Path to store entity registry data
+        """
+        self.storage_path = storage_path
+        os.makedirs(storage_path, exist_ok=True)
+        self.entities: Dict[str, Entity] = {}
+        self.entity_links: Dict[str, List[str]] = defaultdict(list)
+        self.name_to_ids: Dict[str, List[str]] = defaultdict(list)
+        self.type_to_ids: Dict[str, List[str]] = defaultdict(list)
+        
+    def add_entity(self, entity: Entity) -> str:
+        """Add an entity to the registry.
+        
+        Args:
+            entity: The entity to add
+            
+        Returns:
+            The entity ID
+        """
+        self.entities[entity.entity_id] = entity
+        
+        # Update lookup dictionaries
+        normalized_name = self._normalize_name(entity.name)
+        self.name_to_ids[normalized_name].append(entity.entity_id)
+        self.type_to_ids[entity.entity_type].append(entity.entity_id)
+        
+        return entity.entity_id
+    
+    def get_entity(self, entity_id: str) -> Optional[Entity]:
+        """Get an entity by ID.
+        
+        Args:
+            entity_id: The entity ID
+            
+        Returns:
+            The entity if found, None otherwise
+        """
+        return self.entities.get(entity_id)
+    
+    def get_entities_by_name(self, name: str, fuzzy: bool = False, threshold: float = 0.8) -> List[Entity]:
+        """Get entities by name.
+        
+        Args:
+            name: The entity name to search for
+            fuzzy: Whether to use fuzzy matching
+            threshold: Similarity threshold for fuzzy matching
+            
+        Returns:
+            List of matching entities
+        """
+        normalized_name = self._normalize_name(name)
+        
+        if not fuzzy:
+            # Exact match
+            entity_ids = self.name_to_ids.get(normalized_name, [])
+            return [self.entities[entity_id] for entity_id in entity_ids]
+        else:
+            # Fuzzy match
+            matches = []
+            for entity_name, entity_ids in self.name_to_ids.items():
+                similarity = difflib.SequenceMatcher(None, normalized_name, entity_name).ratio()
+                if similarity >= threshold:
+                    for entity_id in entity_ids:
+                        matches.append(self.entities[entity_id])
+            return matches
+    
+    def link_entities(self, entity_id1: str, entity_id2: str, confidence: float = 1.0) -> bool:
+        """Link two entities as referring to the same real-world entity.
+        
+        Args:
+            entity_id1: First entity ID
+            entity_id2: Second entity ID
+            confidence: Confidence score for the link
+            
+        Returns:
+            True if the link was created, False otherwise
+        """
+        if entity_id1 not in self.entities or entity_id2 not in self.entities:
+            logger.warning(f"Cannot link entities: one or both entities not found")
+            return False
+        
+        # Add bidirectional links
+        if entity_id2 not in self.entity_links[entity_id1]:
+            self.entity_links[entity_id1].append(entity_id2)
+            
+        if entity_id1 not in self.entity_links[entity_id2]:
+            self.entity_links[entity_id2].append(entity_id1)
+            
+        # Add a relationship to both entities
+        entity1 = self.entities[entity_id1]
+        entity2 = self.entities[entity_id2]
+        
+        relationship_id = f"link_{uuid.uuid4().hex[:8]}"
+        relationship = Relationship(
+            relationship_id=relationship_id,
+            source_id=entity_id1,
+            target_id=entity_id2,
+            relationship_type="same_as",
+            metadata={
+                "confidence": confidence
+            }
+        )
+        
+        entity1.relationships.append(relationship)
+        
+        return True
+    
+    def get_linked_entities(self, entity_id: str) -> List[Entity]:
+        """Get all entities linked to the given entity.
+        
+        Args:
+            entity_id: The entity ID
+            
+        Returns:
+            List of linked entities
+        """
+        if entity_id not in self.entities:
+            return []
+        
+        linked_ids = self.entity_links.get(entity_id, [])
+        return [self.entities[linked_id] for linked_id in linked_ids if linked_id in self.entities]
+    
+    def calculate_entity_similarity(self, entity1: Entity, entity2: Entity) -> Tuple[float, float]:
+        """Calculate similarity between two entities.
+        
+        Args:
+            entity1: First entity
+            entity2: Second entity
+            
+        Returns:
+            Tuple of (similarity score, confidence)
+        """
+        # If entity types are different, similarity is low
+        if entity1.entity_type != entity2.entity_type:
+            return 0.3, 0.9
+        
+        # Calculate name similarity
+        name_similarity = difflib.SequenceMatcher(None, 
+                                                 self._normalize_name(entity1.name), 
+                                                 self._normalize_name(entity2.name)).ratio()
+        
+        # Calculate metadata similarity
+        metadata_similarity = 0.0
+        if entity1.metadata and entity2.metadata:
+            # Count matching keys and values
+            matching_keys = set(entity1.metadata.keys()) & set(entity2.metadata.keys())
+            if matching_keys:
+                matching_values = sum(1 for k in matching_keys if entity1.metadata[k] == entity2.metadata[k])
+                metadata_similarity = matching_values / len(matching_keys)
+        
+        # Calculate source similarity
+        source_similarity = 0.0
+        if entity1.sources and entity2.sources:
+            # Count matching sources
+            matching_sources = set(entity1.sources) & set(entity2.sources)
+            if matching_sources:
+                source_similarity = len(matching_sources) / max(len(entity1.sources), len(entity2.sources))
+        
+        # Combine similarities with weights
+        similarity = (0.6 * name_similarity + 
+                     0.3 * metadata_similarity + 
+                     0.1 * source_similarity)
+        
+        # Calculate confidence based on amount of information
+        confidence = 0.5 + 0.1 * len(entity1.metadata) + 0.1 * len(entity2.metadata)
+        confidence = min(0.95, confidence)
+        
+        return similarity, confidence
+    
+    def _normalize_name(self, name: str) -> str:
+        """Normalize an entity name for comparison.
+        
+        Args:
+            name: The entity name
+            
+        Returns:
+            Normalized name
+        """
+        if not name:
+            return ""
+        
+        # Convert to lowercase
+        normalized = name.lower()
+        
+        # Remove punctuation
+        normalized = re.sub(r'[^\w\s]', '', normalized)
+        
+        # Remove extra whitespace
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        
+        return normalized
+    
+    def save(self, filepath: Optional[str] = None) -> None:
+        """Save the entity registry to a file.
+        
+        Args:
+            filepath: Path to save the registry to, defaults to storage_path/registry.json
+        """
+        if filepath is None:
+            filepath = os.path.join(self.storage_path, "registry.json")
+            
+        try:
+            data = {
+                "entities": {entity_id: entity.to_dict() for entity_id, entity in self.entities.items()},
+                "entity_links": dict(self.entity_links)
+            }
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                
+            logger.info(f"Entity registry saved to {filepath}")
+        except Exception as e:
+            logger.error(f"Error saving entity registry: {e}")
+    
+    @classmethod
+    def load(cls, filepath: str) -> Optional['EntityRegistry']:
+        """Load an entity registry from a file.
+        
+        Args:
+            filepath: Path to load the registry from
+            
+        Returns:
+            The loaded entity registry if successful, None otherwise
+        """
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            registry = cls()
+            
+            # Load entities
+            for entity_id, entity_data in data.get("entities", {}).items():
+                entity = Entity.from_dict(entity_data)
+                registry.entities[entity_id] = entity
+                
+                # Update lookup dictionaries
+                normalized_name = registry._normalize_name(entity.name)
+                registry.name_to_ids[normalized_name].append(entity_id)
+                registry.type_to_ids[entity.entity_type].append(entity_id)
+            
+            # Load entity links
+            registry.entity_links = defaultdict(list, data.get("entity_links", {}))
+            
+            logger.info(f"Entity registry loaded from {filepath}")
+            return registry
+        except Exception as e:
+            logger.error(f"Error loading entity registry: {e}")
+            return None
 
 # Implement the missing functions
 async def link_entities(entities: List[Entity]) -> Dict[str, List[Entity]]:
