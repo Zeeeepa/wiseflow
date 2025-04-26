@@ -1,0 +1,44 @@
+[
+  {
+    "document_id": "1",
+    "document_title": "Sample Document 1",
+    "document_content": "This is the content of sample document 1.",
+    "author_name": "John Doe",
+    "document_status": "ACTIVE",
+    "tags": [
+      "sample",
+      "document",
+      "test"
+    ],
+    "created": "2025-04-26 18:09:59.229862",
+    "updated": "2025-04-26 18:09:59.229862"
+  },
+  {
+    "document_id": "2",
+    "document_title": "Sample Document 2",
+    "document_content": "This is the content of sample document 2.",
+    "author_name": "Jane Smith",
+    "document_status": "DRAFT",
+    "tags": [
+      "sample",
+      "document",
+      "example"
+    ],
+    "created": "2025-04-26 18:09:59.229864",
+    "updated": "2025-04-26 18:09:59.229864"
+  },
+  {
+    "document_id": "3",
+    "document_title": "Sample Document 3",
+    "document_content": "This is the content of sample document 3.",
+    "author_name": "Bob Johnson",
+    "document_status": "ARCHIVED",
+    "tags": [
+      "sample",
+      "test",
+      "example"
+    ],
+    "created": "2025-04-26 18:09:59.229865",
+    "updated": "2025-04-26 18:09:59.229865"
+  }
+]

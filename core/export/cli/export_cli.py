@@ -17,7 +17,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 
 from core.export import get_export_manager
-from core.utils.pb_api import PbTalker
+from core.export.webhook import get_webhook_manager
 
 # Configure logging
 logging.basicConfig(
@@ -35,11 +35,9 @@ def parse_args():
     
     # Export command
     export_parser = subparsers.add_parser('export', help='Export data')
-    export_parser.add_argument('--collection', required=True, help='PocketBase collection name')
+    export_parser.add_argument('--data', required=True, help='JSON file containing data to export')
     export_parser.add_argument('--format', required=True, choices=['csv', 'json', 'xml', 'pdf'], help='Export format')
     export_parser.add_argument('--output', help='Output file path (default: auto-generated)')
-    export_parser.add_argument('--filter', default='', help='Filter string for PocketBase query')
-    export_parser.add_argument('--fields', help='Comma-separated list of fields to export')
     export_parser.add_argument('--template', help='Template name to apply')
     
     # Template commands
@@ -92,30 +90,23 @@ def parse_args():
     
     # Create schedule
     create_schedule_parser = schedule_subparsers.add_parser('create', help='Create a new scheduled export')
-    create_schedule_parser.add_argument('--collection', required=True, help='PocketBase collection name')
+    create_schedule_parser.add_argument('--data', required=True, help='JSON file containing data query configuration')
     create_schedule_parser.add_argument('--format', required=True, choices=['csv', 'json', 'xml', 'pdf'], help='Export format')
     create_schedule_parser.add_argument('--interval', required=True, type=int, help='Interval value')
     create_schedule_parser.add_argument('--unit', choices=['minutes', 'hours', 'days'], default='hours', help='Interval unit')
-    create_schedule_parser.add_argument('--filter', default='', help='Filter string for PocketBase query')
-    create_schedule_parser.add_argument('--fields', help='Comma-separated list of fields to export')
     create_schedule_parser.add_argument('--template', help='Template name to apply')
     
     return parser.parse_args()
 
 def export_data(args):
     """Export data based on command-line arguments."""
-    # Initialize PocketBase client
-    pb_client = PbTalker(logger)
-    
-    # Get fields as a list if specified
-    fields = args.fields.split(',') if args.fields else None
-    
-    # Get data from PocketBase
-    data = pb_client.read(
-        collection_name=args.collection,
-        fields=fields,
-        filter=args.filter
-    )
+    # Load data from file
+    try:
+        with open(args.data, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load data: {str(e)}")
+        return
     
     # Get export manager
     export_manager = get_export_manager()
@@ -165,7 +156,6 @@ def handle_template_command(args):
 
 def handle_webhook_command(args):
     """Handle webhook-related commands."""
-    from core.export.webhook import get_webhook_manager
     webhook_manager = get_webhook_manager()
     
     if args.webhook_command == 'list':
@@ -248,7 +238,7 @@ def handle_schedule_command(args):
         if schedules:
             print("Scheduled exports:")
             for schedule_id, schedule in schedules.items():
-                print(f"- {schedule_id}: {schedule['data_query'].get('collection')} to {schedule['format']}")
+                print(f"- {schedule_id}: {schedule['data_query'].get('collection', 'data')} to {schedule['format']}")
                 print(f"  Schedule: Every {schedule['schedule'].get('interval')} {schedule['schedule'].get('unit', 'hours')}")
                 print(f"  Created: {schedule['created_at']}")
                 print(f"  Last run: {schedule.get('last_run', 'Never')}")
@@ -259,15 +249,13 @@ def handle_schedule_command(args):
             print("No scheduled exports")
     
     elif args.schedule_command == 'create':
-        # Get fields as a list if specified
-        fields = args.fields.split(',') if args.fields else None
-        
-        # Prepare data query
-        data_query = {
-            "collection": args.collection,
-            "fields": fields,
-            "filter": args.filter
-        }
+        # Load data query from file
+        try:
+            with open(args.data, 'r', encoding='utf-8') as f:
+                data_query = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load data query: {str(e)}")
+            return
         
         # Prepare schedule
         schedule = {
