@@ -305,93 +305,207 @@ class PatternRecognition:
         min_correlation: float = 0.3
     ) -> List[Pattern]:
         """
-        Detect correlations between entities and topics.
+        Detect correlations between entities and topics in the data.
         
         Args:
             data: List of data items with entities and topics
             entity_field: Field name for the entity
             topic_field: Field name for the topic
             min_correlation: Minimum correlation coefficient to be considered significant
-            
+        
         Returns:
-            List of correlation patterns
+            List of detected correlation patterns
         """
         pattern_logger.info(f"Detecting correlations in {len(data)} data items")
         
         if not data:
             return []
         
-        # Extract entities and topics
-        entity_topic_pairs = []
+        # Extract entities and topics from data
+        all_entities = set()
+        all_topics = set()
+        
+        for item in data:
+            entities = item.get(entity_field, [])
+            topics = item.get(topic_field, [])
+            
+            if isinstance(entities, list):
+                all_entities.update(entities)
+            else:
+                all_entities.add(entities)
+            
+            if isinstance(topics, list):
+                all_topics.update(topics)
+            else:
+                all_topics.add(topics)
+        
+        # Create co-occurrence matrices
+        entity_topic_matrix = defaultdict(lambda: defaultdict(int))
+        entity_entity_matrix = defaultdict(lambda: defaultdict(int))
+        topic_topic_matrix = defaultdict(lambda: defaultdict(int))
+        
+        # Count co-occurrences
         for item in data:
             entities = item.get(entity_field, [])
             topics = item.get(topic_field, [])
             
             if not isinstance(entities, list):
                 entities = [entities]
+            
+            if not isinstance(topics, list):
+                topics = [topics]
+            
+            # Entity-Topic co-occurrences
+            for entity in entities:
+                for topic in topics:
+                    entity_topic_matrix[entity][topic] += 1
+            
+            # Entity-Entity co-occurrences
+            for i, entity1 in enumerate(entities):
+                for entity2 in entities[i+1:]:
+                    entity_entity_matrix[entity1][entity2] += 1
+                    entity_entity_matrix[entity2][entity1] += 1
+            
+            # Topic-Topic co-occurrences
+            for i, topic1 in enumerate(topics):
+                for topic2 in topics[i+1:]:
+                    topic_topic_matrix[topic1][topic2] += 1
+                    topic_topic_matrix[topic2][topic1] += 1
+        
+        # Calculate entity and topic frequencies
+        entity_counts = Counter()
+        topic_counts = Counter()
+        
+        for item in data:
+            entities = item.get(entity_field, [])
+            topics = item.get(topic_field, [])
+            
+            if not isinstance(entities, list):
+                entities = [entities]
+            
             if not isinstance(topics, list):
                 topics = [topics]
             
             for entity in entities:
-                for topic in topics:
-                    entity_topic_pairs.append((entity, topic))
+                entity_counts[entity] += 1
+            
+            for topic in topics:
+                topic_counts[topic] += 1
         
-        # Count co-occurrences
-        entity_counter = Counter()
-        topic_counter = Counter()
-        pair_counter = Counter(entity_topic_pairs)
-        
-        for entity, topic in entity_topic_pairs:
-            entity_counter[entity] += 1
-            topic_counter[topic] += 1
-        
-        # Calculate correlations
+        # Calculate correlations and create patterns
         patterns = []
-        total_items = len(data)
         
-        for (entity, topic), pair_count in pair_counter.items():
-            entity_count = entity_counter[entity]
-            topic_count = topic_counter[topic]
-            
-            # Calculate phi coefficient (correlation)
-            a = pair_count
-            b = entity_count - pair_count
-            c = topic_count - pair_count
-            d = total_items - entity_count - topic_count + pair_count
-            
-            try:
-                phi = (a * d - b * c) / np.sqrt((a + b) * (a + c) * (b + d) * (c + d))
-            except ZeroDivisionError:
-                phi = 0
-            
-            if abs(phi) >= min_correlation:
-                # Calculate confidence score
-                confidence = min(1.0, abs(phi) * 2)  # Scale to 0-1
+        # Entity-Topic correlations
+        for entity in all_entities:
+            for topic in all_topics:
+                co_occurrence = entity_topic_matrix[entity][topic]
                 
-                if confidence >= self.min_confidence:
-                    # Create a pattern
-                    pattern_id = str(uuid.uuid4())
-                    sources = list(set(item.get("source", "unknown") for item in data))
+                if co_occurrence > 0:
+                    # Calculate correlation coefficient using phi coefficient
+                    entity_count = entity_counts[entity]
+                    topic_count = topic_counts[topic]
+                    total_items = len(data)
                     
-                    correlation_type = "positive" if phi > 0 else "negative"
-                    pattern = Pattern(
-                        pattern_id=pattern_id,
-                        pattern_type=f"{correlation_type}_correlation",
-                        description=f"{correlation_type.capitalize()} correlation between entity '{entity}' and topic '{topic}'",
-                        entities=[entity],
-                        sources=sources,
-                        confidence_score=confidence,
-                        metadata={
-                            "topic": topic,
-                            "correlation": phi,
-                            "entity_count": entity_count,
-                            "topic_count": topic_count,
-                            "co_occurrence_count": pair_count,
-                            "total_items": total_items
-                        }
-                    )
+                    a = co_occurrence  # Both entity and topic present
+                    b = entity_count - a  # Entity present, topic absent
+                    c = topic_count - a  # Topic present, entity absent
+                    d = total_items - a - b - c  # Both entity and topic absent
                     
-                    patterns.append(pattern)
+                    # Calculate phi coefficient
+                    try:
+                        phi = (a * d - b * c) / np.sqrt((a + b) * (a + c) * (b + d) * (c + d))
+                    except ZeroDivisionError:
+                        phi = 0
+                    
+                    # If correlation is significant, create a pattern
+                    if abs(phi) >= min_correlation:
+                        pattern_id = str(uuid.uuid4())
+                        sources = list(set(item.get("source", "unknown") for item in data))
+                        
+                        # Determine relationship type
+                        if phi > 0:
+                            relationship_type = "positive_correlation"
+                            description = f"Positive correlation between entity '{entity}' and topic '{topic}'"
+                        else:
+                            relationship_type = "negative_correlation"
+                            description = f"Negative correlation between entity '{entity}' and topic '{topic}'"
+                        
+                        pattern = Pattern(
+                            pattern_id=pattern_id,
+                            pattern_type=relationship_type,
+                            description=description,
+                            entities=[entity],
+                            sources=sources,
+                            time_period=None,  # No specific time period
+                            confidence_score=abs(phi),
+                            metadata={
+                                "topic": topic,
+                                "co_occurrence": co_occurrence,
+                                "entity_count": entity_count,
+                                "topic_count": topic_count,
+                                "total_items": total_items,
+                                "phi_coefficient": phi
+                            }
+                        )
+                        
+                        patterns.append(pattern)
+        
+        # Entity-Entity correlations
+        for entity1 in all_entities:
+            for entity2 in all_entities:
+                if entity1 >= entity2:  # Skip self-correlations and duplicates
+                    continue
+                
+                co_occurrence = entity_entity_matrix[entity1][entity2]
+                
+                if co_occurrence > 0:
+                    # Calculate correlation coefficient
+                    entity1_count = entity_counts[entity1]
+                    entity2_count = entity_counts[entity2]
+                    total_items = len(data)
+                    
+                    a = co_occurrence  # Both entities present
+                    b = entity1_count - a  # Entity1 present, entity2 absent
+                    c = entity2_count - a  # Entity2 present, entity1 absent
+                    d = total_items - a - b - c  # Both entities absent
+                    
+                    # Calculate phi coefficient
+                    try:
+                        phi = (a * d - b * c) / np.sqrt((a + b) * (a + c) * (b + d) * (c + d))
+                    except ZeroDivisionError:
+                        phi = 0
+                    
+                    # If correlation is significant, create a pattern
+                    if abs(phi) >= min_correlation:
+                        pattern_id = str(uuid.uuid4())
+                        sources = list(set(item.get("source", "unknown") for item in data))
+                        
+                        # Determine relationship type
+                        if phi > 0:
+                            relationship_type = "entity_co_occurrence"
+                            description = f"Entities '{entity1}' and '{entity2}' frequently appear together"
+                        else:
+                            relationship_type = "entity_mutual_exclusion"
+                            description = f"Entities '{entity1}' and '{entity2}' rarely appear together"
+                        
+                        pattern = Pattern(
+                            pattern_id=pattern_id,
+                            pattern_type=relationship_type,
+                            description=description,
+                            entities=[entity1, entity2],
+                            sources=sources,
+                            time_period=None,  # No specific time period
+                            confidence_score=abs(phi),
+                            metadata={
+                                "co_occurrence": co_occurrence,
+                                "entity1_count": entity1_count,
+                                "entity2_count": entity2_count,
+                                "total_items": total_items,
+                                "phi_coefficient": phi
+                            }
+                        )
+                        
+                        patterns.append(pattern)
         
         pattern_logger.info(f"Detected {len(patterns)} correlation patterns")
         self.patterns.extend(patterns)
@@ -471,23 +585,25 @@ class PatternRecognition:
     
     def visualize_entity_correlations(
         self,
-        patterns: List[Pattern],
+        patterns: List[Pattern] = None,
         output_path: Optional[str] = None
     ) -> str:
         """
-        Visualize entity correlations as a network graph.
+        Visualize entity correlations as a network.
         
         Args:
-            patterns: List of correlation patterns
+            patterns: List of correlation patterns to visualize
             output_path: Path to save the visualization
             
         Returns:
             Path to the saved visualization
         """
-        # Filter correlation patterns
-        correlation_patterns = [p for p in patterns if "correlation" in p.pattern_type]
+        if patterns is None:
+            patterns = [p for p in self.patterns if p.pattern_type in 
+                       ["entity_co_occurrence", "entity_mutual_exclusion", 
+                        "positive_correlation", "negative_correlation"]]
         
-        if not correlation_patterns:
+        if not patterns:
             pattern_logger.warning("No correlation patterns to visualize")
             return ""
         
@@ -495,71 +611,109 @@ class PatternRecognition:
         G = nx.Graph()
         
         # Add nodes and edges
-        for pattern in correlation_patterns:
-            entity = pattern.entities[0]
-            topic = pattern.metadata.get("topic", "unknown")
-            correlation = pattern.metadata.get("correlation", 0)
-            
-            # Add nodes
-            if entity not in G:
-                G.add_node(entity, type="entity")
-            if topic not in G:
-                G.add_node(topic, type="topic")
-            
-            # Add edge
-            G.add_edge(entity, topic, weight=abs(correlation), correlation_type=pattern.pattern_type)
+        for pattern in patterns:
+            if len(pattern.entities) >= 2:
+                # Entity-Entity correlation
+                entity1, entity2 = pattern.entities[:2]
+                
+                # Add nodes if they don't exist
+                if not G.has_node(entity1):
+                    G.add_node(entity1, type="entity")
+                
+                if not G.has_node(entity2):
+                    G.add_node(entity2, type="entity")
+                
+                # Add edge with correlation information
+                G.add_edge(
+                    entity1, 
+                    entity2, 
+                    weight=pattern.confidence_score,
+                    type=pattern.pattern_type,
+                    description=pattern.description
+                )
+            elif len(pattern.entities) == 1 and "topic" in pattern.metadata:
+                # Entity-Topic correlation
+                entity = pattern.entities[0]
+                topic = pattern.metadata["topic"]
+                
+                # Add nodes if they don't exist
+                if not G.has_node(entity):
+                    G.add_node(entity, type="entity")
+                
+                if not G.has_node(topic):
+                    G.add_node(topic, type="topic")
+                
+                # Add edge with correlation information
+                G.add_edge(
+                    entity, 
+                    topic, 
+                    weight=pattern.confidence_score,
+                    type=pattern.pattern_type,
+                    description=pattern.description
+                )
         
-        # Create visualization
+        if len(G.nodes()) == 0:
+            pattern_logger.warning("No nodes to visualize")
+            return ""
+        
+        # Generate the visualization
+        if output_path is None:
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            output_path = f"correlation_network_{timestamp}.png"
+        
         plt.figure(figsize=(12, 10))
         
-        # Define node colors
-        node_colors = []
-        for node in G.nodes():
-            if G.nodes[node]["type"] == "entity":
-                node_colors.append("skyblue")
-            else:
-                node_colors.append("lightgreen")
+        # Position nodes using spring layout
+        pos = nx.spring_layout(G, k=0.3, iterations=50)
         
-        # Define edge colors
-        edge_colors = []
-        for u, v, data in G.edges(data=True):
-            if data["correlation_type"] == "positive_correlation":
-                edge_colors.append("green")
-            else:
-                edge_colors.append("red")
+        # Get node types
+        node_types = nx.get_node_attributes(G, "type")
         
-        # Define edge widths
-        edge_widths = [data["weight"] * 3 for _, _, data in G.edges(data=True)]
+        # Draw nodes by type
+        entity_nodes = [n for n, t in node_types.items() if t == "entity"]
+        topic_nodes = [n for n, t in node_types.items() if t == "topic"]
         
-        # Create layout
-        pos = nx.spring_layout(G, seed=42)
+        nx.draw_networkx_nodes(G, pos, nodelist=entity_nodes, node_color="skyblue", 
+                              node_size=500, alpha=0.8, label="Entity")
+        nx.draw_networkx_nodes(G, pos, nodelist=topic_nodes, node_color="lightgreen", 
+                              node_size=500, alpha=0.8, label="Topic")
         
-        # Draw the graph
-        nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=500)
-        nx.draw_networkx_edges(G, pos, edge_color=edge_colors, width=edge_widths, alpha=0.7)
-        nx.draw_networkx_labels(G, pos, font_size=10)
+        # Draw edges by type
+        edge_types = nx.get_edge_attributes(G, "type")
         
-        # Add legend
-        plt.legend(
-            handles=[
-                plt.Line2D([0], [0], color="skyblue", marker="o", markersize=10, linestyle="", label="Entity"),
-                plt.Line2D([0], [0], color="lightgreen", marker="o", markersize=10, linestyle="", label="Topic"),
-                plt.Line2D([0], [0], color="green", linewidth=2, label="Positive Correlation"),
-                plt.Line2D([0], [0], color="red", linewidth=2, label="Negative Correlation")
-            ],
-            loc="upper right"
-        )
+        positive_edges = [(u, v) for (u, v), t in edge_types.items() 
+                         if t in ["entity_co_occurrence", "positive_correlation"]]
+        negative_edges = [(u, v) for (u, v), t in edge_types.items() 
+                         if t in ["entity_mutual_exclusion", "negative_correlation"]]
         
-        plt.title("Entity-Topic Correlation Network")
+        # Get edge weights for line thickness
+        edge_weights = nx.get_edge_attributes(G, "weight")
+        
+        # Scale weights for visualization
+        max_weight = max(edge_weights.values()) if edge_weights else 1.0
+        scaled_weights = {e: 1 + 5 * (w / max_weight) for e, w in edge_weights.items()}
+        
+        # Draw positive correlations
+        nx.draw_networkx_edges(G, pos, edgelist=positive_edges, 
+                              width=[scaled_weights.get((u, v), 1.0) for u, v in positive_edges],
+                              edge_color="green", style="solid", alpha=0.7,
+                              label="Positive Correlation")
+        
+        # Draw negative correlations
+        nx.draw_networkx_edges(G, pos, edgelist=negative_edges, 
+                              width=[scaled_weights.get((u, v), 1.0) for u, v in negative_edges],
+                              edge_color="red", style="dashed", alpha=0.7,
+                              label="Negative Correlation")
+        
+        # Draw labels
+        nx.draw_networkx_labels(G, pos, font_size=10, font_family="sans-serif")
+        
+        plt.title("Entity and Topic Correlation Network")
+        plt.legend()
         plt.axis("off")
         
-        # Save visualization
-        if output_path is None:
-            output_dir = os.path.join(project_dir, "visualizations")
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f"correlation_network_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
-        
-        plt.savefig(output_path)
+        # Save the figure
+        plt.savefig(output_path, format="png", dpi=300, bbox_inches="tight")
         plt.close()
         
         pattern_logger.info(f"Saved correlation network visualization to {output_path}")
