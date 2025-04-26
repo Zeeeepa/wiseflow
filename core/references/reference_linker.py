@@ -169,40 +169,50 @@ class ReferenceLinker:
             True if the link was removed successfully, False otherwise
         """
         try:
+            # Track removed entities and keywords for enhanced logging
+            removed_entities = []
+            removed_keywords = []
+            
             # Remove from reference-to-sources mapping
             if reference_id in self.reference_to_sources:
                 self.reference_to_sources[reference_id].discard(source_id)
                 if not self.reference_to_sources[reference_id]:
                     del self.reference_to_sources[reference_id]
-            
+
             # Remove from source-to-references mapping
             if source_id in self.source_to_references:
                 self.source_to_references[source_id].discard(reference_id)
                 if not self.source_to_references[source_id]:
                     del self.source_to_references[source_id]
-            
+
             # Remove from entity links
             for entity, refs in list(self.entity_links.items()):
-                if reference_id in refs:
+                if reference_id in refs and source_id in refs[reference_id]:
+                    removed_entities.append(entity)
                     refs[reference_id].discard(source_id)
                     if not refs[reference_id]:
                         del refs[reference_id]
                     if not refs:
                         del self.entity_links[entity]
-            
+
             # Remove from keyword links
             for keyword, refs in list(self.keyword_links.items()):
-                if reference_id in refs:
+                if reference_id in refs and source_id in refs[reference_id]:
+                    removed_keywords.append(keyword)
                     refs[reference_id].discard(source_id)
                     if not refs[reference_id]:
                         del refs[reference_id]
                     if not refs:
                         del self.keyword_links[keyword]
-            
+
             # Save the updated links
             self._save_links()
             
-            logger.info(f"Removed link between reference {reference_id} and source {source_id}")
+            # Enhanced logging with affected entities and keywords
+            logger.info(
+                f"Removed link between reference {reference_id} and source {source_id}. "
+                f"Affected entities: {removed_entities}, keywords: {removed_keywords}"
+            )
             return True
         except Exception as e:
             logger.error(f"Error removing link between reference {reference_id} and source {source_id}: {e}")
