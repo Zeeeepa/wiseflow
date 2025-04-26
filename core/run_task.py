@@ -21,7 +21,9 @@ from general_process import main_process, wiseflow_logger, pb
 from task import AsyncTaskManager, Task, create_task_id
 from analysis import CrossSourceAnalyzer, KnowledgeGraph
 from llms.advanced import AdvancedLLMProcessor
-
+from resource_monitor import ResourceMonitor
+from thread_pool_manager import ThreadPoolManager, TaskPriority, TaskStatus
+from task_manager import TaskManager, TaskDependencyError
 # Configure the maximum number of concurrent tasks
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
 
@@ -30,8 +32,30 @@ AUTO_SHUTDOWN_ENABLED = os.environ.get("AUTO_SHUTDOWN_ENABLED", "false").lower()
 AUTO_SHUTDOWN_IDLE_TIME = int(os.environ.get("AUTO_SHUTDOWN_IDLE_TIME", "3600"))  # Default: 1 hour
 AUTO_SHUTDOWN_CHECK_INTERVAL = int(os.environ.get("AUTO_SHUTDOWN_CHECK_INTERVAL", "300"))  # Default: 5 minutes
 
-# Initialize the task manager
-task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
+resource_monitor = ResourceMonitor(
+    check_interval=10.0,
+    cpu_threshold=80.0,
+    memory_threshold=80.0,
+    disk_threshold=90.0
+)
+resource_monitor.start()
+# Initialize the thread pool manager
+thread_pool = ThreadPoolManager(
+    min_workers=2,
+    max_workers=MAX_CONCURRENT_TASKS,
+    resource_monitor=resource_monitor,
+    adjust_interval=30.0
+)
+thread_pool.start()
+
+task_manager = TaskManager(
+    thread_pool=thread_pool,
+    resource_monitor=resource_monitor,
+    history_limit=1000
+)
+task_manager.start()
+# Initialize the legacy task manager (for backward compatibility)
+legacy_task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
 
 # Initialize the cross-source analyzer
 cross_source_analyzer = CrossSourceAnalyzer()
@@ -41,6 +65,16 @@ advanced_llm_processor = AdvancedLLMProcessor()
 
 # Track the last activity time
 last_activity_time = datetime.now()
+
+def resource_alert(resource_type, current_value, threshold):
+    wiseflow_logger.warning(f"Resource alert: {resource_type} usage at {current_value:.1f}% (threshold: {threshold}%)")
+    
+    # Adjust thread pool size if CPU or memory is high
+    if resource_type in ['cpu', 'memory'] and current_value > threshold:
+        optimal_count = resource_monitor.calculate_optimal_thread_count()
+        wiseflow_logger.info(f"Adjusting worker count to {optimal_count} due to high {resource_type} usage")
+# Register the resource alert callback
+resource_monitor.add_callback(resource_alert)
 
 async def process_focus_task(focus, sites):
     """Process a focus point task."""
@@ -156,6 +190,23 @@ async def generate_insights(focus):
     except Exception as e:
         wiseflow_logger.error(f"Error generating insights: {e}")
 
+def process_focus_task_wrapper(focus, sites):
+    """Synchronous wrapper for process_focus_task."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(process_focus_task(focus, sites))
+    finally:
+        loop.close()
+def generate_insights_wrapper(focus):
+    """Synchronous wrapper for generate_insights."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(generate_insights(focus))
+    finally:
+        loop.close()
+        
 async def check_auto_shutdown():
     """Check if the system should be shut down due to inactivity."""
     if not AUTO_SHUTDOWN_ENABLED:
@@ -164,18 +215,24 @@ async def check_auto_shutdown():
     while True:
         await asyncio.sleep(AUTO_SHUTDOWN_CHECK_INTERVAL)
         
-        # Check if there are any active tasks
-        active_tasks = [task for task in task_manager.get_all_tasks() if task.status in ["pending", "running"]]
+        active_tasks = [task for task in legacy_task_manager.get_all_tasks() if task.status in ["pending", "running"]]
         
-        if not active_tasks:
+        # Also check the new task manager
+        task_metrics = task_manager.thread_pool.get_metrics()
+        active_new_tasks = task_metrics['pending_tasks'] + task_metrics['running_tasks']
+        
+        if not active_tasks and active_new_tasks == 0:
+            
             # Check if the system has been idle for too long
             idle_time = (datetime.now() - last_activity_time).total_seconds()
             
             if idle_time > AUTO_SHUTDOWN_IDLE_TIME:
                 wiseflow_logger.info(f"System has been idle for {idle_time} seconds. Auto-shutting down...")
                 
-                # Perform graceful shutdown
-                await task_manager.shutdown()
+                await legacy_task_manager.shutdown()
+                task_manager.stop()
+                thread_pool.stop()
+                resource_monitor.stop()
                 
                 # Exit the process
                 sys.exit(0)
