@@ -16,6 +16,8 @@ import psutil
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union, Callable, Tuple
 
+from core.task.auto_shutdown import initialize_auto_shutdown, AutoShutdownManager
+
 logger = logging.getLogger(__name__)
 
 # Global resource monitor instance
@@ -159,49 +161,6 @@ def shutdown_task(task_id: str, task_manager) -> bool:
     return task_manager.cancel_task(task_id)
 
 
-def configure_shutdown_settings(settings: Dict[str, Any], resource_monitor) -> Dict[str, Any]:
-    """Configure auto-shutdown settings."""
-    if not resource_monitor:
-        raise ValueError("Resource monitor not initialized")
-    
-    # Update resource monitor config
-    for key, value in settings.items():
-        if isinstance(value, dict) and key in resource_monitor.config and isinstance(resource_monitor.config[key], dict):
-            resource_monitor.config[key].update(value)
-        else:
-            resource_monitor.config[key] = value
-    
-    return resource_monitor.config
-
-
-def shutdown_resources() -> None:
-    """Shut down all resources and exit the application."""
-    logger.info("Shutting down all resources...")
-    
-    # Get the resource monitor
-    monitor = get_resource_monitor()
-    
-    if monitor:
-        # Log the shutdown event
-        monitor.log_event("shutdown", "Application shutdown initiated")
-        
-        # Shut down the task manager
-        if monitor.task_manager:
-            if hasattr(monitor.task_manager, 'shutdown'):
-                if asyncio.iscoroutinefunction(monitor.task_manager.shutdown):
-                    # Create a new event loop for async shutdown
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(monitor.task_manager.shutdown())
-                    loop.close()
-                else:
-                    monitor.task_manager.shutdown()
-    
-    # Exit the application
-    logger.info("Shutdown complete, exiting application")
-    os._exit(0)
-
-
 class ResourceMonitor:
     """Monitors system resources and manages auto-shutdown."""
     
@@ -215,9 +174,13 @@ class ResourceMonitor:
         self.resource_history = []
         self.max_history_size = 100  # Keep last 100 measurements
         
-        # Register the global instance
-        global _resource_monitor
-        _resource_monitor = self
+        # Initialize auto-shutdown manager
+        auto_shutdown_config = self.config.get("auto_shutdown", {})
+        self.auto_shutdown = initialize_auto_shutdown(
+            task_manager=task_manager,
+            config=auto_shutdown_config,
+            notification_manager=self
+        )
         
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -226,7 +189,7 @@ class ResourceMonitor:
     def _signal_handler(self, sig, frame):
         """Handle termination signals."""
         logger.info(f"Received signal {sig}, initiating shutdown")
-        self.request_shutdown()
+        self.request_shutdown(f"Signal {sig} received")
     
     def start(self):
         """Start the resource monitor."""
@@ -271,14 +234,11 @@ class ResourceMonitor:
                     except Exception as e:
                         logger.error(f"Error storing resource usage: {e}")
                 
-                # Check resource limits
-                self._check_resource_limits(resources)
-                
                 # Check for idle tasks
                 self._check_idle_tasks()
                 
-                # Check for task completion
-                self._check_task_completion()
+                # Update auto-shutdown activity
+                self.auto_shutdown.update_activity()
                 
                 # Sleep until next check
                 time.sleep(check_interval)
@@ -286,59 +246,9 @@ class ResourceMonitor:
                 logger.error(f"Error in resource monitor loop: {e}")
                 time.sleep(60)  # Sleep for a minute before retrying
     
-    def _check_resource_limits(self, resources):
-        """Check if resource usage exceeds limits."""
-        if not self.config.get("auto_shutdown", {}).get("resource_threshold", True):
-            return
-        
-        limits = self.config.get("resource_limits", {})
-        
-        # Check CPU usage
-        if resources["cpu_percent"] > limits.get("cpu_percent", 90):
-            self.log_event(
-                "resource_warning",
-                f"CPU usage is high: {resources['cpu_percent']}%",
-                {"resource": "cpu", "value": resources["cpu_percent"], "limit": limits.get("cpu_percent", 90)}
-            )
-        
-        # Check memory usage
-        if resources["memory_percent"] > limits.get("memory_percent", 85):
-            self.log_event(
-                "resource_warning",
-                f"Memory usage is high: {resources['memory_percent']}%",
-                {"resource": "memory", "value": resources["memory_percent"], "limit": limits.get("memory_percent", 85)}
-            )
-        
-        # Check disk usage
-        if resources["disk_percent"] > limits.get("disk_percent", 90):
-            self.log_event(
-                "resource_warning",
-                f"Disk usage is high: {resources['disk_percent']}%",
-                {"resource": "disk", "value": resources["disk_percent"], "limit": limits.get("disk_percent", 90)}
-            )
-        
-        # Check if we need to shut down due to resource limits
-        if (
-            resources["cpu_percent"] > limits.get("cpu_percent", 90) or
-            resources["memory_percent"] > limits.get("memory_percent", 85) or
-            resources["disk_percent"] > limits.get("disk_percent", 90)
-        ):
-            # Log the event
-            self.log_event(
-                "auto_shutdown",
-                "Auto-shutdown triggered due to high resource usage",
-                {"resources": resources, "limits": limits}
-            )
-            
-            # Request shutdown
-            self.request_shutdown()
-    
     def _check_idle_tasks(self):
         """Check for idle tasks and shut them down if needed."""
-        if not self.config.get("auto_shutdown", {}).get("enabled", True):
-            return
-        
-        idle_timeout = self.config.get("auto_shutdown", {}).get("idle_timeout", 3600)  # Default: 1 hour
+        idle_timeout = self.config.get("idle_timeout", 3600)  # Default: 1 hour
         
         idle_tasks = detect_idle_tasks(idle_timeout, self.task_manager)
         
@@ -355,33 +265,6 @@ class ResourceMonitor:
             
             # Shut down the task
             shutdown_task(task_id, self.task_manager)
-    
-    def _check_task_completion(self):
-        """Check if all tasks are complete and trigger auto-shutdown if needed."""
-        if not self.config.get("auto_shutdown", {}).get("completion_detection", True):
-            return
-        
-        # Check if any task has auto_shutdown enabled
-        has_auto_shutdown = False
-        all_complete = True
-        
-        for task in self.task_manager.get_all_tasks():
-            if task.auto_shutdown:
-                has_auto_shutdown = True
-            
-            if task.status not in ["completed", "failed", "cancelled"]:
-                all_complete = False
-        
-        if has_auto_shutdown and all_complete:
-            # Log the event
-            self.log_event(
-                "auto_shutdown",
-                "Auto-shutdown triggered due to task completion",
-                {"tasks_complete": True}
-            )
-            
-            # Request shutdown
-            self.request_shutdown()
     
     def log_event(self, event_type, message, metadata=None):
         """Log an event to the database."""
@@ -406,19 +289,16 @@ class ResourceMonitor:
             except Exception as e:
                 logger.error(f"Error logging event: {e}")
     
-    def request_shutdown(self):
+    def request_shutdown(self, reason: str = None):
         """Request application shutdown."""
-        logger.info("Shutdown requested")
+        logger.info(f"Shutdown requested: {reason}")
         
-        # Create a thread to handle shutdown
-        shutdown_thread = threading.Thread(target=self._delayed_shutdown, daemon=True)
-        shutdown_thread.start()
+        # Use the auto-shutdown manager to handle the shutdown
+        self.auto_shutdown.request_shutdown(reason)
     
-    def _delayed_shutdown(self, delay=5):
-        """Perform a delayed shutdown to allow for cleanup."""
-        logger.info(f"Shutting down in {delay} seconds...")
-        time.sleep(delay)
-        shutdown_resources()
+    def send_notification(self, notification_type: str, message: str):
+        """Send a notification."""
+        self.log_event(notification_type, message)
     
     def get_resource_usage_history(self):
         """Get the resource usage history."""
