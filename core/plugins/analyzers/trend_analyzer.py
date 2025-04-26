@@ -10,9 +10,11 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 import re
 from collections import Counter
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from core.plugins.analyzers import AnalyzerBase, AnalysisResult
 from core.plugins.processors import ProcessedData
+from core.plugins.utils import TextExtractor
 from core.llms.litellm_wrapper import litellm_llm
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,9 @@ class TrendAnalyzer(AnalyzerBase):
         self.model = self.config.get("model", "gpt-3.5-turbo")
         self.min_word_length = self.config.get("min_word_length", 4)
         self.max_keywords = self.config.get("max_keywords", 20)
+        self.max_retries = self.config.get("max_retries", 3)
+        self.retry_min_wait = self.config.get("retry_min_wait", 4)
+        self.retry_max_wait = self.config.get("retry_max_wait", 10)
         self.stopwords = self.config.get("stopwords", [
             "the", "and", "a", "to", "of", "in", "is", "that", "it", "with", "for", "as", "on", "was", "be", "this", "by"
         ])
@@ -79,7 +84,7 @@ class TrendAnalyzer(AnalyzerBase):
         
         try:
             # Extract text from processed content
-            text = self._extract_text(processed_data.processed_content)
+            text = TextExtractor.extract_text(processed_data.processed_content)
             
             if not text:
                 logger.warning("No text content found in processed data")
@@ -122,73 +127,33 @@ class TrendAnalyzer(AnalyzerBase):
                 metadata={"error": str(e)}
             )
     
-    def _extract_text(self, processed_content: Any) -> str:
-        """Extract text from processed content."""
-        if isinstance(processed_content, str):
-            return processed_content
-        
-        if isinstance(processed_content, list):
-            # Try to extract text from a list of items
-            text_parts = []
-            for item in processed_content:
-                if isinstance(item, str):
-                    text_parts.append(item)
-                elif isinstance(item, dict) and "content" in item:
-                    text_parts.append(item["content"])
-            
-            return "\n\n".join(text_parts)
-        
-        if isinstance(processed_content, dict):
-            # Try to extract text from a dictionary
-            if "content" in processed_content:
-                return processed_content["content"]
-            
-            # Try to find any text fields
-            text_parts = []
-            for key, value in processed_content.items():
-                if isinstance(value, str) and len(value) > 50:  # Assume longer strings are content
-                    text_parts.append(value)
-            
-            return "\n\n".join(text_parts)
-        
-        return str(processed_content)
-    
     def _extract_keywords(self, text: str) -> List[Dict[str, Any]]:
         """Extract keywords from text."""
-        # Clean the text
-        text = text.lower()
-        text = re.sub(r'[^\w\s]', ' ', text)  # Remove punctuation
-        text = re.sub(r'\s+', ' ', text).strip()  # Normalize whitespace
-        
-        # Tokenize
-        words = text.split()
-        
-        # Filter words
-        filtered_words = [
-            word for word in words 
-            if len(word) >= self.min_word_length and word not in self.stopwords
-        ]
-        
-        # Count word frequencies
-        word_counts = Counter(filtered_words)
-        
-        # Get the most common words
-        top_keywords = word_counts.most_common(self.max_keywords)
-        
-        # Format the results
-        keywords = [
-            {
-                "keyword": keyword,
-                "count": count,
-                "frequency": count / len(filtered_words) if filtered_words else 0
-            }
-            for keyword, count in top_keywords
-        ]
-        
-        return keywords
+        try:
+            # Tokenize the text
+            words = re.findall(r'\b\w+\b', text.lower())
+            
+            # Filter out stopwords and short words
+            filtered_words = [word for word in words if word not in self.stopwords and len(word) >= self.min_word_length]
+            
+            # Count word frequencies
+            word_counts = Counter(filtered_words)
+            
+            # Get the most common words
+            top_keywords = word_counts.most_common(self.max_keywords)
+            
+            # Format the keywords
+            keywords = [{"keyword": keyword, "count": count} for keyword, count in top_keywords]
+            
+            return keywords
+            
+        except Exception as e:
+            logger.error(f"Error extracting keywords: {e}")
+            return []
     
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def _identify_trends(self, text: str) -> List[Dict[str, Any]]:
-        """Identify trends in text using LLM."""
+        """Identify trends in text using LLM with retry logic."""
         try:
             # Prepare the prompt
             prompt = self.trend_prompt.format(text=text)
@@ -206,31 +171,21 @@ class TrendAnalyzer(AnalyzerBase):
             
         except Exception as e:
             logger.error(f"Error identifying trends: {e}")
-            return []
+            raise  # Let retry handle the error
     
     def _parse_json_response(self, response: str) -> List[Dict[str, Any]]:
-        """Parse JSON from LLM response."""
+        """Parse JSON response from LLM."""
         try:
-            # Try to parse the entire response as JSON
+            # Extract JSON from the response
+            json_match = re.search(r'\[.*\]', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                return json.loads(json_str)
+            
+            # If no JSON array found, try to parse the entire response
             return json.loads(response)
-        except json.JSONDecodeError:
-            # Try to extract JSON from the response
-            json_pattern = r'\[\s*\{.*\}\s*\]'
-            matches = re.search(json_pattern, response, re.DOTALL)
-            if matches:
-                try:
-                    return json.loads(matches.group(0))
-                except json.JSONDecodeError:
-                    pass
             
-            # Try to extract JSON with triple backticks
-            json_pattern = r'```(?:json)?\s*([\s\S]*?)```'
-            matches = re.search(json_pattern, response, re.DOTALL)
-            if matches:
-                try:
-                    return json.loads(matches.group(1))
-                except json.JSONDecodeError:
-                    pass
-            
-            logger.error(f"Failed to parse JSON from response: {response}")
+        except Exception as e:
+            logger.error(f"Error parsing JSON response: {e}")
+            logger.debug(f"Response: {response}")
             return []

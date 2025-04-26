@@ -116,9 +116,9 @@ class PluginRegistry:
 class PluginManager:
     """Manager for loading and managing plugins."""
     
-    def __init__(self, plugins_dir: str = "plugins", config_file: Optional[str] = None):
+    def __init__(self, plugins_dir: Optional[str] = None, config_file: Optional[str] = None):
         """Initialize the plugin manager."""
-        self.plugins_dir = plugins_dir
+        self.plugins_dir = plugins_dir or "plugins"
         self.config_file = config_file
         self.plugins: Dict[str, PluginBase] = {}
         self.registry = PluginRegistry()
@@ -143,6 +143,17 @@ class PluginManager:
         
         # Ensure the plugins directory exists in the Python path
         plugins_path = os.path.abspath(self.plugins_dir)
+        
+        # Validate the plugins directory
+        if not os.path.exists(plugins_path):
+            logger.error(f"Plugins directory does not exist: {plugins_path}")
+            return []
+            
+        # Security check to prevent directory traversal
+        if not plugins_path.startswith(os.path.abspath(os.getcwd())):
+            logger.error(f"Plugins directory must be within current working directory")
+            return []
+        
         if plugins_path not in sys.path:
             sys.path.insert(0, os.path.dirname(plugins_path))
         
@@ -185,7 +196,7 @@ class PluginManager:
                         plugin_modules.append((import_path, plugin_type))
         
         return plugin_modules
-    
+
     def load_plugin(self, module_path: str, plugin_type: str) -> Optional[PluginBase]:
         """
         Load a plugin from a module path.
