@@ -131,7 +131,7 @@ class PluginManager:
                     self.plugin_configs = json.load(f)
             except Exception as e:
                 logger.error(f"Failed to load plugin configurations from {config_file}: {e}")
-    
+
     def discover_plugins(self) -> List[Tuple[str, str]]:
         """
         Discover available plugins in the plugins directory.

@@ -194,10 +194,10 @@ class EntityAnalyzer(AnalyzerBase):
                 json_str = json_match.group(0)
                 return json.loads(json_str)
             
-            # If no JSON array found, try to parse the entire response
+            # If no JSON array found, try parsing the entire response
             return json.loads(response)
             
         except Exception as e:
             logger.error(f"Error parsing JSON response: {e}")
-            logger.debug(f"Response: {response}")
+            logger.debug(f"Raw response: {response}")
             return []
