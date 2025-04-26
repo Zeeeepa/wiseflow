@@ -12,7 +12,7 @@ import csv
 import logging
 import xml.dom.minidom
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Any, Optional, Union, Callable
+from typing import Dict, List, Any, Optional, Union, Callable, Protocol
 from datetime import datetime, timedelta
 import threading
 import time
@@ -38,6 +38,58 @@ class ExportFormat:
     def all(cls) -> List[str]:
         """Return all supported formats."""
         return [cls.CSV, cls.JSON, cls.XML, cls.PDF]
+
+# Define data provider protocol
+class DataProvider(Protocol):
+    """Protocol for data providers."""
+    
+    def get_data(self, query: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Get data based on query parameters.
+        
+        Args:
+            query: Query parameters
+            
+        Returns:
+            List of data records
+        """
+        ...
+
+class SampleDataProvider:
+    """Sample data provider for demonstration purposes."""
+    
+    def get_data(self, query: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Get sample data.
+        
+        Args:
+            query: Query parameters (ignored in this implementation)
+            
+        Returns:
+            Sample data records
+        """
+        return [
+            {
+                "id": "1",
+                "title": "Sample Document 1",
+                "content": "This is the content of sample document 1.",
+                "tags": ["sample", "document", "test"],
+                "created": datetime.now(),
+                "updated": datetime.now(),
+                "author": "John Doe",
+                "status": "active"
+            },
+            {
+                "id": "2",
+                "title": "Sample Document 2",
+                "content": "This is the content of sample document 2.",
+                "tags": ["sample", "document", "example"],
+                "created": datetime.now(),
+                "updated": datetime.now(),
+                "author": "Jane Smith",
+                "status": "draft"
+            }
+        ]
 
 class ExportTemplate:
     """Export template for customizing export structure."""
@@ -130,6 +182,7 @@ class ExportManager:
         self.scheduled_exports = {}
         self.scheduler_thread = None
         self.scheduler_running = False
+        self.data_provider = SampleDataProvider()
         
         # Create export directory if it doesn't exist
         os.makedirs(export_dir, exist_ok=True)
@@ -287,6 +340,13 @@ class ExportManager:
             filepath: Path to save the CSV file
         """
         try:
+            # Handle empty data case
+            if not data:
+                with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                    f.write("# No data to export\n")
+                logger.info(f"Created empty CSV file: {filepath}")
+                return
+            
             # Get all possible fields from all records
             fieldnames = set()
             for item in data:
@@ -392,17 +452,17 @@ class ExportManager:
             doc = SimpleDocTemplate(filepath, pagesize=letter)
             elements = []
             
-            # Add title
+            # Add document title and timestamp
             styles = getSampleStyleSheet()
             title_style = styles['Title']
             normal_style = styles['Normal']
             
             # Add document title and timestamp
-            elements.append(Paragraph(f"Export - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Title']))
+            elements.append(Paragraph(f"Export - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", title_style))
             elements.append(Spacer(1, 0.25 * inch))
             
             if not data:
-                elements.append(Paragraph("No data to export", styles['Normal']))
+                elements.append(Paragraph("No data to export", normal_style))
             else:
                 # Get all possible fields from all records
                 fieldnames = set()
@@ -623,30 +683,8 @@ class ExportManager:
         """
         logger.info(f"Running scheduled export {schedule_id}")
         
-        # In a real implementation, this would fetch data from a database
-        # For now, we'll just use sample data
-        data = [
-            {
-                "id": "1",
-                "title": "Sample Document 1",
-                "content": "This is the content of sample document 1.",
-                "tags": ["sample", "document", "test"],
-                "created": datetime.now(),
-                "updated": datetime.now(),
-                "author": "John Doe",
-                "status": "active"
-            },
-            {
-                "id": "2",
-                "title": "Sample Document 2",
-                "content": "This is the content of sample document 2.",
-                "tags": ["sample", "document", "example"],
-                "created": datetime.now(),
-                "updated": datetime.now(),
-                "author": "Jane Smith",
-                "status": "draft"
-            }
-        ]
+        # Get data from the data provider
+        data = self.data_provider.get_data(schedule_info["data_query"])
         
         try:
             # Generate filename with timestamp
@@ -655,11 +693,14 @@ class ExportManager:
             filename = f"{collection_name}_{timestamp}"
             
             # Export the data
+            format = schedule_info["format"]
+            template_name = schedule_info.get("template_name")
+            
             filepath = self.export_to_format(
                 data=data,
-                format=schedule_info["format"],
+                format=format,
                 filename=filename,
-                template_name=schedule_info.get("template_name")
+                template_name=template_name
             )
             
             logger.info(f"Scheduled export {schedule_id} completed: {filepath}")
@@ -668,12 +709,31 @@ class ExportManager:
             self.trigger_webhook("export_complete", {
                 "schedule_id": schedule_id,
                 "filepath": filepath,
+                "format": format,
                 "record_count": len(data)
             })
             
+            return filepath
         except Exception as e:
             logger.error(f"Scheduled export {schedule_id} failed: {str(e)}")
+            
+            # Trigger webhook for failure
+            self.trigger_webhook("export_failed", {
+                "schedule_id": schedule_id,
+                "error": str(e)
+            })
+            
             raise
+    
+    def set_data_provider(self, provider):
+        """
+        Set a custom data provider.
+        
+        Args:
+            provider: Data provider implementing the DataProvider protocol
+        """
+        self.data_provider = provider
+        logger.info(f"Set custom data provider: {provider.__class__.__name__}")
     
     def get_export_history(self) -> List[Dict[str, Any]]:
         """
