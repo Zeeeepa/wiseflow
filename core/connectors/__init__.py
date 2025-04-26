@@ -104,3 +104,29 @@ class ConnectorBase(PluginBase):
     def get_last_run(self) -> Optional[datetime]:
         """Get the last run timestamp."""
         return self.last_run
+
+# Import connectors
+from core.connectors.web import WebConnector
+from core.connectors.academic import AcademicConnector
+from core.connectors.github import GitHubConnector
+from core.connectors.youtube import YouTubeConnector
+from core.connectors.code_search import CodeSearchConnector
+
+# Register available connectors
+AVAILABLE_CONNECTORS = {
+    "web": WebConnector,
+    "academic": AcademicConnector,
+    "github": GitHubConnector,
+    "youtube": YouTubeConnector,
+    "code_search": CodeSearchConnector
+}
+
+def get_connector(connector_type: str, config: Optional[Dict[str, Any]] = None) -> Optional[ConnectorBase]:
+    """Get a connector instance by type."""
+    if connector_type not in AVAILABLE_CONNECTORS:
+        logger.error(f"Unknown connector type: {connector_type}")
+        return None
+    
+    connector_class = AVAILABLE_CONNECTORS[connector_type]
+    connector = connector_class(config)
+    return connector
