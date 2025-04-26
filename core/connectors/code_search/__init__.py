@@ -360,7 +360,7 @@ class CodeSearchConnector(ConnectorBase):
             # Bitbucket Cloud doesn't have a code search API
             # This would typically require a custom implementation or a third-party service
             logger.warning("Bitbucket code search not implemented yet")
-            return []
+            raise NotImplementedError("Bitbucket code search is not implemented yet")
         except Exception as e:
             logger.error(f"Error searching Bitbucket code: {e}")
             return []

@@ -164,8 +164,9 @@ class AcademicConnector(ConnectorBase):
             
         except Exception as e:
             logger.error(f"Error collecting data from arXiv: {e}")
-            return []
-    
+            # Re-raise the exception to prevent silent failure
+            raise
+
     async def _collect_from_pubmed(self, params: Dict[str, Any]) -> List[DataItem]:
         """Collect data from PubMed."""
         query = params.get("query", "")
@@ -288,7 +289,8 @@ class AcademicConnector(ConnectorBase):
             
         except Exception as e:
             logger.error(f"Error collecting data from PubMed: {e}")
-            return []
+            # Re-raise the exception to prevent silent failure
+            raise
     
     async def _collect_from_semantic_scholar(self, params: Dict[str, Any]) -> List[DataItem]:
         """Collect data from Semantic Scholar."""
@@ -373,4 +375,5 @@ class AcademicConnector(ConnectorBase):
             
         except Exception as e:
             logger.error(f"Error collecting data from Semantic Scholar: {e}")
-            return []
+            # Re-raise the exception to prevent silent failure
+            raise

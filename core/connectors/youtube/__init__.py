@@ -292,12 +292,20 @@ class YouTubeConnector(ConnectorBase):
         try:
             # YouTube doesn't provide a direct API for transcripts
             # This would typically require a third-party library like youtube_transcript_api
-            # For now, we'll return an empty string
-            logger.warning("YouTube transcript extraction not implemented yet")
-            return ""
+            # For demonstration purposes, we'll implement a basic approach
+            logger.warning("YouTube transcript extraction not fully implemented yet")
+            
+            # In a production environment, you would use a library like youtube_transcript_api:
+            # from youtube_transcript_api import YouTubeTranscriptApi
+            # transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+            # return "\n".join([f"{item['start']:.1f} - {item['text']}" for item in transcript_list])
+            
+            # For now, we'll return a placeholder message
+            return "Transcript extraction is not fully implemented. In a production environment, use youtube_transcript_api or similar library."
         except Exception as e:
             logger.error(f"Error getting transcript for YouTube video {video_id}: {e}")
-            return ""
+            # Re-raise the exception to prevent silent failure
+            raise
     
     async def _collect_channel(self, channel_id: str, params: Dict[str, Any]) -> List[DataItem]:
         """Collect data from a specific YouTube channel."""
