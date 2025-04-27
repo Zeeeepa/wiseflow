@@ -38,6 +38,15 @@ if not vl_model:
     if not vl_model:
         raise ValueError("Neither VL_MODEL nor PRIMARY_MODEL is set, please set one in environment variables or edit core/.env")
 
+# Constants for image validation
+MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+ALLOWED_IMAGE_FORMATS = ['JPEG', 'JPG', 'PNG', 'GIF', 'WEBP']
+MAX_IMAGE_DIMENSION = 4096  # Maximum width or height in pixels
+REQUEST_TIMEOUT = 10  # Timeout for HTTP requests in seconds
+ALLOWED_URL_SCHEMES = ['http', 'https']
+# Add trusted domains if needed
+TRUSTED_DOMAINS = []  # e.g., ['example.com', 'trusted-cdn.net']
+
 # Prompt for image analysis
 IMAGE_ANALYSIS_PROMPT = """You are an expert in visual content analysis. Your task is to analyze the provided image and extract meaningful information from it.
 
@@ -82,6 +91,72 @@ Format your response as a JSON object with the following structure:
 }
 """
 
+def validate_image_url(url: str) -> bool:
+    """
+    Validate if a URL is safe to download images from.
+    
+    Args:
+        url: URL to validate
+        
+    Returns:
+        Boolean indicating if the URL is safe
+    """
+    try:
+        parsed_url = urlparse(url)
+        
+        # Check URL scheme
+        if parsed_url.scheme not in ALLOWED_URL_SCHEMES:
+            multimodal_logger.warning(f"Invalid URL scheme: {parsed_url.scheme}")
+            return False
+        
+        # Check if domain is trusted (if TRUSTED_DOMAINS is not empty)
+        if TRUSTED_DOMAINS and parsed_url.netloc not in TRUSTED_DOMAINS:
+            multimodal_logger.warning(f"Domain not in trusted list: {parsed_url.netloc}")
+            return False
+        
+        # Check for localhost or private IPs
+        hostname = parsed_url.hostname
+        if hostname:
+            if hostname == 'localhost' or hostname == '127.0.0.1' or hostname.startswith('192.168.') or hostname.startswith('10.') or hostname.startswith('172.'):
+                multimodal_logger.warning(f"URL points to local/private address: {hostname}")
+                return False
+        
+        return True
+    except Exception as e:
+        multimodal_logger.error(f"Error validating URL: {e}")
+        return False
+
+def validate_image_data(image_data: bytes) -> Tuple[bool, str, Optional[Image.Image]]:
+    """
+    Validate image data for size, format, and dimensions.
+    
+    Args:
+        image_data: Image data as bytes
+        
+    Returns:
+        Tuple of (is_valid, error_message, PIL_image_if_valid)
+    """
+    try:
+        # Check file size
+        if len(image_data) > MAX_IMAGE_SIZE_BYTES:
+            return False, f"Image exceeds maximum size of {MAX_IMAGE_SIZE_BYTES/1024/1024:.1f} MB", None
+        
+        # Check image format and dimensions
+        img = Image.open(io.BytesIO(image_data))
+        
+        # Check format
+        if img.format not in ALLOWED_IMAGE_FORMATS:
+            return False, f"Image format {img.format} not allowed. Allowed formats: {', '.join(ALLOWED_IMAGE_FORMATS)}", None
+        
+        # Check dimensions
+        width, height = img.size
+        if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+            return False, f"Image dimensions ({width}x{height}) exceed maximum allowed ({MAX_IMAGE_DIMENSION}x{MAX_IMAGE_DIMENSION})", None
+        
+        return True, "", img
+    except Exception as e:
+        return False, f"Invalid image data: {str(e)}", None
+
 async def analyze_image(image_data: Union[str, bytes], image_url: Optional[str] = None) -> Dict[str, Any]:
     """
     Analyze an image using vision-language model.
@@ -99,18 +174,68 @@ async def analyze_image(image_data: Union[str, bytes], image_url: Optional[str] 
         # Prepare image data
         if isinstance(image_data, str):
             if image_data.startswith(('http://', 'https://')):
-                # It's a URL, download the image
-                response = requests.get(image_data, timeout=10)
+                # It's a URL, validate and download the image
+                if not validate_image_url(image_data):
+                    return {
+                        "error": f"Invalid or unsafe image URL: {image_data}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                
+                response = requests.get(image_data, timeout=REQUEST_TIMEOUT)
                 response.raise_for_status()
                 image_bytes = response.content
+                
+                # Validate the downloaded image
+                is_valid, error_msg, _ = validate_image_data(image_bytes)
+                if not is_valid:
+                    return {
+                        "error": f"Invalid image data: {error_msg}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                
                 image_base64 = base64.b64encode(image_bytes).decode('utf-8')
             elif image_data.startswith('data:image'):
                 # It's a data URL
-                image_base64 = image_data.split(',')[1]
+                try:
+                    image_base64 = image_data.split(',')[1]
+                    # Decode and validate the image
+                    image_bytes = base64.b64decode(image_base64)
+                    is_valid, error_msg, _ = validate_image_data(image_bytes)
+                    if not is_valid:
+                        return {
+                            "error": f"Invalid image data: {error_msg}",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                except Exception as e:
+                    return {
+                        "error": f"Invalid data URL: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    }
             else:
                 # Assume it's already base64 encoded
-                image_base64 = image_data
+                try:
+                    image_base64 = image_data
+                    # Decode and validate the image
+                    image_bytes = base64.b64decode(image_base64)
+                    is_valid, error_msg, _ = validate_image_data(image_bytes)
+                    if not is_valid:
+                        return {
+                            "error": f"Invalid image data: {error_msg}",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                except Exception as e:
+                    return {
+                        "error": f"Invalid base64 data: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    }
         else:
+            # It's bytes, validate the image
+            is_valid, error_msg, _ = validate_image_data(image_data)
+            if not is_valid:
+                return {
+                    "error": f"Invalid image data: {error_msg}",
+                    "timestamp": datetime.now().isoformat()
+                }
             # It's bytes
             image_base64 = base64.b64encode(image_data).decode('utf-8')
         
@@ -152,6 +277,37 @@ async def analyze_image(image_data: Union[str, bytes], image_url: Optional[str] 
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+async def download_image(url: str) -> Optional[bytes]:
+    """
+    Download an image from a URL.
+    
+    Args:
+        url: URL of the image
+        
+    Returns:
+        Image data as bytes or None if download failed
+    """
+    try:
+        # Validate URL before downloading
+        if not validate_image_url(url):
+            multimodal_logger.warning(f"Skipping download from invalid or unsafe URL: {url}")
+            return None
+            
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        image_data = response.content
+        
+        # Validate the downloaded image
+        is_valid, error_msg, _ = validate_image_data(image_data)
+        if not is_valid:
+            multimodal_logger.warning(f"Invalid image data from {url}: {error_msg}")
+            return None
+            
+        return image_data
+    except Exception as e:
+        multimodal_logger.error(f"Error downloading image from {url}: {e}")
+        return None
 
 def extract_entities_from_analysis(analysis_text: str) -> List[Dict[str, Any]]:
     """
@@ -234,24 +390,6 @@ def extract_text_from_analysis(analysis_text: str) -> str:
         extracted_text.extend([match.strip() for match in matches if match.strip()])
     
     return "\n".join(extracted_text)
-
-async def download_image(url: str) -> Optional[bytes]:
-    """
-    Download an image from a URL.
-    
-    Args:
-        url: URL of the image
-        
-    Returns:
-        Image data as bytes or None if download failed
-    """
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        return response.content
-    except Exception as e:
-        multimodal_logger.error(f"Error downloading image from {url}: {e}")
-        return None
 
 async def integrate_text_and_image(text_content: str, image_analysis: Dict[str, Any]) -> Dict[str, Any]:
     """

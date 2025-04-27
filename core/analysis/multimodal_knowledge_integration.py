@@ -17,7 +17,6 @@ from ..utils.pb_api import PbTalker
 from ..llms.openai_wrapper import openai_llm as llm
 from .entity_extraction import extract_entities, extract_relationships
 from .entity_linking import link_entities, merge_entities
-from .multimodal_analysis import process_item_with_images
 from ..knowledge.graph import KnowledgeGraphBuilder
 
 # Set up logging
