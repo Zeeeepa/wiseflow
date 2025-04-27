@@ -15,9 +15,11 @@ import re
 import io
 import uuid
 import logging
+import socket
 from urllib.parse import urlparse
 import requests
 from PIL import Image
+import ipaddress
 
 from ..utils.general_utils import get_logger
 from ..utils.pb_api import PbTalker
@@ -46,6 +48,15 @@ REQUEST_TIMEOUT = 10  # Timeout for HTTP requests in seconds
 ALLOWED_URL_SCHEMES = ['http', 'https']
 # Add trusted domains if needed
 TRUSTED_DOMAINS = []  # e.g., ['example.com', 'trusted-cdn.net']
+# Maximum number of redirects to follow
+MAX_REDIRECTS = 5
+# Cache for DNS resolution results to prevent DNS rebinding attacks
+DNS_CACHE = {}
+# Cache for validated images to improve performance
+IMAGE_VALIDATION_CACHE = {}
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # seconds
 
 # Prompt for image analysis
 IMAGE_ANALYSIS_PROMPT = """You are an expert in visual content analysis. Your task is to analyze the provided image and extract meaningful information from it.
@@ -91,6 +102,29 @@ Format your response as a JSON object with the following structure:
 }
 """
 
+def is_private_ip(ip_str: str) -> bool:
+    """
+    Check if an IP address (IPv4 or IPv6) is private.
+    
+    Args:
+        ip_str: IP address as string
+        
+    Returns:
+        Boolean indicating if the IP is private
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        return (
+            ip.is_private or
+            ip.is_loopback or
+            ip.is_link_local or
+            ip.is_multicast or
+            ip.is_reserved or
+            ip.is_unspecified
+        )
+    except ValueError:
+        return False
+
 def validate_image_url(url: str) -> bool:
     """
     Validate if a URL is safe to download images from.
@@ -114,11 +148,45 @@ def validate_image_url(url: str) -> bool:
             multimodal_logger.warning(f"Domain not in trusted list: {parsed_url.netloc}")
             return False
         
-        # Check for localhost or private IPs
+        # Get hostname
         hostname = parsed_url.hostname
-        if hostname:
-            if hostname == 'localhost' or hostname == '127.0.0.1' or hostname.startswith('192.168.') or hostname.startswith('10.') or hostname.startswith('172.'):
-                multimodal_logger.warning(f"URL points to local/private address: {hostname}")
+        if not hostname:
+            multimodal_logger.warning("URL has no hostname")
+            return False
+            
+        # Check for localhost or private IPs (both IPv4 and IPv6)
+        # First check if it's already an IP address
+        if is_private_ip(hostname):
+            multimodal_logger.warning(f"URL points to private IP address: {hostname}")
+            return False
+            
+        # DNS rebinding protection: resolve hostname and check if it's private
+        if hostname in DNS_CACHE:
+            resolved_ips = DNS_CACHE[hostname]
+        else:
+            try:
+                # Resolve both IPv4 and IPv6 addresses
+                resolved_ips = []
+                for res_type in (socket.AF_INET, socket.AF_INET6):
+                    try:
+                        addrinfo = socket.getaddrinfo(hostname, None, res_type)
+                        for family, _, _, _, sockaddr in addrinfo:
+                            ip = sockaddr[0]
+                            resolved_ips.append(ip)
+                    except socket.gaierror:
+                        # No addresses of this type
+                        pass
+                
+                # Cache the results
+                DNS_CACHE[hostname] = resolved_ips
+            except Exception as e:
+                multimodal_logger.error(f"Error resolving hostname {hostname}: {e}")
+                return False
+        
+        # Check if any resolved IP is private
+        for ip in resolved_ips:
+            if is_private_ip(ip):
+                multimodal_logger.warning(f"URL {url} resolves to private IP {ip}")
                 return False
         
         return True
@@ -288,26 +356,72 @@ async def download_image(url: str) -> Optional[bytes]:
     Returns:
         Image data as bytes or None if download failed
     """
-    try:
-        # Validate URL before downloading
-        if not validate_image_url(url):
-            multimodal_logger.warning(f"Skipping download from invalid or unsafe URL: {url}")
+    # Check if URL is in validation cache
+    cache_key = f"url_{url}"
+    if cache_key in IMAGE_VALIDATION_CACHE:
+        if not IMAGE_VALIDATION_CACHE[cache_key]:
+            multimodal_logger.warning(f"Skipping previously invalid URL: {url}")
             return None
-            
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        image_data = response.content
-        
-        # Validate the downloaded image
-        is_valid, error_msg, _ = validate_image_data(image_data)
-        if not is_valid:
-            multimodal_logger.warning(f"Invalid image data from {url}: {error_msg}")
-            return None
-            
-        return image_data
-    except Exception as e:
-        multimodal_logger.error(f"Error downloading image from {url}: {e}")
+    
+    # Validate URL before downloading
+    if not validate_image_url(url):
+        multimodal_logger.warning(f"Skipping download from invalid or unsafe URL: {url}")
+        IMAGE_VALIDATION_CACHE[cache_key] = False
         return None
+    
+    # Cache the validation result
+    IMAGE_VALIDATION_CACHE[cache_key] = True
+    
+    # Implement retry logic
+    for attempt in range(MAX_RETRIES):
+        try:
+            # Use a session to handle redirects safely
+            session = requests.Session()
+            session.max_redirects = MAX_REDIRECTS
+            
+            response = session.get(
+                url, 
+                timeout=REQUEST_TIMEOUT,
+                allow_redirects=True,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            )
+            response.raise_for_status()
+            
+            # Verify content type is an image
+            content_type = response.headers.get('Content-Type', '')
+            if not content_type.startswith('image/'):
+                multimodal_logger.warning(f"URL {url} returned non-image content type: {content_type}")
+                return None
+            
+            image_data = response.content
+            
+            # Validate the downloaded image
+            is_valid, error_msg, _ = validate_image_data(image_data)
+            if not is_valid:
+                multimodal_logger.warning(f"Invalid image data from {url}: {error_msg}")
+                return None
+                
+            return image_data
+            
+        except requests.exceptions.Timeout:
+            multimodal_logger.warning(f"Timeout downloading image from {url} (attempt {attempt+1}/{MAX_RETRIES})")
+        except requests.exceptions.TooManyRedirects:
+            multimodal_logger.warning(f"Too many redirects for {url}")
+            return None  # Don't retry on redirect issues
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if hasattr(e, 'response') else 'unknown'
+            multimodal_logger.warning(f"HTTP error {status_code} downloading from {url} (attempt {attempt+1}/{MAX_RETRIES})")
+        except Exception as e:
+            multimodal_logger.error(f"Error downloading image from {url} (attempt {attempt+1}/{MAX_RETRIES}): {e}")
+        
+        # Wait before retrying, with exponential backoff
+        if attempt < MAX_RETRIES - 1:
+            retry_time = RETRY_DELAY * (2 ** attempt)  # Exponential backoff
+            await asyncio.sleep(retry_time)
+    
+    # All retries failed
+    multimodal_logger.error(f"Failed to download image from {url} after {MAX_RETRIES} attempts")
+    return None
 
 def extract_entities_from_analysis(analysis_text: str) -> List[Dict[str, Any]]:
     """
@@ -465,13 +579,21 @@ async def process_item_with_images(item: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dictionary containing processed item with multimodal analysis
     """
-    multimodal_logger.info(f"Processing item with ID: {item.get('id', 'unknown')}")
+    item_id = item.get('id', 'unknown')
+    multimodal_logger.info(f"Processing item with ID: {item_id}")
+    
+    # Create a copy of the item to avoid modifying the original
+    updated_item = item.copy()
     
     # Extract text content
     text_content = item.get("content", "")
     if not text_content:
-        multimodal_logger.warning("Item has no text content")
-        return item
+        multimodal_logger.warning(f"Item {item_id} has no text content")
+        updated_item["multimodal_analysis"] = {
+            "error": "No text content available for analysis",
+            "timestamp": datetime.now().isoformat()
+        }
+        return updated_item
     
     # Extract image URLs
     image_urls = []
@@ -491,66 +613,130 @@ async def process_item_with_images(item: Dict[str, Any]) -> Dict[str, Any]:
         image_urls.extend(html_images)
     
     if not image_urls:
-        multimodal_logger.info("No images found in the item")
-        return item
+        multimodal_logger.info(f"No images found in item {item_id}")
+        updated_item["multimodal_analysis"] = {
+            "status": "no_images",
+            "message": "No images found in the item",
+            "timestamp": datetime.now().isoformat()
+        }
+        return updated_item
     
-    # Process each image
+    # Process each image with proper error handling
     image_analyses = []
+    failed_urls = []
+    
     for url in image_urls:
-        # Download and analyze the image
-        image_data = await download_image(url)
-        if image_data:
-            analysis = await analyze_image(image_data, url)
-            image_analyses.append(analysis)
+        try:
+            # Download and analyze the image
+            multimodal_logger.debug(f"Downloading image from URL: {url}")
+            image_data = await download_image(url)
+            
+            if image_data:
+                multimodal_logger.debug(f"Analyzing image from URL: {url}")
+                analysis = await analyze_image(image_data, url)
+                
+                # Check if analysis contains an error
+                if "error" in analysis:
+                    multimodal_logger.warning(f"Error analyzing image from {url}: {analysis['error']}")
+                    failed_urls.append({"url": url, "error": analysis["error"]})
+                else:
+                    image_analyses.append(analysis)
+            else:
+                multimodal_logger.warning(f"Failed to download image from {url}")
+                failed_urls.append({"url": url, "error": "Failed to download image"})
+        except Exception as e:
+            multimodal_logger.error(f"Exception processing image from {url}: {e}")
+            failed_urls.append({"url": url, "error": str(e)})
     
     if not image_analyses:
-        multimodal_logger.warning("Failed to analyze any images")
-        return item
+        multimodal_logger.warning(f"Failed to analyze any images for item {item_id}")
+        updated_item["multimodal_analysis"] = {
+            "status": "analysis_failed",
+            "message": "Failed to analyze any images",
+            "failed_urls": failed_urls,
+            "timestamp": datetime.now().isoformat()
+        }
+        return updated_item
     
     # Integrate text and image analyses
     integrated_analyses = []
     for analysis in image_analyses:
-        integrated = await integrate_text_and_image(text_content, analysis)
-        integrated_analyses.append(integrated)
+        try:
+            integrated = await integrate_text_and_image(text_content, analysis)
+            integrated_analyses.append(integrated)
+        except Exception as e:
+            multimodal_logger.error(f"Error integrating text and image analysis: {e}")
+            # Continue with other analyses
+    
+    if not integrated_analyses:
+        multimodal_logger.warning(f"Failed to integrate any text and image analyses for item {item_id}")
+        updated_item["multimodal_analysis"] = {
+            "status": "integration_failed",
+            "message": "Failed to integrate text and image analyses",
+            "image_analyses": image_analyses,  # Include the successful image analyses
+            "failed_urls": failed_urls,
+            "timestamp": datetime.now().isoformat()
+        }
+        return updated_item
     
     # Combine all integrated analyses
     combined_analysis = combine_integrated_analyses(integrated_analyses)
     
+    # Add metadata about processing
+    combined_analysis["processed_images_count"] = len(image_analyses)
+    combined_analysis["total_images_count"] = len(image_urls)
+    if failed_urls:
+        combined_analysis["failed_urls"] = failed_urls
+    
     # Update the item with multimodal analysis
-    updated_item = item.copy()
     updated_item["multimodal_analysis"] = combined_analysis
     
     # Extract additional entities from multimodal analysis
     if "key_entities" in combined_analysis:
-        entity_links = updated_item.get("entity_links", [])
-        if isinstance(entity_links, str):
-            try:
-                entity_links = json.loads(entity_links)
-            except:
-                entity_links = []
-        
-        # Add new entities from multimodal analysis
-        for entity in combined_analysis["key_entities"]:
-            if entity["source"] in ["image", "both"]:
-                entity_links.append({
-                    "entity_id": str(uuid.uuid4()),
-                    "entity_name": entity["name"],
-                    "entity_type": entity["type"],
-                    "confidence": entity["confidence"],
-                    "source": "multimodal_analysis"
-                })
-        
-        updated_item["entity_links"] = json.dumps(entity_links)
+        try:
+            entity_links = updated_item.get("entity_links", [])
+            if isinstance(entity_links, str):
+                try:
+                    entity_links = json.loads(entity_links)
+                except json.JSONDecodeError:
+                    multimodal_logger.warning(f"Invalid JSON in entity_links for item {item_id}")
+                    entity_links = []
+            
+            # Add new entities from multimodal analysis
+            for entity in combined_analysis["key_entities"]:
+                if entity.get("source") in ["image", "both"]:
+                    entity_links.append({
+                        "entity_id": str(uuid.uuid4()),
+                        "entity_name": entity["name"],
+                        "entity_type": entity["type"],
+                        "confidence": entity["confidence"],
+                        "source": "multimodal_analysis"
+                    })
+            
+            updated_item["entity_links"] = json.dumps(entity_links)
+        except Exception as e:
+            multimodal_logger.error(f"Error processing entities for item {item_id}: {e}")
     
-    # Save the updated item to the database
+    # Save the updated item to the database with retry logic
     try:
-        pb.update("infos", item["id"], {
-            "multimodal_analysis": json.dumps(combined_analysis),
-            "entity_links": updated_item["entity_links"]
-        })
-        multimodal_logger.info(f"Updated item {item['id']} with multimodal analysis")
+        for attempt in range(MAX_RETRIES):
+            try:
+                pb.update("infos", item["id"], {
+                    "multimodal_analysis": json.dumps(combined_analysis),
+                    "entity_links": updated_item["entity_links"] if "entity_links" in updated_item else None
+                })
+                multimodal_logger.info(f"Updated item {item_id} with multimodal analysis")
+                break
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    retry_time = RETRY_DELAY * (2 ** attempt)
+                    multimodal_logger.warning(f"Database update failed (attempt {attempt+1}/{MAX_RETRIES}), retrying in {retry_time}s: {e}")
+                    await asyncio.sleep(retry_time)
+                else:
+                    raise
     except Exception as e:
-        multimodal_logger.error(f"Error updating item in database: {e}")
+        multimodal_logger.error(f"Error updating item {item_id} in database after {MAX_RETRIES} attempts: {e}")
+        # Still return the updated item even if saving to DB failed
     
     return updated_item
 

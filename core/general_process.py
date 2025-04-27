@@ -504,8 +504,25 @@ async def process_focus_point(focus_id: str, focus_point: str, explanation: str,
                     wiseflow_logger.info(f'Multimodal knowledge integration completed: {integration_result}')
                 except asyncio.TimeoutError:
                     wiseflow_logger.warning(f'Multimodal knowledge integration timed out for focus point {focus_id}')
-                    # The task will continue running in the background
-                
+                    # Cancel the task instead of letting it run in the background
+                    integration_task.cancel()
+                    try:
+                        await integration_task
+                    except asyncio.CancelledError:
+                        wiseflow_logger.info(f'Multimodal knowledge integration task for focus point {focus_id} was cancelled')
+                    except Exception as e:
+                        wiseflow_logger.error(f'Error while cancelling integration task: {e}')
+                    
+                    # Log the timeout as a partial result
+                    pb.update(
+                        collection_name='focus_point',
+                        id=focus_id,
+                        data={
+                            'multimodal_integration_status': 'timeout',
+                            'multimodal_integration_timestamp': datetime.now().isoformat()
+                        }
+                    )
+            
             except Exception as e:
                 wiseflow_logger.error(f'Error integrating multimodal analysis into knowledge graph: {e}')
     except Exception as e:
