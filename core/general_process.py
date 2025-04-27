@@ -13,6 +13,8 @@ import feedparser
 from plugins import PluginManager
 from connectors import ConnectorBase, DataItem
 from references import ReferenceManager
+from analysis.multimodal_analysis import process_item_with_images
+from analysis.multimodal_knowledge_integration import integrate_multimodal_analysis_with_knowledge_graph
 
 project_dir = os.environ.get("PROJECT_DIR", "")
 if project_dir:
@@ -74,7 +76,18 @@ async def info_process(url: str,
             wiseflow_logger.error(f'Error processing insights: {e}')
         
         # Save to database
-        await pb.create('infos', info)
+        info_id = await pb.create('infos', info)
+        
+        # Process multimodal analysis if enabled
+        if os.environ.get("ENABLE_MULTIMODAL", "false").lower() == "true":
+            try:
+                # Get the saved item
+                saved_item = pb.read_one('infos', info_id)
+                if saved_item:
+                    # Process the item for multimodal analysis
+                    await process_item_with_images(saved_item)
+            except Exception as e:
+                wiseflow_logger.error(f'Error processing multimodal analysis: {e}')
 
 async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_prompts: list[str]):
     """Process a data item using the appropriate processor plugin."""
@@ -450,5 +463,14 @@ async def process_focus_point(focus_id: str, focus_point: str, explanation: str,
             )
             
             wiseflow_logger.info(f'Collective insights generated and saved for focus point {focus_id}')
+            
+            # Process multimodal knowledge integration if enabled
+            if os.environ.get("ENABLE_MULTIMODAL", "false").lower() == "true":
+                try:
+                    wiseflow_logger.info(f'Integrating multimodal analysis into knowledge graph for focus point {focus_id}')
+                    integration_result = await integrate_multimodal_analysis_with_knowledge_graph(focus_id)
+                    wiseflow_logger.info(f'Multimodal knowledge integration completed: {integration_result}')
+                except Exception as e:
+                    wiseflow_logger.error(f'Error integrating multimodal analysis into knowledge graph: {e}')
     except Exception as e:
         wiseflow_logger.error(f'Error generating collective insights: {e}')
