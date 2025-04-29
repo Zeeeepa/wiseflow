@@ -1,21 +1,18 @@
 """
-Trend Analyzer Plugin for Wiseflow.
+Trend analyzer plugin for Wiseflow.
 
-This plugin analyzes processed data to identify trends and patterns over time.
+This module provides an analyzer for identifying trends in processed data.
 """
 
-import json
 import logging
-from typing import Dict, List, Any, Optional
+import json
+import uuid
+from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
-import re
-from collections import Counter
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from core.plugins.analyzers import AnalyzerBase, AnalysisResult
 from core.plugins.processors import ProcessedData
-from core.plugins.utils import TextExtractor
-from core.llms.litellm_wrapper import litellm_llm
+from core.llms.openai_wrapper import openai_llm
 
 logger = logging.getLogger(__name__)
 
@@ -23,169 +20,164 @@ class TrendAnalyzer(AnalyzerBase):
     """Analyzer for identifying trends in processed data."""
     
     name: str = "trend_analyzer"
-    description: str = "Identifies trends and patterns in processed data over time"
+    description: str = "Analyzer for identifying trends in processed data"
     analyzer_type: str = "trend"
-    
-    # Default prompt for trend analysis
-    DEFAULT_TREND_PROMPT = """
-    You are an expert in trend analysis. Identify key trends, patterns, and insights from the following text.
-    Focus on:
-    1. Emerging topics or themes
-    2. Changes in sentiment or opinion
-    3. Evolving narratives or discussions
-    4. Recurring patterns or cycles
-    5. Notable shifts or turning points
-    
-    For each trend you identify, provide:
-    1. A concise title for the trend
-    2. A description of the trend
-    3. Supporting evidence from the text
-    4. The significance or implications of the trend
-    
-    Format your response as a JSON array of objects with the following structure:
-    [
-      {
-        "title": "trend title",
-        "description": "description of the trend",
-        "evidence": "supporting evidence from the text",
-        "significance": "significance or implications"
-      }
-    ]
-    
-    Text to analyze:
-    {text}
-    """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize the trend analyzer."""
         super().__init__(config)
-        self.trend_prompt = self.config.get("trend_prompt", self.DEFAULT_TREND_PROMPT)
-        self.model = self.config.get("model", "gpt-3.5-turbo")
-        self.min_word_length = self.config.get("min_word_length", 4)
-        self.max_keywords = self.config.get("max_keywords", 20)
-        self.max_retries = self.config.get("max_retries", 3)
-        self.retry_min_wait = self.config.get("retry_min_wait", 4)
-        self.retry_max_wait = self.config.get("retry_max_wait", 10)
-        self.stopwords = self.config.get("stopwords", [
-            "the", "and", "a", "to", "of", "in", "is", "that", "it", "with", "for", "as", "on", "was", "be", "this", "by"
-        ])
+        self.default_model = self.config.get("default_model", "gpt-3.5-turbo")
+        self.default_temperature = self.config.get("default_temperature", 0.3)
+        self.default_max_tokens = self.config.get("default_max_tokens", 1500)
         
+    def initialize(self) -> bool:
+        """Initialize the trend analyzer."""
+        try:
+            logger.info(f"Initialized trend analyzer with model: {self.default_model}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize trend analyzer: {e}")
+            return False
+    
     def analyze(self, processed_data: ProcessedData, params: Optional[Dict[str, Any]] = None) -> AnalysisResult:
-        """Analyze processed data to identify trends."""
+        """
+        Analyze processed data to identify trends.
+        
+        Args:
+            processed_data: The processed data to analyze
+            params: Optional analysis parameters
+                - model: The model to use
+                - temperature: The temperature to use
+                - max_tokens: The maximum number of tokens to generate
+                - focus_areas: List of areas to focus on for trend analysis
+                
+        Returns:
+            AnalysisResult: The analysis result containing identified trends
+        """
         params = params or {}
         
-        if not processed_data or not processed_data.processed_content:
-            logger.warning("No processed content to analyze")
-            return AnalysisResult(
-                processed_data=processed_data,
-                analysis_content={"trends": [], "keywords": []},
-                metadata={"error": "No processed content to analyze"}
-            )
+        # Get analysis parameters
+        model = params.get("model", self.default_model)
+        temperature = params.get("temperature", self.default_temperature)
+        max_tokens = params.get("max_tokens", self.default_max_tokens)
+        focus_areas = params.get("focus_areas", [])
         
+        # Get content and metadata
+        content = processed_data.processed_content
+        metadata = processed_data.metadata.copy()
+        focus_point = metadata.get("focus_point", "")
+        
+        # Create prompts for trend analysis
+        focus_areas_str = ", ".join(focus_areas) if focus_areas else "any relevant areas"
+        system_prompt = f"""You are an expert in trend analysis and pattern recognition.
+Your task is to identify trends, patterns, and insights from the provided text.
+Focus on {focus_areas_str} and identify:
+1. Key trends and patterns
+2. Emerging topics or themes
+3. Potential future developments
+4. Significant changes or shifts
+
+Format your response as a JSON object with the following structure:
+{{
+  "trends": [
+    {{
+      "name": "trend name",
+      "description": "detailed description of the trend",
+      "evidence": "evidence from the text supporting this trend",
+      "confidence": 0.0-1.0,
+      "impact": "potential impact of this trend",
+      "timeframe": "short-term, medium-term, or long-term"
+    }},
+    ...
+  ],
+  "insights": [
+    {{
+      "description": "key insight",
+      "explanation": "detailed explanation of the insight",
+      "implications": "potential implications of this insight"
+    }},
+    ...
+  ],
+  "summary": "overall summary of the trends and insights"
+}}
+"""
+        user_prompt = f"Analyze the following text for trends and insights{' related to ' + focus_point if focus_point else ''}:\n\n{content}"
+        
+        # Analyze trends using LLM
         try:
-            # Extract text from processed content
-            text = TextExtractor.extract_text(processed_data.processed_content)
-            
-            if not text:
-                logger.warning("No text content found in processed data")
-                return AnalysisResult(
-                    processed_data=processed_data,
-                    analysis_content={"trends": [], "keywords": []},
-                    metadata={"error": "No text content found in processed data"}
-                )
-            
-            # Extract keywords
-            keywords = self._extract_keywords(text)
-            
-            # Identify trends
-            trends = self._identify_trends(text)
-            
-            # Create analysis result
-            analysis_content = {
-                "trends": trends,
-                "keywords": keywords
-            }
-            
-            metadata = {
-                "trend_count": len(trends),
-                "keyword_count": len(keywords),
-                "source_type": processed_data.metadata.get("source_type", "unknown"),
-                "analysis_time": datetime.now().isoformat()
-            }
-            
-            return AnalysisResult(
-                processed_data=processed_data,
-                analysis_content=analysis_content,
-                metadata=metadata
-            )
-            
-        except Exception as e:
-            logger.error(f"Error analyzing data: {e}")
-            return AnalysisResult(
-                processed_data=processed_data,
-                analysis_content={"trends": [], "keywords": []},
-                metadata={"error": str(e)}
-            )
-    
-    def _extract_keywords(self, text: str) -> List[Dict[str, Any]]:
-        """Extract keywords from text."""
-        try:
-            # Tokenize the text
-            words = re.findall(r'\b\w+\b', text.lower())
-            
-            # Filter out stopwords and short words
-            filtered_words = [word for word in words if word not in self.stopwords and len(word) >= self.min_word_length]
-            
-            # Count word frequencies
-            word_counts = Counter(filtered_words)
-            
-            # Get the most common words
-            top_keywords = word_counts.most_common(self.max_keywords)
-            
-            # Format the keywords
-            keywords = [{"keyword": keyword, "count": count} for keyword, count in top_keywords]
-            
-            return keywords
-            
-        except Exception as e:
-            logger.error(f"Error extracting keywords: {e}")
-            return []
-    
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    def _identify_trends(self, text: str) -> List[Dict[str, Any]]:
-        """Identify trends in text using LLM with retry logic."""
-        try:
-            # Prepare the prompt
-            prompt = self.trend_prompt.format(text=text)
+            logger.info(f"Analyzing trends in processed content")
             
             # Call the LLM
-            messages = [
-                {"role": "system", "content": "You are an expert in trend analysis."},
-                {"role": "user", "content": prompt}
-            ]
+            result = openai_llm(
+                system_prompt,
+                user_prompt,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
             
-            response = litellm_llm(messages, self.model)
+            # Extract the analysis content
+            analysis_content = result.get("content", "")
             
-            # Parse the response
-            return self._parse_json_response(response)
+            # Parse trends from the analysis content
+            trends_data = {}
+            
+            try:
+                # Extract JSON from the response
+                json_str = analysis_content
+                if "```json" in json_str:
+                    json_str = json_str.split("```json")[1].split("```")[0].strip()
+                elif "```" in json_str:
+                    json_str = json_str.split("```")[1].split("```")[0].strip()
+                
+                # Parse JSON
+                trends_data = json.loads(json_str)
+            except Exception as e:
+                logger.error(f"Error parsing trends from analysis content: {e}")
+            
+            # Create analysis info
+            analysis_info = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "tokens_used": result.get("usage", {}).get("total_tokens", 0),
+                "trend_count": len(trends_data.get("trends", [])),
+                "insight_count": len(trends_data.get("insights", []))
+            }
+            
+            # Update metadata
+            metadata.update({
+                "analyzed_at": datetime.now().isoformat(),
+                "analyzer": self.name,
+                "focus_areas": focus_areas
+            })
+            
+            # Create analysis result
+            analysis_result = AnalysisResult(
+                processed_data=processed_data,
+                analysis_content=analysis_content,
+                metadata=metadata,
+                analysis_info=analysis_info
+            )
+            
+            # Add trends data to the analysis result
+            analysis_result.metadata["trends_data"] = trends_data
+            
+            logger.info(f"Successfully identified {analysis_info['trend_count']} trends and {analysis_info['insight_count']} insights")
+            return analysis_result
             
         except Exception as e:
-            logger.error(f"Error identifying trends: {e}")
-            raise  # Let retry handle the error
-    
-    def _parse_json_response(self, response: str) -> List[Dict[str, Any]]:
-        """Parse JSON response from LLM."""
-        try:
-            # Extract JSON from the response
-            json_match = re.search(r'\[.*\]', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
+            logger.error(f"Error analyzing content: {e}")
             
-            # If no JSON array found, try to parse the entire response
-            return json.loads(response)
+            # Create error analysis result
+            analysis_result = AnalysisResult(
+                processed_data=processed_data,
+                analysis_content=f"Error analyzing content: {str(e)}",
+                metadata=metadata,
+                analysis_info={
+                    "error": str(e)
+                }
+            )
             
-        except Exception as e:
-            logger.error(f"Error parsing JSON response: {e}")
-            logger.debug(f"Response: {response}")
-            return []
+            return analysis_result
+
