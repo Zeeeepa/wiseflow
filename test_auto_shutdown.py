@@ -22,6 +22,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.task import TaskManager, Task, create_task_id
 from core.task.monitor import initialize_resource_monitor, monitor_resources
+from core.task.auto_shutdown import initialize_auto_shutdown
 
 def sample_task(duration=10, result="Task completed"):
     """A sample task that runs for a specified duration."""
@@ -42,19 +43,37 @@ def main():
     # Create a task manager
     task_manager = TaskManager(max_workers=4)
     
-    # Initialize the resource monitor
-    config = {
+    # Initialize the auto-shutdown manager
+    auto_shutdown_config = {
         "enabled": True,
         "check_interval": 5,  # Check every 5 seconds for testing
-        "auto_shutdown": {
+        "idle_timeout": 10,   # 10 seconds of inactivity for testing
+        "resource_threshold": {
             "enabled": True,
-            "idle_timeout": 10,  # 10 seconds of inactivity for testing
-            "resource_threshold": True,
-            "completion_detection": True
+            "cpu_percent": 90,
+            "memory_percent": 85,
+            "disk_percent": 90
+        },
+        "completion_detection": {
+            "enabled": True,
+            "wait_time": 5  # Wait 5 seconds after completion before shutdown
+        },
+        "graceful_shutdown": {
+            "enabled": True,
+            "timeout": 3  # 3 seconds for graceful shutdown
         }
     }
     
-    resource_monitor = initialize_resource_monitor(task_manager, config)
+    auto_shutdown = initialize_auto_shutdown(task_manager, auto_shutdown_config)
+    
+    # Also initialize the resource monitor (which will use the auto-shutdown manager)
+    resource_monitor = initialize_resource_monitor(task_manager, {
+        "enabled": True,
+        "check_interval": 5,  # Check every 5 seconds for testing
+        "idle_timeout": 10,   # 10 seconds of inactivity for testing
+        "auto_shutdown": auto_shutdown_config
+    })
+    
     resource_monitor.start()
     
     # Create and submit a task with auto-shutdown enabled
