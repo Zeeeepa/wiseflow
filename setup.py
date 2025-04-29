@@ -1,0 +1,48 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from setuptools import setup, find_packages
+
+setup(
+    name="wiseflow",
+    version="0.1.0",
+    description="AI-powered information extraction tool",
+    author="Wiseflow Team",
+    author_email="info@wiseflow.example.com",
+    url="https://github.com/Zeeeepa/wiseflow",
+    packages=find_packages(),
+    install_requires=[
+        "requests>=2.25.0,<3.0.0",
+        "python-dotenv>=0.15.0,<1.0.0",
+        "asyncio>=3.4.3,<4.0.0",
+        "psutil>=5.8.0,<6.0.0",
+        "pocketbase>=0.8.0,<1.0.0",
+        "beautifulsoup4>=4.9.3,<5.0.0",
+        "html2text>=2020.1.16,<2023.0.0",
+        "httpx>=0.16.1,<1.0.0",
+        "aiohttp>=3.7.3,<4.0.0",
+        "nltk>=3.6.2,<4.0.0",
+        "chardet>=4.0.0,<5.0.0",
+        "PyPDF2>=2.0.0,<3.0.0",
+        "python-docx>=0.8.11,<1.0.0",
+        "numpy>=1.19.5,<2.0.0",
+        "pandas>=1.2.0,<2.0.0",
+        "tqdm>=4.56.0,<5.0.0",
+        "concurrent-futures-extra>=1.0.0,<2.0.0",
+        "structlog>=21.1.0,<22.0.0",
+        "rich>=10.0.0,<11.0.0",
+        "fastapi>=0.68.0,<1.0.0",
+        "uvicorn>=0.15.0,<1.0.0",
+        "feedparser>=6.0.0,<7.0.0",
+    ],
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+    ],
+    python_requires=">=3.8",
+)
+
