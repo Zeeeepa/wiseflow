@@ -17,45 +17,18 @@ from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
 
-class PluginBase(ABC):
-    """Base class for all plugins."""
-    
-    name: str = "base_plugin"
-    description: str = "Base plugin class"
-    version: str = "0.1.0"
-    
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize the plugin with optional configuration."""
-        self.config = config or {}
-        self.is_enabled = True
-        
-    @abstractmethod
-    def initialize(self) -> bool:
-        """Initialize the plugin. Return True if successful, False otherwise."""
-        pass
-    
-    def enable(self) -> None:
-        """Enable the plugin."""
-        self.is_enabled = True
-        logger.info(f"Plugin {self.name} enabled")
-        
-    def disable(self) -> None:
-        """Disable the plugin."""
-        self.is_enabled = False
-        logger.info(f"Plugin {self.name} disabled")
-    
-    def get_config(self) -> Dict[str, Any]:
-        """Get the plugin configuration."""
-        return self.config
-    
-    def set_config(self, config: Dict[str, Any]) -> None:
-        """Set the plugin configuration."""
-        self.config = config
-        
-    def __str__(self) -> str:
-        """Return a string representation of the plugin."""
-        return f"{self.name} (v{self.version}): {self.description}"
+# Import base classes
+from .base import PluginBase
 
+# Import plugin types
+from .processors import ProcessorBase
+from .analyzers import AnalyzerBase
+
+# Registry for plugin types
+PLUGIN_TYPES = {
+    "processors": ProcessorBase,
+    "analyzers": AnalyzerBase
+}
 
 class PluginRegistry:
     """Registry for plugin types and instances."""
@@ -77,6 +50,10 @@ class PluginRegistry:
         self._plugin_types: Dict[str, Type[PluginBase]] = {}
         self._plugin_instances: Dict[str, Dict[str, PluginBase]] = {}
         self._initialized = True
+        
+        # Register built-in plugin types
+        for plugin_type, plugin_class in PLUGIN_TYPES.items():
+            self.register_plugin_type(plugin_type, plugin_class)
         
     def register_plugin_type(self, plugin_type: str, plugin_class: Type[PluginBase]) -> None:
         """Register a plugin type."""

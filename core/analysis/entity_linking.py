@@ -20,11 +20,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from core.analysis import Entity, Relationship, KnowledgeGraph
+from core.analysis.entity_registry import EntityRegistry
 from core.utils.pb_api import PbTalker
 
 logger = logging.getLogger(__name__)
-
-# ... existing EntityRegistry class ...
 
 # Implement the missing functions
 async def link_entities(entities: List[Entity]) -> Dict[str, List[Entity]]:
@@ -452,3 +451,35 @@ async def manual_correction(entity1_id: str, entity2_id: str, should_link: bool,
     
     # Update the link
     return update_entity_link(entity1, entity2, should_link)
+
+def create_entity_registry(entities: List[Entity]) -> EntityRegistry:
+    """
+    Create an entity registry from a list of entities.
+    
+    Args:
+        entities: List of entities to add to the registry
+        
+    Returns:
+        EntityRegistry: The created registry
+    """
+    registry = EntityRegistry()
+    
+    # Add all entities to the registry
+    for entity in entities:
+        registry.add_entity(entity)
+    
+    return registry
+
+def find_entity_clusters(entities: List[Entity], threshold: float = 0.8) -> List[List[Entity]]:
+    """
+    Find clusters of similar entities.
+    
+    Args:
+        entities: List of entities to cluster
+        threshold: Similarity threshold (0.0-1.0)
+        
+    Returns:
+        List[List[Entity]]: List of entity clusters
+    """
+    registry = create_entity_registry(entities)
+    return registry.find_entity_clusters(threshold)

@@ -1,7 +1,7 @@
 """
 Code Search connector for Wiseflow.
 
-This module provides a connector for searching and retrieving code from various sources.
+This module provides a connector for searching code repositories.
 """
 
 from typing import Dict, List, Any, Optional, Union
@@ -12,42 +12,37 @@ from datetime import datetime
 import os
 import re
 import json
-import tempfile
-from urllib.parse import urlparse, quote_plus
-
 import aiohttp
-import requests
+import base64
+from urllib.parse import quote_plus
 
 from core.plugins import PluginBase
 from core.connectors import ConnectorBase, DataItem
+from core.utils.general_utils import extract_and_convert_dates
 
 logger = logging.getLogger(__name__)
 
 class CodeSearchConnector(ConnectorBase):
-    """Connector for code search."""
+    """Connector for searching code repositories."""
     
     name: str = "code_search_connector"
-    description: str = "Connector for searching and retrieving code from various sources"
+    description: str = "Connector for searching code repositories"
     source_type: str = "code_search"
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize the code search connector."""
         super().__init__(config)
+        self.github_token = self.config.get("github_token", os.environ.get("GITHUB_TOKEN", ""))
+        self.github_api_url = "https://api.github.com"
         self.semaphore = asyncio.Semaphore(self.config.get("concurrency", 5))
         self.session = None
-        
-        # Configure API keys
-        self.github_token = self.config.get("github_token", os.environ.get("GITHUB_TOKEN", ""))
-        self.gitlab_token = self.config.get("gitlab_token", os.environ.get("GITLAB_TOKEN", ""))
-        self.bitbucket_token = self.config.get("bitbucket_token", os.environ.get("BITBUCKET_TOKEN", ""))
-        self.sourcegraph_token = self.config.get("sourcegraph_token", os.environ.get("SOURCEGRAPH_TOKEN", ""))
-        
-        # Configure API endpoints
-        self.sourcegraph_url = self.config.get("sourcegraph_url", "https://sourcegraph.com")
         
     def initialize(self) -> bool:
         """Initialize the connector."""
         try:
+            if not self.github_token:
+                logger.warning("No GitHub token provided. API rate limits will be restricted.")
+            
             logger.info("Initialized code search connector")
             return True
         except Exception as e:
@@ -57,7 +52,13 @@ class CodeSearchConnector(ConnectorBase):
     async def _create_session(self):
         """Create an aiohttp session if it doesn't exist."""
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            headers = {
+                "Accept": "application/vnd.github.v3+json"
+            }
+            if self.github_token:
+                headers["Authorization"] = f"token {self.github_token}"
+            
+            self.session = aiohttp.ClientSession(headers=headers)
         return self.session
     
     async def _close_session(self):
@@ -67,7 +68,7 @@ class CodeSearchConnector(ConnectorBase):
             self.session = None
     
     async def collect(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
-        """Collect data from code search sources."""
+        """Collect data from code repositories."""
         params = params or {}
         
         try:
@@ -75,454 +76,282 @@ class CodeSearchConnector(ConnectorBase):
             await self._create_session()
             
             # Determine what to collect
-            if "source" in params:
-                source = params["source"].lower()
-                
-                if source == "github":
-                    return await self._search_github(params)
-                elif source == "gitlab":
-                    return await self._search_gitlab(params)
-                elif source == "bitbucket":
-                    return await self._search_bitbucket(params)
-                elif source == "sourcegraph":
-                    return await self._search_sourcegraph(params)
-                else:
-                    logger.error(f"Unsupported code search source: {source}")
-                    return []
-            elif "query" in params:
-                # Search across all configured sources
-                return await self._search_all_sources(params)
+            if "search" in params:
+                # Search for code
+                query = params["search"]
+                return await self._search_code(query, params)
+            elif "repo" in params and "path" in params:
+                # Get file content
+                repo = params["repo"]
+                path = params["path"]
+                return await self._get_file_content(repo, path)
+            elif "repo" in params:
+                # Get repository information
+                repo = params["repo"]
+                return await self._get_repo_info(repo)
             else:
-                logger.error("No source or query parameter provided for code search connector")
+                logger.error("No search, repo, or path parameter provided for code search connector")
                 return []
         finally:
             # Close session
             await self._close_session()
     
-    async def _search_all_sources(self, params: Dict[str, Any]) -> List[DataItem]:
-        """Search for code across all configured sources."""
-        query = params.get("query", "")
-        if not query:
-            logger.error("No query provided for code search")
-            return []
-        
-        # Determine which sources to search
-        sources = params.get("sources", ["github", "sourcegraph"])
-        
-        # Execute searches in parallel
-        tasks = []
-        for source in sources:
-            source_params = params.copy()
-            source_params["source"] = source
-            
-            if source == "github" and self.github_token:
-                tasks.append(self._search_github(source_params))
-            elif source == "gitlab" and self.gitlab_token:
-                tasks.append(self._search_gitlab(source_params))
-            elif source == "bitbucket" and self.bitbucket_token:
-                tasks.append(self._search_bitbucket(source_params))
-            elif source == "sourcegraph" and self.sourcegraph_token:
-                tasks.append(self._search_sourcegraph(source_params))
-        
-        # Gather results
-        results = []
-        if tasks:
-            search_results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in search_results:
-                if isinstance(result, Exception):
-                    logger.error(f"Error in code search: {result}")
-                else:
-                    results.extend(result)
-        
-        return results
-    
-    async def _search_github(self, params: Dict[str, Any]) -> List[DataItem]:
-        """Search for code on GitHub."""
-        query = params.get("query", "")
-        max_results = params.get("max_results", 10)
-        
-        if not query:
-            logger.error("No query provided for GitHub code search")
-            return []
-        
-        if not self.github_token:
-            logger.warning("No GitHub token provided. API rate limits will be restricted.")
-        
+    async def _search_code(self, query: str, params: Dict[str, Any]) -> List[DataItem]:
+        """Search for code."""
         try:
-            # Construct GitHub API URL
-            url = f"https://api.github.com/search/code?q={quote_plus(query)}&per_page={max_results}"
+            # Set up search parameters
+            per_page = params.get("per_page", 10)
+            page = params.get("page", 1)
+            language = params.get("language")
+            repo = params.get("repo")
+            user = params.get("user")
+            org = params.get("org")
             
-            # Set up headers
-            headers = {
-                "Accept": "application/vnd.github.v3+json"
-            }
-            if self.github_token:
-                headers["Authorization"] = f"token {self.github_token}"
+            # Build query string
+            search_query = query
+            if language:
+                search_query += f" language:{language}"
+            if repo:
+                search_query += f" repo:{repo}"
+            elif user:
+                search_query += f" user:{user}"
+            elif org:
+                search_query += f" org:{org}"
             
-            # Execute search
+            # Search for code
+            url = f"{self.github_api_url}/search/code?q={quote_plus(search_query)}&per_page={per_page}&page={page}"
             async with self.semaphore:
-                async with self.session.get(url, headers=headers) as response:
+                async with self.session.get(url) as response:
                     if response.status != 200:
-                        logger.error(f"GitHub code search failed with status {response.status}")
+                        logger.error(f"Failed to search code with query {search_query}: {response.status}")
                         return []
                     
                     search_data = await response.json()
                     items = search_data.get("items", [])
-                    
-                    if not items:
-                        logger.info("No GitHub code search results found")
-                        return []
             
-            # Process results
+            # Process search results
             results = []
             for item in items:
-                # Extract metadata
                 repo_name = item.get("repository", {}).get("full_name", "")
                 path = item.get("path", "")
                 name = item.get("name", "")
-                url = item.get("html_url", "")
+                html_url = item.get("html_url", "")
                 
                 # Get file content
-                content = await self._get_github_file_content(repo_name, path)
+                content = ""
+                raw_content = None
+                try:
+                    content_url = item.get("url", "")
+                    async with self.semaphore:
+                        async with self.session.get(content_url) as response:
+                            if response.status == 200:
+                                content_data = await response.json()
+                                if content_data.get("content"):
+                                    raw_content = base64.b64decode(content_data["content"]).decode("utf-8")
+                                    content = raw_content
+                except Exception as e:
+                    logger.warning(f"Error getting content for file {repo_name}/{path}: {e}")
+                
+                # Create content
+                markdown_content = f"# {name}\n\n"
+                markdown_content += f"**Repository:** {repo_name}\n"
+                markdown_content += f"**Path:** {path}\n\n"
+                
+                if content:
+                    markdown_content += "```\n"
+                    markdown_content += content
+                    markdown_content += "\n```\n"
                 
                 # Create metadata
                 metadata = {
                     "repo": repo_name,
                     "path": path,
                     "name": name,
-                    "url": url,
-                    "source": "github"
+                    "html_url": html_url,
+                    "search_query": query,
+                    "language": language,
+                    "score": item.get("score", 0)
                 }
                 
                 # Create data item
                 item = DataItem(
-                    source_id=f"github_code_{uuid.uuid4().hex[:8]}",
-                    content=content or "",
+                    source_id=f"code_search_{repo_name.replace('/', '_')}_{path.replace('/', '_')}",
+                    content=markdown_content,
                     metadata=metadata,
-                    url=url,
-                    content_type=self._get_content_type(path),
-                    raw_data=item
+                    url=html_url,
+                    content_type="text/markdown",
+                    raw_data={"search_result": item, "content": raw_content}
                 )
                 
                 results.append(item)
             
-            logger.info(f"Collected {len(results)} items from GitHub code search")
             return results
-            
         except Exception as e:
-            logger.error(f"Error searching GitHub code: {e}")
+            logger.error(f"Error searching code with query {query}: {e}")
             return []
     
-    async def _get_github_file_content(self, repo: str, path: str) -> Optional[str]:
-        """Get the content of a file from GitHub."""
+    async def _get_file_content(self, repo: str, path: str) -> List[DataItem]:
+        """Get file content."""
         try:
-            # Construct GitHub API URL
-            url = f"https://api.github.com/repos/{repo}/contents/{path}"
-            
-            # Set up headers
-            headers = {
-                "Accept": "application/vnd.github.v3+json"
-            }
-            if self.github_token:
-                headers["Authorization"] = f"token {self.github_token}"
-            
             # Get file content
-            async with self.session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    logger.warning(f"Failed to get GitHub file content for {repo}/{path}: {response.status}")
-                    return None
-                
-                data = await response.json()
-                
-                # Decode content
-                if data.get("content"):
-                    import base64
-                    content = base64.b64decode(data["content"]).decode("utf-8")
-                    return content
-                
-                return None
-        except Exception as e:
-            logger.error(f"Error getting GitHub file content for {repo}/{path}: {e}")
-            return None
-    
-    async def _search_gitlab(self, params: Dict[str, Any]) -> List[DataItem]:
-        """Search for code on GitLab."""
-        query = params.get("query", "")
-        max_results = params.get("max_results", 10)
-        
-        if not query:
-            logger.error("No query provided for GitLab code search")
-            return []
-        
-        if not self.gitlab_token:
-            logger.warning("No GitLab token provided. API functionality will be limited.")
-            return []
-        
-        try:
-            # Construct GitLab API URL
-            url = f"https://gitlab.com/api/v4/search?scope=blobs&search={quote_plus(query)}&per_page={max_results}"
-            
-            # Set up headers
-            headers = {
-                "PRIVATE-TOKEN": self.gitlab_token
-            }
-            
-            # Execute search
+            url = f"{self.github_api_url}/repos/{repo}/contents/{path}"
             async with self.semaphore:
-                async with self.session.get(url, headers=headers) as response:
+                async with self.session.get(url) as response:
                     if response.status != 200:
-                        logger.error(f"GitLab code search failed with status {response.status}")
+                        logger.error(f"Failed to get file content for {repo}/{path}: {response.status}")
                         return []
                     
-                    items = await response.json()
-                    
-                    if not items:
-                        logger.info("No GitLab code search results found")
-                        return []
+                    content_data = await response.json()
             
-            # Process results
-            results = []
-            for item in items:
-                # Extract metadata
-                project_id = item.get("project_id", "")
-                path = item.get("path", "")
-                ref = item.get("ref", "")
-                filename = os.path.basename(path)
-                
-                # Get file content
-                content = await self._get_gitlab_file_content(project_id, path, ref)
-                
-                # Create metadata
-                metadata = {
-                    "project_id": project_id,
-                    "path": path,
-                    "ref": ref,
-                    "name": filename,
-                    "source": "gitlab"
-                }
-                
-                # Create data item
-                item = DataItem(
-                    source_id=f"gitlab_code_{uuid.uuid4().hex[:8]}",
-                    content=content or "",
-                    metadata=metadata,
-                    url=f"https://gitlab.com/api/v4/projects/{project_id}/repository/files/{quote_plus(path)}/raw?ref={ref}",
-                    content_type=self._get_content_type(path),
-                    raw_data=item
-                )
-                
-                results.append(item)
+            # Handle directory
+            if isinstance(content_data, list):
+                # This is a directory, collect all files
+                results = []
+                for item in content_data:
+                    if item["type"] == "file":
+                        # Get file content
+                        file_items = await self._get_file_content(repo, item["path"])
+                        results.extend(file_items)
+                return results
             
-            logger.info(f"Collected {len(results)} items from GitLab code search")
-            return results
+            # Handle file
+            name = content_data.get("name", "")
+            html_url = content_data.get("html_url", "")
             
-        except Exception as e:
-            logger.error(f"Error searching GitLab code: {e}")
-            return []
-    
-    async def _get_gitlab_file_content(self, project_id: str, path: str, ref: str) -> Optional[str]:
-        """Get the content of a file from GitLab."""
-        try:
-            # Construct GitLab API URL
-            url = f"https://gitlab.com/api/v4/projects/{project_id}/repository/files/{quote_plus(path)}/raw?ref={ref}"
+            # Decode content
+            content = ""
+            if content_data.get("content"):
+                content = base64.b64decode(content_data["content"]).decode("utf-8")
             
-            # Set up headers
-            headers = {
-                "PRIVATE-TOKEN": self.gitlab_token
+            # Create content
+            markdown_content = f"# {name}\n\n"
+            markdown_content += f"**Repository:** {repo}\n"
+            markdown_content += f"**Path:** {path}\n\n"
+            
+            if content:
+                markdown_content += "```\n"
+                markdown_content += content
+                markdown_content += "\n```\n"
+            
+            # Create metadata
+            metadata = {
+                "repo": repo,
+                "path": path,
+                "name": name,
+                "html_url": html_url,
+                "size": content_data.get("size", 0),
+                "sha": content_data.get("sha", "")
             }
             
-            # Get file content
-            async with self.session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    logger.warning(f"Failed to get GitLab file content for {project_id}/{path}: {response.status}")
-                    return None
-                
-                content = await response.text()
-                return content
+            # Create data item
+            item = DataItem(
+                source_id=f"code_file_{repo.replace('/', '_')}_{path.replace('/', '_')}",
+                content=markdown_content,
+                metadata=metadata,
+                url=html_url,
+                content_type="text/markdown",
+                raw_data={"file": content_data, "content": content}
+            )
+            
+            return [item]
         except Exception as e:
-            logger.error(f"Error getting GitLab file content for {project_id}/{path}: {e}")
-            return None
-    
-    async def _search_bitbucket(self, params: Dict[str, Any]) -> List[DataItem]:
-        """Search for code on Bitbucket."""
-        query = params.get("query", "")
-        max_results = params.get("max_results", 10)
-        
-        if not query:
-            logger.error("No query provided for Bitbucket code search")
-            return []
-        
-        if not self.bitbucket_token:
-            logger.warning("No Bitbucket token provided. API functionality will be limited.")
-            return []
-        
-        try:
-            # Bitbucket Cloud doesn't have a code search API
-            # This would typically require a custom implementation or a third-party service
-            logger.warning("Bitbucket code search not implemented yet")
-            raise NotImplementedError("Bitbucket code search is not implemented yet")
-        except Exception as e:
-            logger.error(f"Error searching Bitbucket code: {e}")
+            logger.error(f"Error getting file content for {repo}/{path}: {e}")
             return []
     
-    async def _search_sourcegraph(self, params: Dict[str, Any]) -> List[DataItem]:
-        """Search for code on Sourcegraph."""
-        query = params.get("query", "")
-        max_results = params.get("max_results", 10)
-        
-        if not query:
-            logger.error("No query provided for Sourcegraph code search")
-            return []
-        
+    async def _get_repo_info(self, repo: str) -> List[DataItem]:
+        """Get repository information."""
         try:
-            # Construct Sourcegraph GraphQL API URL
-            url = f"{self.sourcegraph_url}/.api/graphql"
-            
-            # Set up headers
-            headers = {}
-            if self.sourcegraph_token:
-                headers["Authorization"] = f"token {self.sourcegraph_token}"
-            
-            # Construct GraphQL query
-            graphql_query = {
-                "query": """
-                query Search($query: String!, $limit: Int!) {
-                    search(query: $query, version: V2) {
-                        results(first: $limit) {
-                            results {
-                                ... on FileMatch {
-                                    repository {
-                                        name
-                                    }
-                                    file {
-                                        path
-                                        url
-                                        content
-                                    }
-                                    lineMatches {
-                                        lineNumber
-                                        offsetAndLengths
-                                        preview
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                """,
-                "variables": {
-                    "query": query,
-                    "limit": max_results
-                }
-            }
-            
-            # Execute search
+            # Get repository information
+            url = f"{self.github_api_url}/repos/{repo}"
             async with self.semaphore:
-                async with self.session.post(url, json=graphql_query, headers=headers) as response:
+                async with self.session.get(url) as response:
                     if response.status != 200:
-                        logger.error(f"Sourcegraph code search failed with status {response.status}")
+                        logger.error(f"Failed to get repository info for {repo}: {response.status}")
                         return []
                     
-                    data = await response.json()
-                    results_data = data.get("data", {}).get("search", {}).get("results", {}).get("results", [])
-                    
-                    if not results_data:
-                        logger.info("No Sourcegraph code search results found")
-                        return []
+                    repo_data = await response.json()
             
-            # Process results
-            results = []
-            for item in results_data:
-                # Extract metadata
-                repo_name = item.get("repository", {}).get("name", "")
-                file_data = item.get("file", {})
-                path = file_data.get("path", "")
-                url = file_data.get("url", "")
-                content = file_data.get("content", "")
-                line_matches = item.get("lineMatches", [])
-                
-                # Create metadata
-                metadata = {
-                    "repo": repo_name,
-                    "path": path,
-                    "name": os.path.basename(path),
-                    "url": url,
-                    "line_matches": [
-                        {
-                            "line_number": match.get("lineNumber"),
-                            "preview": match.get("preview")
-                        }
-                        for match in line_matches
-                    ],
-                    "source": "sourcegraph"
-                }
-                
-                # Create data item
-                item = DataItem(
-                    source_id=f"sourcegraph_code_{uuid.uuid4().hex[:8]}",
-                    content=content or "",
-                    metadata=metadata,
-                    url=url,
-                    content_type=self._get_content_type(path),
-                    raw_data=item
-                )
-                
-                results.append(item)
+            # Get repository README
+            readme_content = ""
+            try:
+                readme_url = f"{self.github_api_url}/repos/{repo}/readme"
+                async with self.semaphore:
+                    async with self.session.get(readme_url) as response:
+                        if response.status == 200:
+                            readme_data = await response.json()
+                            if readme_data.get("content"):
+                                readme_content = base64.b64decode(readme_data["content"]).decode("utf-8")
+            except Exception as e:
+                logger.warning(f"Error getting README for repository {repo}: {e}")
             
-            logger.info(f"Collected {len(results)} items from Sourcegraph code search")
-            return results
+            # Get repository languages
+            languages = {}
+            try:
+                languages_url = f"{self.github_api_url}/repos/{repo}/languages"
+                async with self.semaphore:
+                    async with self.session.get(languages_url) as response:
+                        if response.status == 200:
+                            languages = await response.json()
+            except Exception as e:
+                logger.warning(f"Error getting languages for repository {repo}: {e}")
             
+            # Create content
+            name = repo_data.get("name", "")
+            full_name = repo_data.get("full_name", "")
+            description = repo_data.get("description", "")
+            
+            content = f"# {name}\n\n"
+            if description:
+                content += f"{description}\n\n"
+            
+            content += f"**Owner:** {repo_data.get('owner', {}).get('login', '')}\n"
+            content += f"**Stars:** {repo_data.get('stargazers_count', 0)}\n"
+            content += f"**Forks:** {repo_data.get('forks_count', 0)}\n"
+            content += f"**Watchers:** {repo_data.get('watchers_count', 0)}\n"
+            content += f"**Open Issues:** {repo_data.get('open_issues_count', 0)}\n"
+            content += f"**Default Branch:** {repo_data.get('default_branch', '')}\n\n"
+            
+            if languages:
+                content += "## Languages\n\n"
+                for language, bytes_count in languages.items():
+                    content += f"- {language}: {bytes_count} bytes\n"
+                content += "\n"
+            
+            if readme_content:
+                content += "## README\n\n"
+                content += readme_content
+            
+            # Create metadata
+            metadata = {
+                "name": name,
+                "full_name": full_name,
+                "description": description,
+                "owner": repo_data.get("owner", {}).get("login", ""),
+                "stars": repo_data.get("stargazers_count", 0),
+                "forks": repo_data.get("forks_count", 0),
+                "watchers": repo_data.get("watchers_count", 0),
+                "open_issues": repo_data.get("open_issues_count", 0),
+                "default_branch": repo_data.get("default_branch", ""),
+                "created_at": repo_data.get("created_at", ""),
+                "updated_at": repo_data.get("updated_at", ""),
+                "pushed_at": repo_data.get("pushed_at", ""),
+                "languages": languages,
+                "has_readme": bool(readme_content)
+            }
+            
+            # Create data item
+            item = DataItem(
+                source_id=f"code_repo_{full_name.replace('/', '_')}",
+                content=content,
+                metadata=metadata,
+                url=repo_data.get("html_url", ""),
+                timestamp=datetime.fromisoformat(repo_data.get("updated_at", "").replace("Z", "+00:00")) if repo_data.get("updated_at") else None,
+                content_type="text/markdown",
+                raw_data={"repo": repo_data, "readme": readme_content, "languages": languages}
+            )
+            
+            return [item]
         except Exception as e:
-            logger.error(f"Error searching Sourcegraph code: {e}")
+            logger.error(f"Error getting repository info for {repo}: {e}")
             return []
-    
-    def _get_content_type(self, path: str) -> str:
-        """Determine the content type based on the file extension."""
-        ext = os.path.splitext(path)[1].lower()
-        
-        if ext in [".py"]:
-            return "text/x-python"
-        elif ext in [".js"]:
-            return "text/javascript"
-        elif ext in [".ts"]:
-            return "text/typescript"
-        elif ext in [".html", ".htm"]:
-            return "text/html"
-        elif ext in [".css"]:
-            return "text/css"
-        elif ext in [".json"]:
-            return "application/json"
-        elif ext in [".xml"]:
-            return "application/xml"
-        elif ext in [".md", ".markdown"]:
-            return "text/markdown"
-        elif ext in [".java"]:
-            return "text/x-java"
-        elif ext in [".c", ".cpp", ".h", ".hpp"]:
-            return "text/x-c"
-        elif ext in [".go"]:
-            return "text/x-go"
-        elif ext in [".rb"]:
-            return "text/x-ruby"
-        elif ext in [".php"]:
-            return "text/x-php"
-        elif ext in [".rs"]:
-            return "text/x-rust"
-        elif ext in [".swift"]:
-            return "text/x-swift"
-        elif ext in [".kt", ".kts"]:
-            return "text/x-kotlin"
-        elif ext in [".dart"]:
-            return "text/x-dart"
-        elif ext in [".sh", ".bash"]:
-            return "text/x-shellscript"
-        elif ext in [".yaml", ".yml"]:
-            return "text/x-yaml"
-        elif ext in [".toml"]:
-            return "text/x-toml"
-        elif ext in [".sql"]:
-            return "text/x-sql"
-        elif ext in [".txt"]:
-            return "text/plain"
-        else:
-            return "text/plain"
+
