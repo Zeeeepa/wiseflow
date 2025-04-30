@@ -7,270 +7,350 @@ This module provides visualization capabilities for trends and patterns.
 from typing import Dict, List, Any, Optional
 import logging
 import json
-import os
+import matplotlib.pyplot as plt
+import io
+import base64
+import numpy as np
+import pandas as pd
 from datetime import datetime
 
 from dashboard.visualization import TrendVisualization
+from dashboard.plugins import dashboard_plugin_manager
 
 logger = logging.getLogger(__name__)
 
-def visualize_trend(trend_data: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Generate a visualization of trend data.
+def visualize_trend(data: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Visualize trend data.
     
     Args:
-        trend_data: The trend data to visualize
-        config: Optional configuration options
-    
+        data: Trend data
+        config: Visualization configuration
+        
     Returns:
-        A dictionary containing the visualization data
+        Dict[str, Any]: Visualization data
     """
     config = config or {}
     
-    # Create a visualization
-    viz = TrendVisualization(
-        name=f"Trend Visualization",
-        data_source={"type": "object", "trend_data": trend_data},
-        config=config
-    )
+    # If data is a string, try to parse it as JSON
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception as e:
+            logger.error(f"Error parsing trend data: {str(e)}")
+            return {"error": str(e)}
     
-    # Render the visualization
-    return viz.render()
-
-def export_trend_visualization(trend_data: Dict[str, Any], filepath: str, config: Optional[Dict[str, Any]] = None) -> bool:
-    """Export a trend visualization to a file.
+    # If data is raw text, analyze it using the trend analyzer
+    if isinstance(data, str) or (isinstance(data, dict) and "text" in data):
+        text = data if isinstance(data, str) else data["text"]
+        try:
+            # Use the trend analyzer to extract trends
+            analysis_result = dashboard_plugin_manager.analyze_trends(text)
+            
+            # Check if the analysis was successful
+            if "error" in analysis_result:
+                logger.error(f"Error analyzing text: {analysis_result['error']}")
+                return {"error": analysis_result["error"]}
+            
+            # Use the trends from the analysis result
+            data = analysis_result
+        except Exception as e:
+            logger.error(f"Error creating trends from text: {str(e)}")
+            return {"error": str(e)}
     
-    Args:
-        trend_data: The trend data to visualize
-        filepath: The path to save the visualization to
-        config: Optional configuration options
-    
-    Returns:
-        True if the export was successful, False otherwise
-    """
+    # Generate visualization
     try:
-        # Generate the visualization
-        visualization = visualize_trend(trend_data, config)
+        # Create figure
+        plt.figure(figsize=(12, 8))
         
-        # Save to file
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(visualization, f, ensure_ascii=False, indent=2)
+        # Get trends
+        trends = data.get("trends", [])
+        if not trends:
+            return {"error": "No trend data found"}
         
-        logger.info(f"Trend visualization exported to {filepath}")
-        return True
-    except Exception as e:
-        logger.error(f"Error exporting trend visualization: {e}")
-        return False
-
-def filter_trend_data(trend_data: Dict[str, Any], filters: Dict[str, Any]) -> Dict[str, Any]:
-    """Filter trend data based on specified criteria.
-    
-    Args:
-        trend_data: The trend data to filter
-        filters: The filter criteria
-    
-    Returns:
-        Filtered trend data
-    """
-    filtered_data = {
-        "trends": [],
-        "x_axis": trend_data.get("x_axis", {}),
-        "y_axis": trend_data.get("y_axis", {})
-    }
-    
-    # Apply name filter
-    name_contains = filters.get("name_contains")
-    
-    # Apply time range filter
-    time_range = filters.get("time_range", {})
-    start_time = time_range.get("start")
-    end_time = time_range.get("end")
-    
-    # Apply value range filter
-    value_range = filters.get("value_range", {})
-    min_value = value_range.get("min")
-    max_value = value_range.get("max")
-    
-    # Filter trends
-    for trend in trend_data.get("trends", []):
-        # Apply name filter
-        if name_contains and name_contains not in trend.get("name", ""):
-            continue
+        # Determine visualization type
+        viz_type = config.get("type", "line")
         
-        # Create a copy of the trend
-        filtered_trend = {
-            "id": trend.get("id"),
-            "name": trend.get("name"),
-            "data": [],
-            "metadata": trend.get("metadata", {})
+        if viz_type == "line":
+            # Line chart for time series data
+            for trend in trends:
+                # Extract x and y values
+                x_values = []
+                y_values = []
+                
+                for point in trend.get("data", []):
+                    if "time" in point and "value" in point:
+                        # Convert time string to datetime if needed
+                        if isinstance(point["time"], str):
+                            try:
+                                x_values.append(datetime.fromisoformat(point["time"]))
+                            except ValueError:
+                                x_values.append(point["time"])
+                        else:
+                            x_values.append(point["time"])
+                        
+                        y_values.append(point["value"])
+                
+                if x_values and y_values:
+                    plt.plot(x_values, y_values, label=trend.get("name", "Trend"), marker='o')
+            
+            plt.xlabel(data.get("x_axis", {}).get("label", "Time"))
+            plt.ylabel(data.get("y_axis", {}).get("label", "Value"))
+            plt.title(config.get("title", "Trend Analysis"))
+            plt.grid(True)
+            plt.legend()
+            
+            # Format x-axis for datetime
+            if x_values and isinstance(x_values[0], datetime):
+                plt.gcf().autofmt_xdate()
+        
+        elif viz_type == "bar":
+            # Bar chart for categorical data
+            categories = []
+            values = []
+            
+            for trend in trends:
+                categories.append(trend.get("name", f"Category {len(categories)+1}"))
+                
+                # Get the latest value or average
+                if trend.get("data"):
+                    if config.get("use_latest", True):
+                        values.append(trend["data"][-1].get("value", 0))
+                    else:
+                        values.append(sum(point.get("value", 0) for point in trend["data"]) / len(trend["data"]))
+                else:
+                    values.append(0)
+            
+            plt.bar(categories, values)
+            plt.xlabel(data.get("x_axis", {}).get("label", "Category"))
+            plt.ylabel(data.get("y_axis", {}).get("label", "Value"))
+            plt.title(config.get("title", "Trend Analysis"))
+            plt.grid(True, axis='y')
+            
+            # Rotate x labels if there are many categories
+            if len(categories) > 5:
+                plt.xticks(rotation=45, ha='right')
+        
+        elif viz_type == "pie":
+            # Pie chart for distribution data
+            labels = []
+            sizes = []
+            
+            for trend in trends:
+                labels.append(trend.get("name", f"Category {len(labels)+1}"))
+                
+                # Get the latest value or average
+                if trend.get("data"):
+                    if config.get("use_latest", True):
+                        sizes.append(trend["data"][-1].get("value", 0))
+                    else:
+                        sizes.append(sum(point.get("value", 0) for point in trend["data"]) / len(trend["data"]))
+                else:
+                    sizes.append(0)
+            
+            # Ensure all values are positive
+            sizes = [max(0, size) for size in sizes]
+            
+            # Only create pie chart if there are non-zero values
+            if sum(sizes) > 0:
+                plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
+                plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
+                plt.title(config.get("title", "Distribution Analysis"))
+            else:
+                return {"error": "No positive values for pie chart"}
+        
+        # Save to buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+        plt.close()
+        
+        # Convert to base64
+        buf.seek(0)
+        img_base64 = base64.b64encode(buf.read()).decode("utf-8")
+        
+        # Return visualization data
+        return {
+            "type": "trend",
+            "image": f"data:image/png;base64,{img_base64}",
+            "trends": len(trends),
+            "data_points": sum(len(trend.get("data", [])) for trend in trends),
+            "patterns": data.get("patterns", [])
         }
-        
-        # Filter data points
-        for point in trend.get("data", []):
-            # Apply time range filter
-            time = point.get("time")
-            if time:
-                if start_time and time < start_time:
-                    continue
-                if end_time and time > end_time:
-                    continue
-            
-            # Apply value range filter
-            value = point.get("value")
-            if value is not None:
-                if min_value is not None and value < min_value:
-                    continue
-                if max_value is not None and value > max_value:
-                    continue
-            
-            # Point passed all filters
-            filtered_trend["data"].append(point)
-        
-        # Add trend if it has data points
-        if filtered_trend["data"]:
-            filtered_data["trends"].append(filtered_trend)
-    
-    return filtered_data
+    except Exception as e:
+        logger.error(f"Error generating trend visualization: {str(e)}")
+        return {"error": str(e)}
 
-def detect_trend_patterns(trend_data: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def detect_trend_patterns(data: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Detect patterns in trend data.
     
     Args:
-        trend_data: The trend data to analyze
-        config: Optional configuration options
-    
+        data: Trend data
+        config: Detection configuration
+        
     Returns:
-        A list of detected patterns
+        Dict[str, Any]: Detected patterns
     """
     config = config or {}
-    patterns = []
     
-    # Get detection thresholds from config
-    growth_threshold = config.get("growth_threshold", 0.1)  # 10% growth
-    decline_threshold = config.get("decline_threshold", -0.1)  # 10% decline
-    stability_threshold = config.get("stability_threshold", 0.05)  # 5% variation
-    min_duration = config.get("min_duration", 3)  # Minimum number of points for a pattern
+    # If data is a string, try to parse it as JSON
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception as e:
+            logger.error(f"Error parsing trend data: {str(e)}")
+            return {"error": str(e)}
     
-    # Analyze each trend
-    for trend in trend_data.get("trends", []):
-        trend_id = trend.get("id")
-        trend_name = trend.get("name")
-        data_points = trend.get("data", [])
-        
-        if len(data_points) < 2:
-            continue
-        
-        # Sort data points by time if available
-        if "time" in data_points[0]:
-            data_points = sorted(data_points, key=lambda x: x.get("time"))
-        
-        # Extract values
-        values = [point.get("value") for point in data_points if point.get("value") is not None]
-        
-        if len(values) < 2:
-            continue
-        
-        # Calculate changes
-        changes = [(values[i] - values[i-1]) / values[i-1] if values[i-1] != 0 else 0 for i in range(1, len(values))]
-        
-        # Detect growth pattern
-        growth_segments = []
-        current_segment = []
-        
-        for i, change in enumerate(changes):
-            if change >= growth_threshold:
-                current_segment.append(i + 1)  # +1 because changes start from the second point
-            else:
-                if len(current_segment) >= min_duration:
-                    growth_segments.append(current_segment)
-                current_segment = []
-        
-        if len(current_segment) >= min_duration:
-            growth_segments.append(current_segment)
-        
-        for segment in growth_segments:
-            start_idx = segment[0]
-            end_idx = segment[-1]
-            start_value = values[start_idx]
-            end_value = values[end_idx]
-            growth_rate = (end_value - start_value) / start_value if start_value != 0 else 0
+    # If data is raw text, analyze it using the trend analyzer
+    if isinstance(data, str) or (isinstance(data, dict) and "text" in data):
+        text = data if isinstance(data, str) else data["text"]
+        try:
+            # Use the trend analyzer to extract trends with pattern detection
+            analysis_result = dashboard_plugin_manager.analyze_trends(text, detect_patterns=True)
             
-            patterns.append({
-                "trend_id": trend_id,
-                "trend_name": trend_name,
-                "pattern_type": "growth",
-                "start_index": start_idx,
-                "end_index": end_idx,
-                "start_value": start_value,
-                "end_value": end_value,
-                "change_rate": growth_rate,
-                "confidence": min(1.0, growth_rate / growth_threshold)
-            })
-        
-        # Detect decline pattern
-        decline_segments = []
-        current_segment = []
-        
-        for i, change in enumerate(changes):
-            if change <= decline_threshold:
-                current_segment.append(i + 1)
-            else:
-                if len(current_segment) >= min_duration:
-                    decline_segments.append(current_segment)
-                current_segment = []
-        
-        if len(current_segment) >= min_duration:
-            decline_segments.append(current_segment)
-        
-        for segment in decline_segments:
-            start_idx = segment[0]
-            end_idx = segment[-1]
-            start_value = values[start_idx]
-            end_value = values[end_idx]
-            decline_rate = (end_value - start_value) / start_value if start_value != 0 else 0
+            # Check if the analysis was successful
+            if "error" in analysis_result:
+                logger.error(f"Error analyzing text: {analysis_result['error']}")
+                return {"error": analysis_result["error"]}
             
-            patterns.append({
-                "trend_id": trend_id,
-                "trend_name": trend_name,
-                "pattern_type": "decline",
-                "start_index": start_idx,
-                "end_index": end_idx,
-                "start_value": start_value,
-                "end_value": end_value,
-                "change_rate": decline_rate,
-                "confidence": min(1.0, abs(decline_rate) / abs(decline_threshold))
-            })
-        
-        # Detect stability pattern
-        stability_segments = []
-        current_segment = []
-        
-        for i, change in enumerate(changes):
-            if abs(change) <= stability_threshold:
-                current_segment.append(i + 1)
-            else:
-                if len(current_segment) >= min_duration:
-                    stability_segments.append(current_segment)
-                current_segment = []
-        
-        if len(current_segment) >= min_duration:
-            stability_segments.append(current_segment)
-        
-        for segment in stability_segments:
-            start_idx = segment[0]
-            end_idx = segment[-1]
-            start_value = values[start_idx]
-            end_value = values[end_idx]
-            
-            patterns.append({
-                "trend_id": trend_id,
-                "trend_name": trend_name,
-                "pattern_type": "stability",
-                "start_index": start_idx,
-                "end_index": end_idx,
-                "start_value": start_value,
-                "end_value": end_value,
-                "change_rate": (end_value - start_value) / start_value if start_value != 0 else 0,
-                "confidence": 1.0 - (abs(end_value - start_value) / (start_value * stability_threshold) if start_value != 0 else 0)
-            })
+            # Return the patterns from the analysis result
+            return {
+                "patterns": analysis_result.get("patterns", []),
+                "trends": analysis_result.get("trends", [])
+            }
+        except Exception as e:
+            logger.error(f"Error detecting patterns: {str(e)}")
+            return {"error": str(e)}
     
-    return patterns
+    # Detect patterns in the provided data
+    try:
+        patterns = []
+        trends = data.get("trends", [])
+        
+        for trend in trends:
+            # Extract time series data
+            time_values = []
+            data_values = []
+            
+            for point in trend.get("data", []):
+                if "time" in point and "value" in point:
+                    # Convert time string to datetime if needed
+                    if isinstance(point["time"], str):
+                        try:
+                            time_values.append(datetime.fromisoformat(point["time"]))
+                        except ValueError:
+                            time_values.append(point["time"])
+                    else:
+                        time_values.append(point["time"])
+                    
+                    data_values.append(point["value"])
+            
+            if len(data_values) < 3:
+                continue  # Not enough data points for pattern detection
+            
+            # Convert to numpy array
+            values = np.array(data_values)
+            
+            # Detect trend direction
+            if len(values) >= 2:
+                slope = np.polyfit(range(len(values)), values, 1)[0]
+                
+                if slope > 0.05:  # Positive trend
+                    patterns.append({
+                        "trend_name": trend.get("name", "Unnamed trend"),
+                        "pattern_type": "upward_trend",
+                        "description": f"Upward trend detected in {trend.get('name', 'data')}",
+                        "confidence": min(1.0, abs(slope) * 2),
+                        "metadata": {
+                            "slope": float(slope),
+                            "start_value": float(values[0]),
+                            "end_value": float(values[-1]),
+                            "change_percent": float((values[-1] - values[0]) / values[0] * 100) if values[0] != 0 else float('inf')
+                        }
+                    })
+                elif slope < -0.05:  # Negative trend
+                    patterns.append({
+                        "trend_name": trend.get("name", "Unnamed trend"),
+                        "pattern_type": "downward_trend",
+                        "description": f"Downward trend detected in {trend.get('name', 'data')}",
+                        "confidence": min(1.0, abs(slope) * 2),
+                        "metadata": {
+                            "slope": float(slope),
+                            "start_value": float(values[0]),
+                            "end_value": float(values[-1]),
+                            "change_percent": float((values[-1] - values[0]) / values[0] * 100) if values[0] != 0 else float('inf')
+                        }
+                    })
+            
+            # Detect peaks and valleys
+            if len(values) >= 5:
+                # Simple peak detection
+                peaks = []
+                valleys = []
+                
+                for i in range(1, len(values) - 1):
+                    if values[i] > values[i-1] and values[i] > values[i+1]:
+                        peaks.append(i)
+                    elif values[i] < values[i-1] and values[i] < values[i+1]:
+                        valleys.append(i)
+                
+                if peaks:
+                    patterns.append({
+                        "trend_name": trend.get("name", "Unnamed trend"),
+                        "pattern_type": "peaks",
+                        "description": f"{len(peaks)} peak(s) detected in {trend.get('name', 'data')}",
+                        "confidence": 0.7,
+                        "metadata": {
+                            "peak_count": len(peaks),
+                            "peak_indices": peaks,
+                            "peak_values": [float(values[i]) for i in peaks]
+                        }
+                    })
+                
+                if valleys:
+                    patterns.append({
+                        "trend_name": trend.get("name", "Unnamed trend"),
+                        "pattern_type": "valleys",
+                        "description": f"{len(valleys)} valley(s) detected in {trend.get('name', 'data')}",
+                        "confidence": 0.7,
+                        "metadata": {
+                            "valley_count": len(valleys),
+                            "valley_indices": valleys,
+                            "valley_values": [float(values[i]) for i in valleys]
+                        }
+                    })
+            
+            # Detect seasonality (simple approach)
+            if len(values) >= 12:  # At least a year of data for seasonality
+                # Calculate autocorrelation
+                autocorr = np.correlate(values - np.mean(values), values - np.mean(values), mode='full')
+                autocorr = autocorr[len(autocorr)//2:]  # Take the second half
+                autocorr = autocorr / autocorr[0]  # Normalize
+                
+                # Find peaks in autocorrelation
+                autocorr_peaks = []
+                for i in range(1, len(autocorr) - 1):
+                    if autocorr[i] > autocorr[i-1] and autocorr[i] > autocorr[i+1] and autocorr[i] > 0.5:
+                        autocorr_peaks.append(i)
+                
+                if autocorr_peaks:
+                    # Get the first peak (excluding lag 0)
+                    if autocorr_peaks and autocorr_peaks[0] > 1:
+                        period = autocorr_peaks[0]
+                        patterns.append({
+                            "trend_name": trend.get("name", "Unnamed trend"),
+                            "pattern_type": "seasonality",
+                            "description": f"Seasonal pattern with period {period} detected in {trend.get('name', 'data')}",
+                            "confidence": min(1.0, autocorr[period]),
+                            "metadata": {
+                                "period": period,
+                                "correlation": float(autocorr[period])
+                            }
+                        })
+        
+        # Return detected patterns
+        return {
+            "patterns": patterns,
+            "trends": trends
+        }
+    except Exception as e:
+        logger.error(f"Error detecting patterns: {str(e)}")
+        return {"error": str(e)}
