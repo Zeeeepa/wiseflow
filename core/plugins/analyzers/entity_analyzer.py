@@ -1,203 +1,336 @@
 """
-Entity Analyzer Plugin for Wiseflow.
-
-This plugin analyzes processed data to extract entities and their relationships.
+Entity analyzer plugin for extracting and analyzing entities from text.
 """
 
-import json
 import re
 import logging
-from typing import Dict, List, Any, Optional
-from datetime import datetime
-from tenacity import retry, stop_after_attempt, wait_exponential
+from typing import Any, Dict, List, Optional, Union, Set, Tuple
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk.chunk import ne_chunk
+from nltk.tag import pos_tag
+import networkx as nx
 
-from core.plugins.analyzers import AnalyzerBase, AnalysisResult
-from core.plugins.processors import ProcessedData
-from core.plugins.utils import TextExtractor
-from core.llms.litellm_wrapper import litellm_llm
+from core.plugins.base import AnalyzerPlugin
 
 logger = logging.getLogger(__name__)
 
-class EntityAnalyzer(AnalyzerBase):
-    """Analyzer for extracting entities from processed data."""
-    
-    name: str = "entity_analyzer"
-    description: str = "Extracts entities and their relationships from processed data"
-    analyzer_type: str = "entity"
-    
-    # Default prompts for entity extraction
-    DEFAULT_ENTITY_PROMPT = """
-    You are an expert in entity extraction. Extract all named entities from the following text.
-    For each entity, provide:
-    1. The entity name
-    2. The entity type (person, organization, location, product, technology, event, date, etc.)
-    3. A brief description based on the context
-    
-    Format your response as a JSON array of objects with the following structure:
-    [
-      {
-        "name": "entity name",
-        "type": "entity type",
-        "description": "brief description"
-      }
-    ]
-    
-    Text to analyze:
-    {text}
-    """
-    
-    DEFAULT_RELATIONSHIP_PROMPT = """
-    You are an expert in relationship extraction. Identify relationships between the entities in the text.
-    For each relationship, provide:
-    1. The source entity name
-    2. The target entity name
-    3. The relationship type (e.g., "works for", "located in", "developed by", etc.)
-    4. A brief description of the relationship
-    
-    Format your response as a JSON array of objects with the following structure:
-    [
-      {
-        "source": "source entity name",
-        "target": "target entity name",
-        "type": "relationship type",
-        "description": "brief description"
-      }
-    ]
-    
-    Text to analyze:
-    {text}
-    
-    Entities already identified:
-    {entities}
-    """
+# Download NLTK resources if needed
+try:
+    nltk.data.find('punkt')
+    nltk.data.find('averaged_perceptron_tagger')
+    nltk.data.find('maxent_ne_chunker')
+    nltk.data.find('words')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+    nltk.download('averaged_perceptron_tagger', quiet=True)
+    nltk.download('maxent_ne_chunker', quiet=True)
+    nltk.download('words', quiet=True)
+
+
+class EntityAnalyzer(AnalyzerPlugin):
+    """Analyzer for extracting and analyzing entities from text."""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize the entity analyzer."""
+        """Initialize the entity analyzer.
+        
+        Args:
+            config: Configuration dictionary with the following keys:
+                - extract_relationships: Whether to extract entity relationships (default: True)
+                - build_knowledge_graph: Whether to build a knowledge graph (default: True)
+                - min_relationship_confidence: Minimum confidence for relationships (default: 0.5)
+                - max_entities: Maximum number of entities to extract (default: 100)
+                - entity_types: List of entity types to extract (default: all)
+        """
         super().__init__(config)
-        self.entity_prompt = self.config.get("entity_prompt", self.DEFAULT_ENTITY_PROMPT)
-        self.relationship_prompt = self.config.get("relationship_prompt", self.DEFAULT_RELATIONSHIP_PROMPT)
-        self.model = self.config.get("model", "gpt-3.5-turbo")
-        self.max_retries = self.config.get("max_retries", 3)
-        self.retry_min_wait = self.config.get("retry_min_wait", 4)
-        self.retry_max_wait = self.config.get("retry_max_wait", 10)
+        self.extract_relationships = self.config.get('extract_relationships', True)
+        self.build_knowledge_graph = self.config.get('build_knowledge_graph', True)
+        self.min_relationship_confidence = self.config.get('min_relationship_confidence', 0.5)
+        self.max_entities = self.config.get('max_entities', 100)
+        self.entity_types = self.config.get('entity_types', ['PERSON', 'ORGANIZATION', 'LOCATION', 'GPE', 'FACILITY', 'DATE', 'TIME', 'MONEY', 'PERCENT'])
         
-    def analyze(self, processed_data: ProcessedData, params: Optional[Dict[str, Any]] = None) -> AnalysisResult:
-        """Analyze processed data to extract entities and relationships."""
-        params = params or {}
+    def initialize(self) -> bool:
+        """Initialize the entity analyzer.
         
-        if not processed_data or not processed_data.processed_content:
-            logger.warning("No processed content to analyze")
-            return AnalysisResult(
-                processed_data=processed_data,
-                analysis_content={"entities": [], "relationships": []},
-                metadata={"error": "No processed content to analyze"}
-            )
+        Returns:
+            bool: True if initialization was successful, False otherwise
+        """
+        self.initialized = True
+        return True
         
-        try:
-            # Extract text from processed content
-            text = TextExtractor.extract_text(processed_data.processed_content)
+    def analyze(self, data: Any, **kwargs) -> Dict[str, Any]:
+        """Analyze text data for entities.
+        
+        Args:
+            data: Text data to analyze
+            **kwargs: Additional parameters:
+                - extract_relationships: Override config setting
+                - build_knowledge_graph: Override config setting
+                - min_relationship_confidence: Override config setting
+                - max_entities: Override config setting
+                - entity_types: Override config setting
+                
+        Returns:
+            Dict[str, Any]: Analysis results containing entities and relationships
+        """
+        if not self.initialized:
+            self.initialize()
             
-            if not text:
-                logger.warning("No text content found in processed data")
-                return AnalysisResult(
-                    processed_data=processed_data,
-                    analysis_content={"entities": [], "relationships": []},
-                    metadata={"error": "No text content found in processed data"}
-                )
+        # Get text from input data
+        if isinstance(data, str):
+            text = data
+        elif isinstance(data, dict) and 'processed_text' in data:
+            # Handle output from TextProcessor
+            text = data['processed_text']
+        elif hasattr(data, 'text') or hasattr(data, 'content'):
+            # Handle requests.Response or similar objects
+            text = getattr(data, 'text', None) or getattr(data, 'content', '').decode('utf-8')
+        else:
+            # Try to convert to string
+            try:
+                text = str(data)
+            except Exception as e:
+                logger.error(f"Could not convert data to text: {str(e)}")
+                return {'error': 'Invalid input data type', 'entities': []}
+                
+        # Override config settings with kwargs if provided
+        extract_relationships = kwargs.get('extract_relationships', self.extract_relationships)
+        build_knowledge_graph = kwargs.get('build_knowledge_graph', self.build_knowledge_graph)
+        min_relationship_confidence = kwargs.get('min_relationship_confidence', self.min_relationship_confidence)
+        max_entities = kwargs.get('max_entities', self.max_entities)
+        entity_types = kwargs.get('entity_types', self.entity_types)
+        
+        # Extract entities
+        entities = self._extract_entities(text, entity_types, max_entities)
+        
+        result = {'entities': entities}
+        
+        # Extract relationships if requested
+        if extract_relationships and len(entities) > 1:
+            relationships = self._extract_relationships(text, entities, min_relationship_confidence)
+            result['relationships'] = relationships
+            
+        # Build knowledge graph if requested
+        if build_knowledge_graph and len(entities) > 0:
+            if 'relationships' not in result:
+                relationships = self._extract_relationships(text, entities, min_relationship_confidence)
+                result['relationships'] = relationships
+                
+            graph = self._build_knowledge_graph(entities, result['relationships'])
+            result['knowledge_graph'] = graph
+            
+        return result
+        
+    def _extract_entities(self, text: str, entity_types: List[str], max_entities: int) -> List[Dict[str, Any]]:
+        """Extract entities from text.
+        
+        Args:
+            text: Input text
+            entity_types: List of entity types to extract
+            max_entities: Maximum number of entities to extract
+            
+        Returns:
+            List[Dict[str, Any]]: List of extracted entities with metadata
+        """
+        try:
+            # Tokenize text
+            tokens = word_tokenize(text)
+            
+            # Part-of-speech tagging
+            tagged = pos_tag(tokens)
+            
+            # Named entity recognition
+            chunks = ne_chunk(tagged)
             
             # Extract entities
-            entities = self._extract_entities(text)
+            entities = []
+            entity_set = set()  # To track unique entities
             
-            # Extract relationships if entities were found
-            relationships = []
-            if entities:
-                relationships = self._extract_relationships(text, entities)
-            
-            # Create analysis result
-            analysis_content = {
-                "entities": entities,
-                "relationships": relationships
-            }
-            
-            metadata = {
-                "entity_count": len(entities),
-                "relationship_count": len(relationships),
-                "source_type": processed_data.metadata.get("source_type", "unknown"),
-                "analysis_time": datetime.now().isoformat()
-            }
-            
-            return AnalysisResult(
-                processed_data=processed_data,
-                analysis_content=analysis_content,
-                metadata=metadata
-            )
-            
-        except Exception as e:
-            logger.error(f"Error analyzing data: {e}")
-            return AnalysisResult(
-                processed_data=processed_data,
-                analysis_content={"entities": [], "relationships": []},
-                metadata={"error": str(e)}
-            )
-    
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    def _extract_entities(self, text: str) -> List[Dict[str, Any]]:
-        """Extract entities from text using LLM with retry logic."""
-        try:
-            # Prepare the prompt
-            prompt = self.entity_prompt.format(text=text)
-            
-            # Call the LLM
-            messages = [
-                {"role": "system", "content": "You are an expert in entity extraction."},
-                {"role": "user", "content": prompt}
-            ]
-            
-            response = litellm_llm(messages, self.model)
-            
-            # Parse the response
-            return self._parse_json_response(response)
+            for chunk in chunks:
+                if hasattr(chunk, 'label') and chunk.label() in entity_types:
+                    entity_text = ' '.join(c[0] for c in chunk)
+                    entity_type = chunk.label()
+                    
+                    # Skip if already processed or if we've reached the maximum
+                    if entity_text.lower() in entity_set or len(entities) >= max_entities:
+                        continue
+                        
+                    entity_set.add(entity_text.lower())
+                    
+                    # Find positions in text
+                    positions = []
+                    for match in re.finditer(re.escape(entity_text), text):
+                        positions.append((match.start(), match.end()))
+                        
+                    # Create entity object
+                    entity = {
+                        'text': entity_text,
+                        'type': entity_type,
+                        'positions': positions[:10],  # Limit to 10 positions
+                        'confidence': 1.0  # Default confidence
+                    }
+                    
+                    entities.append(entity)
+                    
+                    if len(entities) >= max_entities:
+                        break
+                        
+            return entities
             
         except Exception as e:
-            logger.error(f"Error extracting entities: {e}")
-            raise  # Let retry handle the error
-    
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    def _extract_relationships(self, text: str, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Extract relationships between entities using LLM with retry logic."""
-        try:
-            # Prepare the prompt
-            entities_str = json.dumps(entities, indent=2)
-            prompt = self.relationship_prompt.format(text=text, entities=entities_str)
-            
-            # Call the LLM
-            messages = [
-                {"role": "system", "content": "You are an expert in relationship extraction."},
-                {"role": "user", "content": prompt}
-            ]
-            
-            response = litellm_llm(messages, self.model)
-            
-            # Parse the response
-            return self._parse_json_response(response)
-            
-        except Exception as e:
-            logger.error(f"Error extracting relationships: {e}")
-            raise  # Let retry handle the error
-    
-    def _parse_json_response(self, response: str) -> List[Dict[str, Any]]:
-        """Parse JSON response from LLM."""
-        try:
-            # Extract JSON from the response
-            json_match = re.search(r'\[.*\]', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            
-            # If no JSON array found, try to parse the entire response
-            return json.loads(response)
-            
-        except Exception as e:
-            logger.error(f"Error parsing JSON response: {e}")
-            logger.debug(f"Response: {response}")
+            logger.error(f"Error extracting entities: {str(e)}")
             return []
+            
+    def _extract_relationships(self, text: str, entities: List[Dict[str, Any]], min_confidence: float) -> List[Dict[str, Any]]:
+        """Extract relationships between entities.
+        
+        Args:
+            text: Input text
+            entities: List of extracted entities
+            min_confidence: Minimum confidence for relationships
+            
+        Returns:
+            List[Dict[str, Any]]: List of extracted relationships with metadata
+        """
+        relationships = []
+        
+        try:
+            # Create a simple co-occurrence based relationship extraction
+            # Entities that appear close to each other in text are likely related
+            
+            # Create a map of entity text to entity object
+            entity_map = {entity['text']: entity for entity in entities}
+            
+            # Split text into sentences
+            sentences = nltk.sent_tokenize(text)
+            
+            for sentence in sentences:
+                # Find entities in this sentence
+                sentence_entities = []
+                for entity_text in entity_map:
+                    if entity_text in sentence:
+                        sentence_entities.append(entity_map[entity_text])
+                        
+                # Create relationships between entities in the same sentence
+                for i in range(len(sentence_entities)):
+                    for j in range(i + 1, len(sentence_entities)):
+                        entity1 = sentence_entities[i]
+                        entity2 = sentence_entities[j]
+                        
+                        # Calculate confidence based on entity types and distance
+                        # This is a simple heuristic and can be improved
+                        confidence = 0.7  # Base confidence for entities in same sentence
+                        
+                        # Adjust confidence based on entity types
+                        if entity1['type'] == 'PERSON' and entity2['type'] == 'ORGANIZATION':
+                            confidence += 0.1  # Person-Organization relationships are common
+                        elif entity1['type'] == 'ORGANIZATION' and entity2['type'] == 'PERSON':
+                            confidence += 0.1
+                        elif entity1['type'] == 'PERSON' and entity2['type'] == 'LOCATION':
+                            confidence += 0.05  # Person-Location relationships
+                        elif entity1['type'] == 'LOCATION' and entity2['type'] == 'PERSON':
+                            confidence += 0.05
+                            
+                        # Only include relationships with sufficient confidence
+                        if confidence >= min_confidence:
+                            relationship = {
+                                'source': entity1['text'],
+                                'source_type': entity1['type'],
+                                'target': entity2['text'],
+                                'target_type': entity2['type'],
+                                'type': 'co-occurrence',  # Default relationship type
+                                'confidence': confidence,
+                                'context': sentence[:100] + '...' if len(sentence) > 100 else sentence
+                            }
+                            
+                            # Check if this relationship already exists
+                            is_duplicate = False
+                            for rel in relationships:
+                                if (rel['source'] == relationship['source'] and rel['target'] == relationship['target']) or \
+                                   (rel['source'] == relationship['target'] and rel['target'] == relationship['source']):
+                                    is_duplicate = True
+                                    # Update confidence if this instance has higher confidence
+                                    if relationship['confidence'] > rel['confidence']:
+                                        rel['confidence'] = relationship['confidence']
+                                        rel['context'] = relationship['context']
+                                    break
+                                    
+                            if not is_duplicate:
+                                relationships.append(relationship)
+                                
+            return relationships
+            
+        except Exception as e:
+            logger.error(f"Error extracting relationships: {str(e)}")
+            return []
+            
+    def _build_knowledge_graph(self, entities: List[Dict[str, Any]], relationships: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build a knowledge graph from entities and relationships.
+        
+        Args:
+            entities: List of extracted entities
+            relationships: List of extracted relationships
+            
+        Returns:
+            Dict[str, Any]: Knowledge graph representation
+        """
+        try:
+            # Create a directed graph
+            G = nx.DiGraph()
+            
+            # Add entities as nodes
+            for entity in entities:
+                G.add_node(entity['text'], type=entity['type'])
+                
+            # Add relationships as edges
+            for rel in relationships:
+                G.add_edge(
+                    rel['source'],
+                    rel['target'],
+                    type=rel['type'],
+                    confidence=rel['confidence']
+                )
+                
+            # Convert to serializable format
+            nodes = []
+            for node in G.nodes(data=True):
+                nodes.append({
+                    'id': node[0],
+                    'type': node[1]['type']
+                })
+                
+            edges = []
+            for edge in G.edges(data=True):
+                edges.append({
+                    'source': edge[0],
+                    'target': edge[1],
+                    'type': edge[2]['type'],
+                    'confidence': edge[2]['confidence']
+                })
+                
+            # Calculate basic graph metrics
+            metrics = {
+                'node_count': G.number_of_nodes(),
+                'edge_count': G.number_of_edges(),
+                'density': nx.density(G)
+            }
+            
+            # Identify central entities
+            if G.number_of_nodes() > 0:
+                try:
+                    centrality = nx.degree_centrality(G)
+                    central_entities = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:5]
+                    metrics['central_entities'] = [{'entity': e[0], 'centrality': e[1]} for e in central_entities]
+                except Exception as e:
+                    logger.error(f"Error calculating centrality: {str(e)}")
+                    
+            return {
+                'nodes': nodes,
+                'edges': edges,
+                'metrics': metrics
+            }
+            
+        except Exception as e:
+            logger.error(f"Error building knowledge graph: {str(e)}")
+            return {'nodes': [], 'edges': [], 'metrics': {}}
+

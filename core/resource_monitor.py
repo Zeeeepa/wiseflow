@@ -1,330 +1,381 @@
+"""
+Resource monitor for tracking system resources and managing auto-shutdown.
+"""
+
 import os
 import time
-import psutil
-from typing import Dict, List, Callable, Optional, Tuple, Any
 import threading
 import logging
-import traceback
+import psutil
+from typing import Any, Dict, List, Optional, Union, Callable
+import json
+import datetime
+
+from core.thread_pool_manager import thread_pool_manager, TaskPriority
+
 logger = logging.getLogger(__name__)
 
+
 class ResourceMonitor:
-    """
-    A class for monitoring system resources including CPU, memory, disk, and IO usage.
-    Provides methods to track resource usage, set thresholds, and trigger callbacks when thresholds are exceeded.
-    """
+    """Monitor system resources and manage auto-shutdown."""
     
-    def __init__(self, 
-                 check_interval: float = 5.0,
-                 cpu_threshold: float = 80.0,
-                 memory_threshold: float = 80.0,
-                 disk_threshold: float = 80.0,
-                 io_threshold: float = 80.0,
-                 history_size: int = 60):
-        """
-        Initialize the ResourceMonitor with configurable thresholds and check interval.
+    _instance = None
+    
+    def __new__(cls, *args, **kwargs):
+        """Create a singleton instance."""
+        if cls._instance is None:
+            cls._instance = super(ResourceMonitor, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(
+        self,
+        check_interval: float = 60.0,
+        cpu_threshold: float = 90.0,
+        memory_threshold: float = 90.0,
+        disk_threshold: float = 90.0,
+        auto_shutdown_enabled: bool = False,
+        auto_shutdown_idle_time: float = 1800.0,
+        auto_shutdown_callback: Optional[Callable] = None
+    ):
+        """Initialize the resource monitor.
         
         Args:
-            check_interval: Time in seconds between resource checks
-            cpu_threshold: CPU usage percentage threshold (0-100)
-            memory_threshold: Memory usage percentage threshold (0-100)
-            disk_threshold: Disk usage percentage threshold (0-100)
-            io_threshold: IO usage percentage threshold (0-100)
-            history_size: Number of historical data points to keep
+            check_interval: Interval between resource checks in seconds
+            cpu_threshold: CPU usage threshold percentage
+            memory_threshold: Memory usage threshold percentage
+            disk_threshold: Disk usage threshold percentage
+            auto_shutdown_enabled: Whether to enable auto-shutdown
+            auto_shutdown_idle_time: Idle time before auto-shutdown in seconds
+            auto_shutdown_callback: Callback function for auto-shutdown
         """
+        if self._initialized:
+            return
+            
         self.check_interval = check_interval
-        self.thresholds = {
-            'cpu': cpu_threshold,
-            'memory': memory_threshold,
-            'disk': disk_threshold,
-            'io': io_threshold
-        }
+        self.cpu_threshold = cpu_threshold
+        self.memory_threshold = memory_threshold
+        self.disk_threshold = disk_threshold
+        self.auto_shutdown_enabled = auto_shutdown_enabled
+        self.auto_shutdown_idle_time = auto_shutdown_idle_time
+        self.auto_shutdown_callback = auto_shutdown_callback
         
-        self.history = {
+        self.last_activity_time = time.time()
+        self.shutdown_requested = False
+        self.monitor_thread = None
+        self.stop_event = threading.Event()
+        
+        self.resource_history = {
             'cpu': [],
             'memory': [],
             'disk': [],
-            'io': [],
             'timestamp': []
         }
+        self.history_max_size = 1000  # Maximum number of history entries
         
-        self.history_size = history_size
-        self.callbacks = []
-        self._stop_event = threading.Event()
-        self._monitor_thread = None
-        self.last_io_counters = psutil.disk_io_counters()
-        self.last_io_time = time.time()
-        self._shutdown_requested = False
-        self._shutdown_callbacks = []
-    
+        self._initialized = True
+        logger.info("ResourceMonitor initialized")
+        
     def start(self):
-        """Start the resource monitoring thread."""
-        if self._monitor_thread is None or not self._monitor_thread.is_alive():
-            self._stop_event.clear()
-            self._shutdown_requested = False
-            self._monitor_thread = threading.Thread(target=self._monitor_resources, daemon=True)
-            self._monitor_thread.start()
-            logger.info("Resource monitoring started")
-    
+        """Start the resource monitor thread."""
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            logger.warning("ResourceMonitor already running")
+            return
+            
+        self.stop_event.clear()
+        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self.monitor_thread.start()
+        logger.info("ResourceMonitor started")
+        
     def stop(self):
-        """Stop the resource monitoring thread and clean up resources."""
-        if self._monitor_thread and self._monitor_thread.is_alive():
-            logger.info("Stopping resource monitor...")
-            self._stop_event.set()
+        """Stop the resource monitor thread."""
+        if not self.monitor_thread or not self.monitor_thread.is_alive():
+            logger.warning("ResourceMonitor not running")
+            return
             
-            # Wait for the monitoring thread to stop
+        self.stop_event.set()
+        self.monitor_thread.join(timeout=10.0)
+        logger.info("ResourceMonitor stopped")
+        
+    def _monitor_loop(self):
+        """Main monitoring loop."""
+        while not self.stop_event.is_set():
             try:
-                self._monitor_thread.join(timeout=self.check_interval + 1)
-                if self._monitor_thread.is_alive():
-                    logger.warning("Resource monitor thread did not stop gracefully")
+                # Check resources
+                self._check_resources()
+                
+                # Check for auto-shutdown
+                if self.auto_shutdown_enabled and not self.shutdown_requested:
+                    self._check_auto_shutdown()
+                    
+                # Sleep until next check
+                self.stop_event.wait(self.check_interval)
+                
             except Exception as e:
-                logger.error(f"Error stopping resource monitor thread: {e}")
+                logger.error(f"Error in resource monitor: {str(e)}")
+                time.sleep(self.check_interval)
+                
+    def _check_resources(self):
+        """Check system resources and update history."""
+        try:
+            # Get CPU usage
+            cpu_percent = psutil.cpu_percent(interval=1.0)
             
-            # Clear resources
-            self._monitor_thread = None
-            self.callbacks.clear()
+            # Get memory usage
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
             
-            # Clear history to free memory
-            for key in self.history:
-                self.history[key].clear()
+            # Get disk usage for the current directory
+            disk = psutil.disk_usage(os.getcwd())
+            disk_percent = disk.percent
             
-            logger.info("Resource monitoring stopped")
-    
-    def add_callback(self, callback: Callable[[str, float, float], None]):
-        """
-        Add a callback function to be called when a resource threshold is exceeded.
+            # Update history
+            timestamp = time.time()
+            self.resource_history['cpu'].append(cpu_percent)
+            self.resource_history['memory'].append(memory_percent)
+            self.resource_history['disk'].append(disk_percent)
+            self.resource_history['timestamp'].append(timestamp)
+            
+            # Trim history if needed
+            if len(self.resource_history['cpu']) > self.history_max_size:
+                self.resource_history['cpu'] = self.resource_history['cpu'][-self.history_max_size:]
+                self.resource_history['memory'] = self.resource_history['memory'][-self.history_max_size:]
+                self.resource_history['disk'] = self.resource_history['disk'][-self.history_max_size:]
+                self.resource_history['timestamp'] = self.resource_history['timestamp'][-self.history_max_size:]
+                
+            # Log resource usage
+            logger.debug(f"Resource usage: CPU={cpu_percent:.1f}%, Memory={memory_percent:.1f}%, Disk={disk_percent:.1f}%")
+            
+            # Check thresholds and log warnings
+            if cpu_percent > self.cpu_threshold:
+                logger.warning(f"CPU usage above threshold: {cpu_percent:.1f}% > {self.cpu_threshold:.1f}%")
+                
+            if memory_percent > self.memory_threshold:
+                logger.warning(f"Memory usage above threshold: {memory_percent:.1f}% > {self.memory_threshold:.1f}%")
+                
+            if disk_percent > self.disk_threshold:
+                logger.warning(f"Disk usage above threshold: {disk_percent:.1f}% > {self.disk_threshold:.1f}%")
+                
+        except Exception as e:
+            logger.error(f"Error checking resources: {str(e)}")
+            
+    def _check_auto_shutdown(self):
+        """Check if auto-shutdown should be triggered."""
+        current_time = time.time()
+        idle_time = current_time - self.last_activity_time
         
-        Args:
-            callback: Function that takes (resource_type, current_value, threshold_value)
-        """
-        self.callbacks.append(callback)
-    
-    def add_shutdown_callback(self, callback: Callable[[], None]):
-        """
-        Add a callback function to be called when shutdown is requested.
+        # Get thread pool stats
+        thread_pool_stats = thread_pool_manager.get_stats()
+        active_tasks = thread_pool_stats['pending_tasks'] + thread_pool_stats['running_tasks']
         
-        Args:
-            callback: Function to call during shutdown
-        """
-        self._shutdown_callbacks.append(callback)
-    
-    def get_current_usage(self) -> Dict[str, float]:
-        """
-        Get the current resource usage.
+        # Check if system is idle
+        if active_tasks == 0 and idle_time >= self.auto_shutdown_idle_time:
+            logger.info(f"System idle for {idle_time:.1f} seconds, initiating auto-shutdown")
+            self.shutdown_requested = True
+            
+            # Call shutdown callback if provided
+            if self.auto_shutdown_callback:
+                try:
+                    self.auto_shutdown_callback()
+                except Exception as e:
+                    logger.error(f"Error in auto-shutdown callback: {str(e)}")
+                    
+    def record_activity(self):
+        """Record user activity to reset idle timer."""
+        self.last_activity_time = time.time()
+        logger.debug("Activity recorded")
+        
+    def get_resource_usage(self) -> Dict[str, float]:
+        """Get current resource usage.
         
         Returns:
-            Dictionary with current usage percentages for cpu, memory, disk, and io
+            Dict[str, float]: Current resource usage percentages
         """
         try:
-            cpu = psutil.cpu_percent(interval=0.1)
-            memory = psutil.virtual_memory().percent
-            
-            try:
-                disk = psutil.disk_usage('/').percent
-            except Exception as e:
-                logger.error(f"Error getting disk usage: {e}")
-                disk = 0.0
-            
-            # Calculate IO usage based on read/write operations
-            try:
-                current_io_counters = psutil.disk_io_counters()
-                current_time = time.time()
-                
-                if self.last_io_counters and current_io_counters:
-                    io_delta = sum([
-                        current_io_counters.read_bytes - self.last_io_counters.read_bytes,
-                        current_io_counters.write_bytes - self.last_io_counters.write_bytes
-                    ])
-                    
-                    time_delta = current_time - self.last_io_time
-                    io_rate = io_delta / time_delta if time_delta > 0 else 0
-                    
-                    # Normalize IO rate to a percentage (assuming 100MB/s is 100%)
-                    max_io_rate = 100 * 1024 * 1024  # 100 MB/s
-                    io_percent = min(100.0, (io_rate / max_io_rate) * 100)
-                    
-                    self.last_io_counters = current_io_counters
-                    self.last_io_time = current_time
-                else:
-                    io_percent = 0.0
-                    self.last_io_counters = current_io_counters
-                    self.last_io_time = current_time
-            except Exception as e:
-                logger.error(f"Error calculating IO usage: {e}")
-                io_percent = 0.0
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage(os.getcwd())
             
             return {
-                'cpu': cpu,
-                'memory': memory,
-                'disk': disk,
-                'io': io_percent
+                'cpu': cpu_percent,
+                'memory': memory.percent,
+                'disk': disk.percent,
+                'timestamp': time.time()
             }
         except Exception as e:
-            logger.error(f"Error getting resource usage: {e}")
-            logger.error(traceback.format_exc())
-            # Return default values in case of error
+            logger.error(f"Error getting resource usage: {str(e)}")
             return {
                 'cpu': 0.0,
                 'memory': 0.0,
                 'disk': 0.0,
-                'io': 0.0
+                'timestamp': time.time(),
+                'error': str(e)
             }
-    
-    def get_history(self) -> Dict[str, List[float]]:
-        """
-        Get the historical resource usage data.
-        
-        Returns:
-            Dictionary with lists of historical values for each resource type
-        """
-        return self.history
-    
-    def calculate_optimal_thread_count(self) -> int:
-        """
-        Calculate the optimal number of threads based on current system load.
-        
-        Returns:
-            Recommended number of worker threads
-        """
-        # Get current CPU and memory usage
-        usage = self.get_current_usage()
-        cpu_usage = usage['cpu']
-        memory_usage = usage['memory']
-        
-        # Get system information
-        cpu_count = os.cpu_count() or 4
-        
-        # Base calculation on CPU count
-        if cpu_usage > 90:
-            # System is heavily loaded, use minimal threads
-            optimal_count = max(1, int(cpu_count * 0.25))
-        elif cpu_usage > 70:
-            # System is moderately loaded
-            optimal_count = max(1, int(cpu_count * 0.5))
-        elif cpu_usage > 50:
-            # System has moderate load
-            optimal_count = max(1, int(cpu_count * 0.75))
-        else:
-            # System has light load, use full capacity
-            optimal_count = cpu_count
-        
-        # Adjust based on memory pressure
-        if memory_usage > 90:
-            optimal_count = max(1, int(optimal_count * 0.5))
-        elif memory_usage > 80:
-            optimal_count = max(1, int(optimal_count * 0.75))
-        
-        return optimal_count
-    
-    def request_shutdown(self):
-        """Request a system shutdown."""
-        if not self._shutdown_requested:
-            self._shutdown_requested = True
-            logger.info("Shutdown requested through resource monitor")
             
-            # Call all shutdown callbacks
-            for callback in self._shutdown_callbacks:
-                try:
-                    callback()
-                except Exception as e:
-                    logger.error(f"Error in shutdown callback: {e}")
-    
-    def _monitor_resources(self):
-        """Internal method to continuously monitor resources."""
-        try:
-            while not self._stop_event.is_set():
-                try:
-                    usage = self.get_current_usage()
-                    timestamp = time.time()
-                    
-                    # Update history
-                    for resource_type, value in usage.items():
-                        self.history[resource_type].append(value)
-                        # Trim history if it exceeds the maximum size
-                        if len(self.history[resource_type]) > self.history_size:
-                            self.history[resource_type].pop(0)
-                    
-                    self.history['timestamp'].append(timestamp)
-                    if len(self.history['timestamp']) > self.history_size:
-                        self.history['timestamp'].pop(0)
-                    
-                    # Check thresholds and trigger callbacks
-                    for resource_type, value in usage.items():
-                        threshold = self.thresholds.get(resource_type)
-                        if threshold and value > threshold:
-                            for callback in self.callbacks:
-                                try:
-                                    callback(resource_type, value, threshold)
-                                except Exception as e:
-                                    logger.error(f"Error in resource callback: {e}")
-                    
-                    # Sleep until next check
-                    self._stop_event.wait(self.check_interval)
-                    
-                except Exception as e:
-                    logger.error(f"Error monitoring resources: {e}")
-                    logger.error(traceback.format_exc())
-                    # Sleep a bit before retrying
-                    self._stop_event.wait(self.check_interval)
-        finally:
-            logger.info("Resource monitoring thread exiting")
-    
-    def update_thresholds(self, **kwargs):
-        """
-        Update resource thresholds.
+    def get_resource_history(self, limit: Optional[int] = None) -> Dict[str, List]:
+        """Get resource usage history.
         
         Args:
-            **kwargs: Threshold values to update (cpu, memory, disk, io)
+            limit: Maximum number of history entries to return
+            
+        Returns:
+            Dict[str, List]: Resource usage history
         """
-        for resource_type, value in kwargs.items():
-            if resource_type in self.thresholds and isinstance(value, (int, float)):
-                self.thresholds[resource_type] = float(value)
-    
-    def get_thresholds(self) -> Dict[str, float]:
-        """
-        Get the current threshold values.
+        if limit is None or limit >= len(self.resource_history['cpu']):
+            return self.resource_history
+            
+        return {
+            'cpu': self.resource_history['cpu'][-limit:],
+            'memory': self.resource_history['memory'][-limit:],
+            'disk': self.resource_history['disk'][-limit:],
+            'timestamp': self.resource_history['timestamp'][-limit:]
+        }
+        
+    def get_system_info(self) -> Dict[str, Any]:
+        """Get detailed system information.
         
         Returns:
-            Dictionary with current threshold values
+            Dict[str, Any]: System information
         """
-        return self.thresholds.copy()
+        try:
+            # CPU info
+            cpu_count = psutil.cpu_count(logical=False)
+            cpu_count_logical = psutil.cpu_count(logical=True)
+            cpu_freq = psutil.cpu_freq()
+            
+            # Memory info
+            memory = psutil.virtual_memory()
+            swap = psutil.swap_memory()
+            
+            # Disk info
+            disk = psutil.disk_usage(os.getcwd())
+            
+            # Network info
+            net_io = psutil.net_io_counters()
+            
+            # Process info
+            process = psutil.Process(os.getpid())
+            process_memory = process.memory_info()
+            
+            # Thread pool info
+            thread_pool_stats = thread_pool_manager.get_stats()
+            
+            return {
+                'cpu': {
+                    'physical_cores': cpu_count,
+                    'logical_cores': cpu_count_logical,
+                    'frequency_mhz': cpu_freq.current if cpu_freq else None,
+                    'usage_percent': psutil.cpu_percent(interval=0.1)
+                },
+                'memory': {
+                    'total_gb': memory.total / (1024 ** 3),
+                    'available_gb': memory.available / (1024 ** 3),
+                    'used_gb': memory.used / (1024 ** 3),
+                    'percent': memory.percent,
+                    'swap_total_gb': swap.total / (1024 ** 3),
+                    'swap_used_gb': swap.used / (1024 ** 3),
+                    'swap_percent': swap.percent
+                },
+                'disk': {
+                    'total_gb': disk.total / (1024 ** 3),
+                    'used_gb': disk.used / (1024 ** 3),
+                    'free_gb': disk.free / (1024 ** 3),
+                    'percent': disk.percent
+                },
+                'network': {
+                    'bytes_sent': net_io.bytes_sent,
+                    'bytes_recv': net_io.bytes_recv,
+                    'packets_sent': net_io.packets_sent,
+                    'packets_recv': net_io.packets_recv
+                },
+                'process': {
+                    'pid': process.pid,
+                    'memory_rss_mb': process_memory.rss / (1024 ** 2),
+                    'memory_vms_mb': process_memory.vms / (1024 ** 2),
+                    'cpu_percent': process.cpu_percent(interval=0.1),
+                    'threads': process.num_threads(),
+                    'create_time': datetime.datetime.fromtimestamp(process.create_time()).strftime('%Y-%m-%d %H:%M:%S')
+                },
+                'thread_pool': thread_pool_stats,
+                'auto_shutdown': {
+                    'enabled': self.auto_shutdown_enabled,
+                    'idle_time': self.auto_shutdown_idle_time,
+                    'last_activity': datetime.datetime.fromtimestamp(self.last_activity_time).strftime('%Y-%m-%d %H:%M:%S'),
+                    'idle_seconds': time.time() - self.last_activity_time
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting system info: {str(e)}")
+            return {'error': str(e)}
+            
+    def save_resource_history(self, filepath: str) -> bool:
+        """Save resource history to a file.
+        
+        Args:
+            filepath: Path to save the history file
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(self.resource_history, f)
+            return True
+        except Exception as e:
+            logger.error(f"Error saving resource history: {str(e)}")
+            return False
+            
+    def load_resource_history(self, filepath: str) -> bool:
+        """Load resource history from a file.
+        
+        Args:
+            filepath: Path to the history file
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            with open(filepath, 'r') as f:
+                self.resource_history = json.load(f)
+            return True
+        except Exception as e:
+            logger.error(f"Error loading resource history: {str(e)}")
+            return False
+            
+    def set_auto_shutdown(self, enabled: bool, idle_time: Optional[float] = None):
+        """Configure auto-shutdown settings.
+        
+        Args:
+            enabled: Whether to enable auto-shutdown
+            idle_time: Idle time before auto-shutdown in seconds
+        """
+        self.auto_shutdown_enabled = enabled
+        
+        if idle_time is not None:
+            self.auto_shutdown_idle_time = idle_time
+            
+        logger.info(f"Auto-shutdown {'enabled' if enabled else 'disabled'}, idle time: {self.auto_shutdown_idle_time} seconds")
+        
+    def set_thresholds(self, cpu: Optional[float] = None, memory: Optional[float] = None, disk: Optional[float] = None):
+        """Set resource usage thresholds.
+        
+        Args:
+            cpu: CPU usage threshold percentage
+            memory: Memory usage threshold percentage
+            disk: Disk usage threshold percentage
+        """
+        if cpu is not None:
+            self.cpu_threshold = cpu
+            
+        if memory is not None:
+            self.memory_threshold = memory
+            
+        if disk is not None:
+            self.disk_threshold = disk
+            
+        logger.info(f"Resource thresholds set: CPU={self.cpu_threshold}%, Memory={self.memory_threshold}%, Disk={self.disk_threshold}%")
 
-# Example usage
-if __name__ == "__main__":
-    # Configure logging
-    logging.basicConfig(level=logging.INFO, 
-                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    
-    # Example callback function
-    def resource_alert(resource_type, current_value, threshold):
-        logger.warning(f"Resource alert: {resource_type} usage at {current_value:.1f}% (threshold: {threshold}%)")
-    
-    # Create and start the resource monitor
-    monitor = ResourceMonitor(
-        check_interval=2.0,
-        cpu_threshold=70.0,
-        memory_threshold=80.0
-    )
-    
-    # Add the callback
-    monitor.add_callback(resource_alert)
-    
-    # Start monitoring
-    monitor.start()
-    
-    try:
-        # Run for 30 seconds as an example
-        for _ in range(15):
-            # Get and print current usage
-            usage = monitor.get_current_usage()
-            print(f"CPU: {usage['cpu']:.1f}%, Memory: {usage['memory']:.1f}%, "
-                  f"Disk: {usage['disk']:.1f}%, IO: {usage['io']:.1f}%")
-            
-            # Calculate optimal thread count
-            optimal_threads = monitor.calculate_optimal_thread_count()
-            print(f"Optimal thread count: {optimal_threads}")
-            
-            time.sleep(2)
-    
-    finally:
-        # Stop monitoring
-        monitor.stop()
+
+# Global instance
+resource_monitor = ResourceMonitor()
+

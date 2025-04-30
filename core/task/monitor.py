@@ -1,425 +1,626 @@
 """
-Resource monitoring and auto-shutdown functionality for Wiseflow.
-
-This module provides resource monitoring, task status checking, and auto-shutdown capabilities.
+Task monitor for tracking task execution and status.
 """
 
 import os
-import sys
-import logging
-import threading
-import asyncio
 import time
+import logging
 import json
-import signal
-import psutil
-from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Union, Callable, Tuple
+from typing import Any, Dict, List, Optional, Union, Callable
+from enum import Enum
+import threading
+import uuid
+from datetime import datetime
+
+from core.resource_monitor import resource_monitor
 
 logger = logging.getLogger(__name__)
 
-# Global resource monitor instance
-_resource_monitor = None
+
+class TaskStatus(Enum):
+    """Status of a task."""
+    PENDING = 'pending'
+    RUNNING = 'running'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+    CANCELLED = 'cancelled'
 
 
-def get_resource_monitor():
-    """Get the global resource monitor instance."""
-    global _resource_monitor
-    return _resource_monitor
-
-
-def initialize_resource_monitor(task_manager, config=None, pb_talker=None):
-    """Initialize the global resource monitor."""
-    global _resource_monitor
+class TaskMonitor:
+    """Monitor for tracking task execution and status."""
     
-    if _resource_monitor is None:
-        default_config = {
-            "enabled": True,
-            "check_interval": 300,  # Check every 5 minutes by default
-            "idle_timeout": 3600,   # 1 hour of inactivity
-            "resource_limits": {
-                "cpu_percent": 90,   # 90% CPU usage
-                "memory_percent": 85, # 85% memory usage
-                "disk_percent": 90    # 90% disk usage
-            },
-            "notification": {
-                "enabled": True,
-                "events": ["shutdown", "resource_warning", "task_stalled"]
-            },
-            "auto_shutdown": {
-                "enabled": True,
-                "idle_timeout": 3600,  # 1 hour of inactivity
-                "resource_threshold": True,
-                "completion_detection": True
+    _instance = None
+    
+    def __new__(cls, *args, **kwargs):
+        """Create a singleton instance."""
+        if cls._instance is None:
+            cls._instance = super(TaskMonitor, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(
+        self,
+        log_dir: str = 'logs',
+        auto_shutdown_on_complete: bool = False,
+        auto_shutdown_idle_time: float = 1800.0,
+        auto_shutdown_callback: Optional[Callable] = None
+    ):
+        """Initialize the task monitor.
+        
+        Args:
+            log_dir: Directory for storing task logs
+            auto_shutdown_on_complete: Whether to enable auto-shutdown when all tasks complete
+            auto_shutdown_idle_time: Idle time before auto-shutdown in seconds
+            auto_shutdown_callback: Callback function for auto-shutdown
+        """
+        if self._initialized:
+            return
+            
+        self.log_dir = log_dir
+        self.auto_shutdown_on_complete = auto_shutdown_on_complete
+        self.auto_shutdown_idle_time = auto_shutdown_idle_time
+        self.auto_shutdown_callback = auto_shutdown_callback
+        
+        # Create log directory if it doesn't exist
+        os.makedirs(self.log_dir, exist_ok=True)
+        
+        # Task tracking
+        self.tasks = {}  # task_id -> task_info
+        self.tasks_lock = threading.RLock()
+        
+        # Configure resource monitor for auto-shutdown
+        resource_monitor.set_auto_shutdown(
+            auto_shutdown_on_complete,
+            auto_shutdown_idle_time
+        )
+        
+        if auto_shutdown_callback:
+            resource_monitor.auto_shutdown_callback = auto_shutdown_callback
+            
+        # Start resource monitor if not already running
+        if not resource_monitor.monitor_thread or not resource_monitor.monitor_thread.is_alive():
+            resource_monitor.start()
+            
+        self._initialized = True
+        logger.info("TaskMonitor initialized")
+        
+    def register_task(
+        self,
+        task_id: Optional[str] = None,
+        task_type: str = 'default',
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Register a new task.
+        
+        Args:
+            task_id: Unique identifier for the task (generated if not provided)
+            task_type: Type of task
+            description: Description of the task
+            metadata: Additional metadata for the task
+            
+        Returns:
+            str: Task ID
+        """
+        task_id = task_id or str(uuid.uuid4())
+        
+        with self.tasks_lock:
+            # Check if task already exists
+            if task_id in self.tasks:
+                logger.warning(f"Task {task_id} already registered")
+                return task_id
+                
+            # Create task info
+            task_info = {
+                'task_id': task_id,
+                'task_type': task_type,
+                'description': description or '',
+                'metadata': metadata or {},
+                'status': TaskStatus.PENDING.value,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat(),
+                'started_at': None,
+                'completed_at': None,
+                'progress': 0.0,
+                'result': None,
+                'error': None,
+                'log_file': os.path.join(self.log_dir, f"{task_id}.log")
             }
-        }
-        
-        # Merge with provided config
-        if config:
-            # Deep merge the configs
-            merged_config = default_config.copy()
-            for key, value in config.items():
-                if isinstance(value, dict) and key in merged_config and isinstance(merged_config[key], dict):
-                    merged_config[key].update(value)
-                else:
-                    merged_config[key] = value
-            config = merged_config
-        else:
-            config = default_config
-        
-        _resource_monitor = ResourceMonitor(task_manager, config, pb_talker)
-    
-    return _resource_monitor
-
-
-def monitor_resources() -> Dict[str, Any]:
-    """Monitor system resources and return current usage."""
-    # Get CPU usage
-    cpu_percent = psutil.cpu_percent(interval=0.5)
-    
-    # Get memory usage
-    memory = psutil.virtual_memory()
-    memory_percent = memory.percent
-    memory_mb = memory.used / (1024 * 1024)  # Convert to MB
-    
-    # Get disk usage
-    disk = psutil.disk_usage('/')
-    disk_percent = disk.percent
-    disk_gb = disk.used / (1024 * 1024 * 1024)  # Convert to GB
-    
-    # Get network usage
-    net_io_counters = psutil.net_io_counters()
-    net_sent = net_io_counters.bytes_sent
-    net_recv = net_io_counters.bytes_recv
-    
-    # Calculate network throughput (requires two measurements)
-    time.sleep(1)
-    net_io_counters_new = psutil.net_io_counters()
-    net_sent_new = net_io_counters_new.bytes_sent
-    net_recv_new = net_io_counters_new.bytes_recv
-    
-    net_sent_mbps = (net_sent_new - net_sent) * 8 / (1024 * 1024)  # Convert to Mbps
-    net_recv_mbps = (net_recv_new - net_recv) * 8 / (1024 * 1024)  # Convert to Mbps
-    
-    # Return resource usage
-    return {
-        "timestamp": datetime.now().isoformat(),
-        "cpu_percent": cpu_percent,
-        "memory_mb": memory_mb,
-        "memory_percent": memory_percent,
-        "disk_gb": disk_gb,
-        "disk_percent": disk_percent,
-        "network_sent_mbps": net_sent_mbps,
-        "network_recv_mbps": net_recv_mbps
-    }
-
-
-def check_task_status(task_id: str, task_manager) -> Dict[str, Any]:
-    """Check the status of a specific task."""
-    task = task_manager.get_task(task_id)
-    
-    if not task:
-        return {"error": f"Task {task_id} not found"}
-    
-    task_data = task.to_dict()
-    
-    # Add additional information
-    if task.status == "running" and task.start_time:
-        # Calculate idle time
-        idle_time = (datetime.now() - task.start_time).total_seconds()
-        task_data["idle_time"] = idle_time
-        
-        # Check if task is stalled
-        if idle_time > 3600:  # 1 hour
-            task_data["stalled"] = True
-        else:
-            task_data["stalled"] = False
-    
-    return task_data
-
-
-def detect_idle_tasks(timeout: int, task_manager) -> List[Dict[str, Any]]:
-    """Detect idle tasks that have been running for longer than the timeout."""
-    idle_tasks = []
-    
-    for task in task_manager.get_all_tasks():
-        if task.status == "running" and task.start_time:
-            idle_time = (datetime.now() - task.start_time).total_seconds()
             
-            if idle_time > timeout:
-                task_data = task.to_dict()
-                task_data["idle_time"] = idle_time
-                idle_tasks.append(task_data)
-    
-    return idle_tasks
-
-
-def shutdown_task(task_id: str, task_manager) -> bool:
-    """Shut down a specific task."""
-    return task_manager.cancel_task(task_id)
-
-
-def configure_shutdown_settings(settings: Dict[str, Any], resource_monitor) -> Dict[str, Any]:
-    """Configure auto-shutdown settings."""
-    if not resource_monitor:
-        raise ValueError("Resource monitor not initialized")
-    
-    # Update resource monitor config
-    for key, value in settings.items():
-        if isinstance(value, dict) and key in resource_monitor.config and isinstance(resource_monitor.config[key], dict):
-            resource_monitor.config[key].update(value)
-        else:
-            resource_monitor.config[key] = value
-    
-    return resource_monitor.config
-
-
-def shutdown_resources() -> None:
-    """Shut down all resources and exit the application."""
-    logger.info("Shutting down all resources...")
-    
-    # Get the resource monitor
-    monitor = get_resource_monitor()
-    
-    if monitor:
-        # Log the shutdown event
-        monitor.log_event("shutdown", "Application shutdown initiated")
+            self.tasks[task_id] = task_info
+            
+            # Record activity
+            resource_monitor.record_activity()
+            
+            logger.info(f"Registered task {task_id} of type {task_type}")
+            
+            return task_id
+            
+    def start_task(self, task_id: str) -> bool:
+        """Mark a task as started.
         
-        # Shut down the task manager
-        if monitor.task_manager:
-            if hasattr(monitor.task_manager, 'shutdown'):
-                if asyncio.iscoroutinefunction(monitor.task_manager.shutdown):
-                    # Create a new event loop for async shutdown
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(monitor.task_manager.shutdown())
-                    loop.close()
-                else:
-                    monitor.task_manager.shutdown()
-    
-    # Exit the application
-    logger.info("Shutdown complete, exiting application")
-    os._exit(0)
-
-
-class ResourceMonitor:
-    """Monitors system resources and manages auto-shutdown."""
-    
-    def __init__(self, task_manager, config: Dict[str, Any], pb_talker=None):
-        """Initialize the resource monitor."""
-        self.task_manager = task_manager
-        self.config = config
-        self.pb_talker = pb_talker
-        self.running = False
-        self.monitor_thread = None
-        self.resource_history = []
-        self.max_history_size = 100  # Keep last 100 measurements
-        
-        # Register the global instance
-        global _resource_monitor
-        _resource_monitor = self
-        
-        # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-    
-    def _signal_handler(self, sig, frame):
-        """Handle termination signals."""
-        logger.info(f"Received signal {sig}, initiating shutdown")
-        self.request_shutdown()
-    
-    def start(self):
-        """Start the resource monitor."""
-        if not self.config.get("enabled", True):
-            logger.info("Resource monitor is disabled")
-            return
-        
-        if self.running:
-            logger.warning("Resource monitor is already running")
-            return
-        
-        self.running = True
-        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.monitor_thread.start()
-        logger.info("Resource monitor started")
-    
-    def stop(self):
-        """Stop the resource monitor."""
-        self.running = False
-        if self.monitor_thread:
-            self.monitor_thread.join(timeout=5)
-            logger.info("Resource monitor stopped")
-    
-    def _monitor_loop(self):
-        """Main monitoring loop."""
-        check_interval = self.config.get("check_interval", 300)  # Default: check every 5 minutes
-        
-        while self.running:
-            try:
-                # Monitor resources
-                resources = monitor_resources()
+        Args:
+            task_id: Task ID
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        with self.tasks_lock:
+            if task_id not in self.tasks:
+                logger.error(f"Task {task_id} not found")
+                return False
                 
-                # Store in history
-                self.resource_history.append(resources)
-                if len(self.resource_history) > self.max_history_size:
-                    self.resource_history.pop(0)
+            task_info = self.tasks[task_id]
+            
+            if task_info['status'] != TaskStatus.PENDING.value:
+                logger.warning(f"Task {task_id} already started or completed")
+                return False
                 
-                # Store in database if available
-                if self.pb_talker:
+            # Update task info
+            task_info['status'] = TaskStatus.RUNNING.value
+            task_info['started_at'] = datetime.now().isoformat()
+            task_info['updated_at'] = datetime.now().isoformat()
+            
+            # Record activity
+            resource_monitor.record_activity()
+            
+            logger.info(f"Started task {task_id}")
+            
+            return True
+            
+    def update_task_progress(self, task_id: str, progress: float, message: Optional[str] = None) -> bool:
+        """Update task progress.
+        
+        Args:
+            task_id: Task ID
+            progress: Progress value (0.0 to 1.0)
+            message: Optional progress message
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        with self.tasks_lock:
+            if task_id not in self.tasks:
+                logger.error(f"Task {task_id} not found")
+                return False
+                
+            task_info = self.tasks[task_id]
+            
+            if task_info['status'] != TaskStatus.RUNNING.value:
+                logger.warning(f"Task {task_id} not running")
+                return False
+                
+            # Validate progress value
+            progress = max(0.0, min(1.0, progress))
+            
+            # Update task info
+            task_info['progress'] = progress
+            task_info['updated_at'] = datetime.now().isoformat()
+            
+            # Log progress message if provided
+            if message:
+                self.log_task_message(task_id, f"Progress {progress:.1%}: {message}")
+                
+            # Record activity
+            resource_monitor.record_activity()
+            
+            logger.debug(f"Updated task {task_id} progress to {progress:.1%}")
+            
+            return True
+            
+    def complete_task(self, task_id: str, result: Any = None) -> bool:
+        """Mark a task as completed.
+        
+        Args:
+            task_id: Task ID
+            result: Task result
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        with self.tasks_lock:
+            if task_id not in self.tasks:
+                logger.error(f"Task {task_id} not found")
+                return False
+                
+            task_info = self.tasks[task_id]
+            
+            if task_info['status'] == TaskStatus.COMPLETED.value:
+                logger.warning(f"Task {task_id} already completed")
+                return False
+                
+            if task_info['status'] == TaskStatus.CANCELLED.value:
+                logger.warning(f"Task {task_id} was cancelled")
+                return False
+                
+            # Update task info
+            task_info['status'] = TaskStatus.COMPLETED.value
+            task_info['completed_at'] = datetime.now().isoformat()
+            task_info['updated_at'] = datetime.now().isoformat()
+            task_info['progress'] = 1.0
+            task_info['result'] = result
+            
+            # Log completion
+            self.log_task_message(task_id, f"Task completed with result: {result}")
+            
+            # Record activity
+            resource_monitor.record_activity()
+            
+            logger.info(f"Completed task {task_id}")
+            
+            # Check if all tasks are completed for auto-shutdown
+            self._check_all_tasks_completed()
+            
+            return True
+            
+    def fail_task(self, task_id: str, error: Union[str, Exception]) -> bool:
+        """Mark a task as failed.
+        
+        Args:
+            task_id: Task ID
+            error: Error message or exception
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        with self.tasks_lock:
+            if task_id not in self.tasks:
+                logger.error(f"Task {task_id} not found")
+                return False
+                
+            task_info = self.tasks[task_id]
+            
+            if task_info['status'] == TaskStatus.FAILED.value:
+                logger.warning(f"Task {task_id} already failed")
+                return False
+                
+            if task_info['status'] == TaskStatus.CANCELLED.value:
+                logger.warning(f"Task {task_id} was cancelled")
+                return False
+                
+            # Update task info
+            task_info['status'] = TaskStatus.FAILED.value
+            task_info['completed_at'] = datetime.now().isoformat()
+            task_info['updated_at'] = datetime.now().isoformat()
+            task_info['error'] = str(error)
+            
+            # Log failure
+            self.log_task_message(task_id, f"Task failed with error: {error}")
+            
+            # Record activity
+            resource_monitor.record_activity()
+            
+            logger.error(f"Failed task {task_id}: {error}")
+            
+            # Check if all tasks are completed for auto-shutdown
+            self._check_all_tasks_completed()
+            
+            return True
+            
+    def cancel_task(self, task_id: str, reason: Optional[str] = None) -> bool:
+        """Cancel a task.
+        
+        Args:
+            task_id: Task ID
+            reason: Reason for cancellation
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        with self.tasks_lock:
+            if task_id not in self.tasks:
+                logger.error(f"Task {task_id} not found")
+                return False
+                
+            task_info = self.tasks[task_id]
+            
+            if task_info['status'] in [TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value]:
+                logger.warning(f"Task {task_id} already completed, failed, or cancelled")
+                return False
+                
+            # Update task info
+            task_info['status'] = TaskStatus.CANCELLED.value
+            task_info['completed_at'] = datetime.now().isoformat()
+            task_info['updated_at'] = datetime.now().isoformat()
+            task_info['error'] = reason or "Task cancelled"
+            
+            # Log cancellation
+            self.log_task_message(task_id, f"Task cancelled: {reason or 'No reason provided'}")
+            
+            # Record activity
+            resource_monitor.record_activity()
+            
+            logger.info(f"Cancelled task {task_id}: {reason or 'No reason provided'}")
+            
+            # Check if all tasks are completed for auto-shutdown
+            self._check_all_tasks_completed()
+            
+            return True
+            
+    def get_task_info(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Get task information.
+        
+        Args:
+            task_id: Task ID
+            
+        Returns:
+            Optional[Dict[str, Any]]: Task information if found, None otherwise
+        """
+        with self.tasks_lock:
+            return self.tasks.get(task_id)
+            
+    def get_task_status(self, task_id: str) -> Optional[str]:
+        """Get task status.
+        
+        Args:
+            task_id: Task ID
+            
+        Returns:
+            Optional[str]: Task status if found, None otherwise
+        """
+        task_info = self.get_task_info(task_id)
+        return task_info['status'] if task_info else None
+        
+    def get_task_progress(self, task_id: str) -> Optional[float]:
+        """Get task progress.
+        
+        Args:
+            task_id: Task ID
+            
+        Returns:
+            Optional[float]: Task progress if found, None otherwise
+        """
+        task_info = self.get_task_info(task_id)
+        return task_info['progress'] if task_info else None
+        
+    def get_task_result(self, task_id: str) -> Optional[Any]:
+        """Get task result.
+        
+        Args:
+            task_id: Task ID
+            
+        Returns:
+            Optional[Any]: Task result if found and completed, None otherwise
+        """
+        task_info = self.get_task_info(task_id)
+        
+        if not task_info or task_info['status'] != TaskStatus.COMPLETED.value:
+            return None
+            
+        return task_info['result']
+        
+    def get_task_error(self, task_id: str) -> Optional[str]:
+        """Get task error.
+        
+        Args:
+            task_id: Task ID
+            
+        Returns:
+            Optional[str]: Task error if found and failed, None otherwise
+        """
+        task_info = self.get_task_info(task_id)
+        
+        if not task_info or task_info['status'] not in [TaskStatus.FAILED.value, TaskStatus.CANCELLED.value]:
+            return None
+            
+        return task_info['error']
+        
+    def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """Get all tasks.
+        
+        Returns:
+            Dict[str, Dict[str, Any]]: Dictionary of task ID to task information
+        """
+        with self.tasks_lock:
+            return self.tasks.copy()
+            
+    def get_tasks_by_status(self, status: Union[TaskStatus, str]) -> Dict[str, Dict[str, Any]]:
+        """Get tasks by status.
+        
+        Args:
+            status: Task status
+            
+        Returns:
+            Dict[str, Dict[str, Any]]: Dictionary of task ID to task information
+        """
+        status_value = status.value if isinstance(status, TaskStatus) else status
+        
+        with self.tasks_lock:
+            return {
+                task_id: task_info
+                for task_id, task_info in self.tasks.items()
+                if task_info['status'] == status_value
+            }
+            
+    def get_tasks_by_type(self, task_type: str) -> Dict[str, Dict[str, Any]]:
+        """Get tasks by type.
+        
+        Args:
+            task_type: Task type
+            
+        Returns:
+            Dict[str, Dict[str, Any]]: Dictionary of task ID to task information
+        """
+        with self.tasks_lock:
+            return {
+                task_id: task_info
+                for task_id, task_info in self.tasks.items()
+                if task_info['task_type'] == task_type
+            }
+            
+    def log_task_message(self, task_id: str, message: str) -> bool:
+        """Log a message for a task.
+        
+        Args:
+            task_id: Task ID
+            message: Message to log
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        task_info = self.get_task_info(task_id)
+        
+        if not task_info:
+            logger.error(f"Task {task_id} not found")
+            return False
+            
+        try:
+            log_file = task_info['log_file']
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            with open(log_file, 'a') as f:
+                f.write(f"[{timestamp}] {message}\n")
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error logging task message: {str(e)}")
+            return False
+            
+    def get_task_log(self, task_id: str) -> Optional[str]:
+        """Get task log.
+        
+        Args:
+            task_id: Task ID
+            
+        Returns:
+            Optional[str]: Task log if found, None otherwise
+        """
+        task_info = self.get_task_info(task_id)
+        
+        if not task_info:
+            logger.error(f"Task {task_id} not found")
+            return None
+            
+        try:
+            log_file = task_info['log_file']
+            
+            if not os.path.exists(log_file):
+                return ""
+                
+            with open(log_file, 'r') as f:
+                return f.read()
+                
+        except Exception as e:
+            logger.error(f"Error reading task log: {str(e)}")
+            return None
+            
+    def export_task_info(self, task_id: str, export_path: Optional[str] = None) -> Optional[str]:
+        """Export task information to a file.
+        
+        Args:
+            task_id: Task ID
+            export_path: Path to export the information (default: task_id.json in log_dir)
+            
+        Returns:
+            Optional[str]: Export file path if successful, None otherwise
+        """
+        task_info = self.get_task_info(task_id)
+        
+        if not task_info:
+            logger.error(f"Task {task_id} not found")
+            return None
+            
+        if export_path is None:
+            export_path = os.path.join(self.log_dir, f"{task_id}_info.json")
+            
+        try:
+            with open(export_path, 'w') as f:
+                json.dump(task_info, f, indent=2)
+            logger.info(f"Exported task information to {export_path}")
+            return export_path
+        except Exception as e:
+            logger.error(f"Error exporting task information: {str(e)}")
+            return None
+            
+    def cleanup_task(self, task_id: str) -> bool:
+        """Clean up task resources.
+        
+        Args:
+            task_id: Task ID
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        task_info = self.get_task_info(task_id)
+        
+        if not task_info:
+            logger.error(f"Task {task_id} not found")
+            return False
+            
+        try:
+            # Remove log file
+            log_file = task_info['log_file']
+            if os.path.exists(log_file):
+                os.remove(log_file)
+                
+            # Remove task from tracking
+            with self.tasks_lock:
+                if task_id in self.tasks:
+                    del self.tasks[task_id]
+                    
+            logger.info(f"Cleaned up task {task_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up task: {str(e)}")
+            return False
+            
+    def cleanup_completed_tasks(self, max_age: float = 86400.0) -> int:
+        """Clean up completed tasks older than max_age.
+        
+        Args:
+            max_age: Maximum age of completed tasks in seconds
+            
+        Returns:
+            int: Number of tasks cleaned up
+        """
+        current_time = datetime.now()
+        cleaned_up = 0
+        
+        with self.tasks_lock:
+            to_cleanup = []
+            
+            for task_id, task_info in self.tasks.items():
+                if task_info['status'] in [TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value]:
+                    completed_at = datetime.fromisoformat(task_info['completed_at'])
+                    age = (current_time - completed_at).total_seconds()
+                    
+                    if age > max_age:
+                        to_cleanup.append(task_id)
+                        
+            for task_id in to_cleanup:
+                if self.cleanup_task(task_id):
+                    cleaned_up += 1
+                    
+        logger.info(f"Cleaned up {cleaned_up} completed tasks")
+        return cleaned_up
+        
+    def _check_all_tasks_completed(self):
+        """Check if all tasks are completed for auto-shutdown."""
+        if not self.auto_shutdown_on_complete:
+            return
+            
+        with self.tasks_lock:
+            active_tasks = [
+                task_info for task_info in self.tasks.values()
+                if task_info['status'] in [TaskStatus.PENDING.value, TaskStatus.RUNNING.value]
+            ]
+            
+            if not active_tasks:
+                logger.info("All tasks completed, triggering auto-shutdown")
+                
+                # Reset last activity time to enable auto-shutdown
+                resource_monitor.last_activity_time = 0
+                
+                # Call shutdown callback if provided
+                if self.auto_shutdown_callback:
                     try:
-                        self.pb_talker.add(collection_name='resource_usage', body=resources)
+                        self.auto_shutdown_callback()
                     except Exception as e:
-                        logger.error(f"Error storing resource usage: {e}")
-                
-                # Check resource limits
-                self._check_resource_limits(resources)
-                
-                # Check for idle tasks
-                self._check_idle_tasks()
-                
-                # Check for task completion
-                self._check_task_completion()
-                
-                # Sleep until next check
-                time.sleep(check_interval)
-            except Exception as e:
-                logger.error(f"Error in resource monitor loop: {e}")
-                time.sleep(60)  # Sleep for a minute before retrying
-    
-    def _check_resource_limits(self, resources):
-        """Check if resource usage exceeds limits."""
-        if not self.config.get("auto_shutdown", {}).get("resource_threshold", True):
-            return
-        
-        limits = self.config.get("resource_limits", {})
-        
-        # Check CPU usage
-        if resources["cpu_percent"] > limits.get("cpu_percent", 90):
-            self.log_event(
-                "resource_warning",
-                f"CPU usage is high: {resources['cpu_percent']}%",
-                {"resource": "cpu", "value": resources["cpu_percent"], "limit": limits.get("cpu_percent", 90)}
-            )
-        
-        # Check memory usage
-        if resources["memory_percent"] > limits.get("memory_percent", 85):
-            self.log_event(
-                "resource_warning",
-                f"Memory usage is high: {resources['memory_percent']}%",
-                {"resource": "memory", "value": resources["memory_percent"], "limit": limits.get("memory_percent", 85)}
-            )
-        
-        # Check disk usage
-        if resources["disk_percent"] > limits.get("disk_percent", 90):
-            self.log_event(
-                "resource_warning",
-                f"Disk usage is high: {resources['disk_percent']}%",
-                {"resource": "disk", "value": resources["disk_percent"], "limit": limits.get("disk_percent", 90)}
-            )
-        
-        # Check if we need to shut down due to resource limits
-        if (
-            resources["cpu_percent"] > limits.get("cpu_percent", 90) or
-            resources["memory_percent"] > limits.get("memory_percent", 85) or
-            resources["disk_percent"] > limits.get("disk_percent", 90)
-        ):
-            # Log the event
-            self.log_event(
-                "auto_shutdown",
-                "Auto-shutdown triggered due to high resource usage",
-                {"resources": resources, "limits": limits}
-            )
-            
-            # Request shutdown
-            self.request_shutdown()
-    
-    def _check_idle_tasks(self):
-        """Check for idle tasks and shut them down if needed."""
-        if not self.config.get("auto_shutdown", {}).get("enabled", True):
-            return
-        
-        idle_timeout = self.config.get("auto_shutdown", {}).get("idle_timeout", 3600)  # Default: 1 hour
-        
-        idle_tasks = detect_idle_tasks(idle_timeout, self.task_manager)
-        
-        for task_data in idle_tasks:
-            task_id = task_data["task_id"]
-            idle_time = task_data.get("idle_time", 0)
-            
-            # Log the event
-            self.log_event(
-                "task_stalled",
-                f"Task {task_id} has been idle for {idle_time:.2f} seconds",
-                {"task_id": task_id, "idle_time": idle_time}
-            )
-            
-            # Shut down the task
-            shutdown_task(task_id, self.task_manager)
-    
-    def _check_task_completion(self):
-        """Check if all tasks are complete and trigger auto-shutdown if needed."""
-        if not self.config.get("auto_shutdown", {}).get("completion_detection", True):
-            return
-        
-        # Check if any task has auto_shutdown enabled
-        has_auto_shutdown = False
-        all_complete = True
-        
-        for task in self.task_manager.get_all_tasks():
-            if task.auto_shutdown:
-                has_auto_shutdown = True
-            
-            if task.status not in ["completed", "failed", "cancelled"]:
-                all_complete = False
-        
-        if has_auto_shutdown and all_complete:
-            # Log the event
-            self.log_event(
-                "auto_shutdown",
-                "Auto-shutdown triggered due to task completion",
-                {"tasks_complete": True}
-            )
-            
-            # Request shutdown
-            self.request_shutdown()
-    
-    def log_event(self, event_type, message, metadata=None):
-        """Log an event to the database."""
-        logger.info(f"Event: {event_type} - {message}")
-        
-        if not self.config.get("notification", {}).get("enabled", True):
-            return
-        
-        if event_type not in self.config.get("notification", {}).get("events", []):
-            return
-        
-        if self.pb_talker:
-            try:
-                record = {
-                    "timestamp": datetime.now().isoformat(),
-                    "event_type": event_type,
-                    "message": message,
-                    "metadata": json.dumps(metadata) if metadata else None
-                }
-                
-                self.pb_talker.add(collection_name='shutdown_events', body=record)
-            except Exception as e:
-                logger.error(f"Error logging event: {e}")
-    
-    def request_shutdown(self):
-        """Request application shutdown."""
-        logger.info("Shutdown requested")
-        
-        # Create a thread to handle shutdown
-        shutdown_thread = threading.Thread(target=self._delayed_shutdown, daemon=True)
-        shutdown_thread.start()
-    
-    def _delayed_shutdown(self, delay=5):
-        """Perform a delayed shutdown to allow for cleanup."""
-        logger.info(f"Shutting down in {delay} seconds...")
-        time.sleep(delay)
-        shutdown_resources()
-    
-    def get_resource_usage_history(self):
-        """Get the resource usage history."""
-        return self.resource_history
+                        logger.error(f"Error in auto-shutdown callback: {str(e)}")
+
+
+# Global instance
+task_monitor = TaskMonitor()
+

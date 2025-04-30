@@ -14,14 +14,19 @@ aiohttp>=3.7.3,<4.0.0
 # NLP and text processing
 nltk>=3.6.2,<4.0.0
 chardet>=4.0.0,<5.0.0
+langdetect>=1.0.9,<2.0.0
 
 # Document processing
 PyPDF2>=2.0.0,<3.0.0
 python-docx>=0.8.11,<1.0.0
 
-# Data handling
+# Data handling and analysis
 numpy>=1.19.5,<2.0.0
 pandas>=1.2.0,<2.0.0
+matplotlib>=3.5.0,<4.0.0
+scipy>=1.7.0,<2.0.0
+statsmodels>=0.13.0,<1.0.0
+networkx>=2.6.0,<3.0.0
 
 # Utilities
 tqdm>=4.56.0,<5.0.0

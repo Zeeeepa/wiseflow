@@ -3,12 +3,16 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from __init__ import BackendService
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from dashboard.visualization import Dashboard, Visualization, DashboardManager
 from dashboard.visualization.knowledge_graph import visualize_knowledge_graph, filter_knowledge_graph
 from dashboard.visualization.trends import visualize_trend, detect_trend_patterns
 from dashboard.notification import NotificationManager, configure_notifications
+from dashboard.plugins import dashboard_plugin_manager
+from dashboard.routes import router as dashboard_router
 from core.utils.pb_api import PbTalker
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,18 @@ class NotificationSettingsRequest(BaseModel):
     settings: Dict[str, Any]
 
 
+class AnalysisRequest(BaseModel):
+    text: str
+    analyzer_type: str = "entity"  # entity or trend
+    config: Optional[Dict[str, Any]] = None
+
+
+class ConnectorRequest(BaseModel):
+    connector_type: str
+    query: str
+    config: Optional[Dict[str, Any]] = None
+
+
 app = FastAPI(
     title="wiseflow Backend Server",
     description="From WiseFlow Team.",
@@ -75,7 +91,16 @@ pb = PbTalker(logger)
 dashboard_manager = DashboardManager(pb)
 notification_manager = NotificationManager(pb)
 
+# Initialize dashboard plugin manager
+dashboard_plugin_manager.initialize()
 
+# Mount static files directory
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+
+# Include dashboard router
+app.include_router(dashboard_router, prefix="/dashboard")
+
+# Dashboard endpoints
 @app.get("/")
 def read_root():
     msg = "Hello, This is WiseFlow Backend."
@@ -204,6 +229,105 @@ def remove_visualization(dashboard_id: str, visualization_id: str):
 def get_dashboard_templates():
     """Get available dashboard templates."""
     return dashboard_manager.get_dashboard_templates()
+
+
+# Plugin system integration endpoints
+@app.post("/analyze", response_model=Dict[str, Any])
+def analyze_text(request: AnalysisRequest):
+    """Analyze text using the specified analyzer."""
+    if request.analyzer_type == "entity":
+        result = dashboard_plugin_manager.analyze_entities(request.text, **(request.config or {}))
+    elif request.analyzer_type == "trend":
+        result = dashboard_plugin_manager.analyze_trends(request.text, **(request.config or {}))
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported analyzer type: {request.analyzer_type}")
+    
+    return result
+
+
+@app.post("/visualize/knowledge-graph", response_model=Dict[str, Any])
+def create_knowledge_graph(request: AnalysisRequest):
+    """Create a knowledge graph visualization from text."""
+    try:
+        # Analyze text to extract entities and relationships
+        analysis_result = dashboard_plugin_manager.analyze_entities(
+            request.text, 
+            build_knowledge_graph=True,
+            **(request.config or {})
+        )
+        
+        # Generate visualization
+        visualization = visualize_knowledge_graph(analysis_result, request.config)
+        
+        return visualization
+    except Exception as e:
+        logger.error(f"Error creating knowledge graph: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/visualize/trend", response_model=Dict[str, Any])
+def create_trend_visualization(request: AnalysisRequest):
+    """Create a trend visualization from text."""
+    try:
+        # Analyze text to extract trends
+        analysis_result = dashboard_plugin_manager.analyze_trends(
+            request.text,
+            detect_patterns=True,
+            **(request.config or {})
+        )
+        
+        # Generate visualization
+        visualization = visualize_trend(analysis_result, request.config)
+        
+        return visualization
+    except Exception as e:
+        logger.error(f"Error creating trend visualization: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/plugins/connectors", response_model=List[str])
+def get_available_connectors():
+    """Get a list of available connectors."""
+    return dashboard_plugin_manager.get_available_connectors()
+
+
+@app.get("/plugins/processors", response_model=List[str])
+def get_available_processors():
+    """Get a list of available processors."""
+    return dashboard_plugin_manager.get_available_processors()
+
+
+@app.get("/plugins/analyzers", response_model=List[str])
+def get_available_analyzers():
+    """Get a list of available analyzers."""
+    return dashboard_plugin_manager.get_available_analyzers()
+
+
+@app.post("/plugins/connect", response_model=Dict[str, Any])
+def connect_to_source(request: ConnectorRequest):
+    """Connect to a data source and fetch data."""
+    try:
+        connector = dashboard_plugin_manager.create_connector(
+            request.connector_type,
+            request.config
+        )
+        
+        if not connector:
+            raise HTTPException(status_code=400, detail=f"Connector not found: {request.connector_type}")
+        
+        # Connect and fetch data
+        if not connector.connect():
+            raise HTTPException(status_code=500, detail="Failed to connect to data source")
+        
+        result = connector.fetch_data(request.query)
+        
+        # Disconnect
+        connector.disconnect()
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error connecting to source: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Notification endpoints

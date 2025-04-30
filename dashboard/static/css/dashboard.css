@@ -1,0 +1,151 @@
+/* Dashboard styles */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f8f9fa;
+    color: #333;
+}
+
+.navbar {
+    background-color: #343a40;
+}
+
+.navbar-brand {
+    font-weight: bold;
+    color: #fff;
+}
+
+.card {
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+    transition: transform 0.3s;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+.card-header {
+    font-weight: bold;
+    background-color: #f1f3f5;
+}
+
+.visualization-container {
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.visualization-image {
+    max-width: 100%;
+    max-height: 300px;
+}
+
+.sidebar {
+    background-color: #343a40;
+    color: #fff;
+    min-height: calc(100vh - 56px);
+    padding-top: 20px;
+}
+
+.sidebar-link {
+    color: #adb5bd;
+    text-decoration: none;
+    display: block;
+    padding: 10px 15px;
+    transition: all 0.3s;
+}
+
+.sidebar-link:hover, .sidebar-link.active {
+    color: #fff;
+    background-color: #495057;
+}
+
+.sidebar-heading {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #6c757d;
+    padding: 10px 15px;
+    margin-top: 10px;
+}
+
+#text-input {
+    min-height: 100px;
+}
+
+.plugin-card {
+    height: 100%;
+}
+
+.plugin-icon {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+}
+
+.connector-icon {
+    color: #007bff;
+}
+
+.processor-icon {
+    color: #28a745;
+}
+
+.analyzer-icon {
+    color: #dc3545;
+}
+
+.plugin-name {
+    font-weight: bold;
+}
+
+.plugin-description {
+    color: #6c757d;
+    font-size: 0.9rem;
+}
+
+.plugin-actions {
+    margin-top: auto;
+}
+
+/* Resource monitor styles */
+.resource-card {
+    height: 100%;
+}
+
+.resource-value {
+    font-size: 2rem;
+    font-weight: bold;
+}
+
+.resource-label {
+    font-size: 0.9rem;
+    color: #6c757d;
+}
+
+.resource-chart {
+    height: 200px;
+}
+
+.progress {
+    height: 10px;
+    margin-bottom: 10px;
+}
+
+.progress-bar-cpu {
+    background-color: #007bff;
+}
+
+.progress-bar-memory {
+    background-color: #28a745;
+}
+
+.progress-bar-disk {
+    background-color: #dc3545;
+}
+
+.progress-bar-io {
+    background-color: #ffc107;
+}
+

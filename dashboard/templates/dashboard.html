@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wiseflow Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Wiseflow Dashboard</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/plugins">Plugins</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/monitor">Monitor</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-md-2 sidebar">
+                <div class="sidebar-heading">Dashboards</div>
+                <a href="#" class="sidebar-link active">Overview</a>
+                <a href="#" class="sidebar-link">Knowledge Graphs</a>
+                <a href="#" class="sidebar-link">Trend Analysis</a>
+                <a href="#" class="sidebar-link">Entity Analysis</a>
+                
+                <div class="sidebar-heading">Data Sources</div>
+                <a href="#" class="sidebar-link">GitHub</a>
+                <a href="#" class="sidebar-link">YouTube</a>
+                <a href="#" class="sidebar-link">Code Search</a>
+                
+                <div class="sidebar-heading">Tools</div>
+                <a href="#" class="sidebar-link">Text Processor</a>
+                <a href="#" class="sidebar-link">Entity Analyzer</a>
+                <a href="#" class="sidebar-link">Trend Analyzer</a>
+            </div>
+            
+            <div class="col-md-10 p-4">
+                <h2 class="mb-4">Data Mining Dashboard</h2>
+                
+                <div class="row mb-4">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header">
+                                Text Analysis
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="text-input" class="form-label">Enter text to analyze:</label>
+                                    <textarea class="form-control" id="text-input" rows="5" placeholder="Enter text here..."></textarea>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="analyzer-type" class="form-label">Analysis Type:</label>
+                                    <select class="form-select" id="analyzer-type">
+                                        <option value="entity">Entity Analysis</option>
+                                        <option value="trend">Trend Analysis</option>
+                                    </select>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <button class="btn btn-primary" id="analyze-btn">Analyze Text</button>
+                                    <button class="btn btn-success" id="visualize-btn">Visualize Results</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                Knowledge Graph
+                            </div>
+                            <div class="card-body">
+                                <div class="visualization-container" id="knowledge-graph-container">
+                                    <p class="text-muted">No data available. Analyze text to generate a knowledge graph.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                Trend Analysis
+                            </div>
+                            <div class="card-body">
+                                <div class="visualization-container" id="trend-container">
+                                    <p class="text-muted">No data available. Analyze text to generate trend analysis.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header">
+                                Analysis Results
+                            </div>
+                            <div class="card-body">
+                                <pre id="analysis-results" class="bg-light p-3 rounded">No analysis results yet.</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
