@@ -9,10 +9,14 @@ from utils.zhipu_search import run_v4_async
 from urllib.parse import urlparse
 from crawl4ai import AsyncWebCrawler, CacheMode
 from datetime import datetime
+import asyncio
+import time
 import feedparser
 from plugins import PluginManager
 from connectors import ConnectorBase, DataItem
 from references import ReferenceManager
+from analysis.multimodal_analysis import process_item_with_images
+from analysis.multimodal_knowledge_integration import integrate_multimodal_analysis_with_knowledge_graph
 
 project_dir = os.environ.get("PROJECT_DIR", "")
 if project_dir:
@@ -43,6 +47,7 @@ async def info_process(url: str,
                        link_dict: dict, 
                        focus_id: str,
                        get_info_prompts: list[str]):
+    """Process information and save to database."""
     wiseflow_logger.debug('info summarising by llm...')
     infos = await get_info(contents, link_dict, get_info_prompts, author, publish_date, _logger=wiseflow_logger)
     if infos:
@@ -74,7 +79,36 @@ async def info_process(url: str,
             wiseflow_logger.error(f'Error processing insights: {e}')
         
         # Save to database
-        await pb.create('infos', info)
+        info_id = await pb.create('infos', info)
+        
+        # Process multimodal analysis if enabled
+        if os.environ.get("ENABLE_MULTIMODAL", "false").lower() == "true":
+            try:
+                # Get the saved item with retry logic
+                saved_item = None
+                max_retries = 3
+                retry_delay = 1  # seconds
+                
+                for attempt in range(max_retries):
+                    saved_item = pb.read_one('infos', info_id)
+                    if saved_item:
+                        break
+                    wiseflow_logger.warning(f"Item not found on attempt {attempt+1}, retrying in {retry_delay} seconds...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                
+                if saved_item:
+                    # Process the item for multimodal analysis
+                    updated_item = await process_item_with_images(saved_item)
+                    wiseflow_logger.info(f"Multimodal analysis completed for item {info_id}")
+                    
+                    # Verify the update was successful
+                    if "error" in updated_item and not isinstance(updated_item["error"], str):
+                        wiseflow_logger.error(f"Error in multimodal analysis: {updated_item.get('error', 'Unknown error')}")
+                else:
+                    wiseflow_logger.error(f"Failed to retrieve item {info_id} after {max_retries} attempts")
+            except Exception as e:
+                wiseflow_logger.error(f'Error processing multimodal analysis: {e}')
 
 async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_prompts: list[str]):
     """Process a data item using the appropriate processor plugin."""
@@ -89,11 +123,12 @@ async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_p
             await info_process(
                 data_item.url or "", 
                 data_item.metadata.get("title", ""), 
-                data_item.metadata.get("author", ""), 
-                data_item.metadata.get("publish_date", ""), 
-                [data_item.content], 
-                {}, 
+                data_item.metadata.get("content", ""), 
+                data_item.metadata.get("source", ""), 
                 focus["id"],
+                focus["focuspoint"],
+                [data_item.content],
+                data_item.metadata,
                 get_info_prompts
             )
         return
@@ -413,42 +448,82 @@ async def process_url_with_crawler(url, crawler, focus_id, existing_urls, get_li
 
 
 async def process_focus_point(focus_id: str, focus_point: str, explanation: str, sites: list, search_engine: bool = False):
-    # ... existing code ...
-
-    # After processing all sites, perform collective insights analysis
+    """Process a focus point and generate collective insights."""
     try:
-        # Get all infos for this focus point
-        infos = await pb.get_all('infos', {'filter': f'tag="{focus_id}"'})
+        wiseflow_logger.info(f'Processing focus point: {focus_point}')
         
-        if infos and len(infos) > 0:
-            wiseflow_logger.info(f'Generating collective insights for focus point {focus_id} with {len(infos)} items')
+        # Get all info items for this focus point
+        info_items = pb.read(collection_name='infos', filter=f"tag='{focus_id}'")
+        
+        if not info_items:
+            wiseflow_logger.warning(f'No information items found for focus ID {focus_id}')
+            return
+        
+        # Extract insights from all items
+        all_insights = []
+        for item in info_items:
+            if 'insights' in item and item['insights']:
+                all_insights.append(item['insights'])
+        
+        if not all_insights:
+            wiseflow_logger.warning(f'No insights found for focus ID {focus_id}')
+            return
+        
+        # Generate collective insights
+        collective_insights = await generate_collective_insights(
+            all_insights,
+            focus_point,
+            explanation
+        )
+        
+        # Save collective insights
+        pb.update(
+            collection_name='focus_point',
+            id=focus_id,
+            data={
+                'collective_insights': collective_insights,
+                'updated_at': datetime.now().isoformat()
+            }
+        )
+        
+        wiseflow_logger.info(f'Collective insights generated and saved for focus point {focus_id}')
+        
+        # Process multimodal knowledge integration if enabled
+        if os.environ.get("ENABLE_MULTIMODAL", "false").lower() == "true":
+            try:
+                wiseflow_logger.info(f'Integrating multimodal analysis into knowledge graph for focus point {focus_id}')
+                
+                # Use a separate task for integration to avoid blocking
+                integration_task = asyncio.create_task(
+                    integrate_multimodal_analysis_with_knowledge_graph(focus_id)
+                )
+                
+                # Set a timeout for the integration task
+                try:
+                    integration_result = await asyncio.wait_for(integration_task, timeout=300)  # 5 minute timeout
+                    wiseflow_logger.info(f'Multimodal knowledge integration completed: {integration_result}')
+                except asyncio.TimeoutError:
+                    wiseflow_logger.warning(f'Multimodal knowledge integration timed out for focus point {focus_id}')
+                    # Cancel the task instead of letting it run in the background
+                    integration_task.cancel()
+                    try:
+                        await integration_task
+                    except asyncio.CancelledError:
+                        wiseflow_logger.info(f'Multimodal knowledge integration task for focus point {focus_id} was cancelled')
+                    except Exception as e:
+                        wiseflow_logger.error(f'Error while cancelling integration task: {e}')
+                    
+                    # Log the timeout as a partial result
+                    pb.update(
+                        collection_name='focus_point',
+                        id=focus_id,
+                        data={
+                            'multimodal_integration_status': 'timeout',
+                            'multimodal_integration_timestamp': datetime.now().isoformat()
+                        }
+                    )
             
-            # Process the collection to extract collective insights
-            collective_insights = await insight_extractor.process_collection([
-                {
-                    'id': info.get('id', ''),
-                    'content': info.get('content', ''),
-                    'title': info.get('title', ''),
-                    'url': info.get('url', ''),
-                    'created': info.get('created', ''),
-                    'summary': info.get('summary', '')
-                }
-                for info in infos
-            ])
-            
-            # Save collective insights to database
-            collective_insights['focus_id'] = focus_id
-            collective_insights['focus_point'] = focus_point
-            await insight_extractor.store_insights_in_db(collective_insights, 'collective_insights')
-            
-            # Also save to file for backup
-            insights_dir = os.path.join(project_dir, 'insights')
-            os.makedirs(insights_dir, exist_ok=True)
-            insight_extractor.save_insights(
-                collective_insights, 
-                os.path.join(insights_dir, f'insights_{focus_id}_{datetime.now().strftime("%Y%m%d")}.json')
-            )
-            
-            wiseflow_logger.info(f'Collective insights generated and saved for focus point {focus_id}')
+            except Exception as e:
+                wiseflow_logger.error(f'Error integrating multimodal analysis into knowledge graph: {e}')
     except Exception as e:
         wiseflow_logger.error(f'Error generating collective insights: {e}')
