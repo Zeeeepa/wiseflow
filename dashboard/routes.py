@@ -27,6 +27,14 @@ async def dashboard_home(request: Request):
         {"request": request}
     )
 
+@router.get("/search", response_class=HTMLResponse)
+async def search_dashboard(request: Request):
+    """Serve the search dashboard page."""
+    return templates.TemplateResponse(
+        "search_dashboard.html", 
+        {"request": request}
+    )
+
 @router.get("/monitor", response_class=HTMLResponse)
 async def resource_monitor(request: Request):
     """Serve the resource monitor dashboard."""
@@ -51,4 +59,3 @@ async def plugins_info(request: Request):
             "analyzers": analyzers
         }
     )
-

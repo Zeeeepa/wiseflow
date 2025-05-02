@@ -149,3 +149,60 @@ body {
     background-color: #ffc107;
 }
 
+/* Search Dashboard Styles */
+.context-files-container {
+    border: 2px dashed #dee2e6;
+    border-radius: 5px;
+    padding: 30px;
+    text-align: center;
+    transition: all 0.3s;
+    cursor: pointer;
+}
+
+.context-files-container:hover, .context-files-container.border-primary {
+    border-color: #007bff;
+    background-color: rgba(0, 123, 255, 0.05);
+}
+
+.upload-icon {
+    color: #6c757d;
+    font-size: 2rem;
+}
+
+#github-selected-files-list,
+#arxiv-selected-files-list,
+#web-selected-files-list,
+#youtube-selected-files-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+#start-github-search-btn,
+#start-arxiv-search-btn,
+#start-web-search-btn,
+#start-youtube-search-btn {
+    padding: 10px 30px;
+    font-size: 1.1rem;
+}
+
+/* Tab styling */
+.nav-tabs .nav-link {
+    color: #495057;
+    font-weight: 500;
+}
+
+.nav-tabs .nav-link.active {
+    color: #007bff;
+    font-weight: 600;
+}
+
+/* Animation for search in progress */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+    display: inline-block;
+}
