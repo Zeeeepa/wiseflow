@@ -149,3 +149,47 @@ body {
     background-color: #ffc107;
 }
 
+/* GitHub Search Styles */
+.context-files-container {
+    border: 2px dashed #dee2e6;
+    border-radius: 5px;
+    padding: 30px;
+    text-align: center;
+    transition: all 0.3s;
+    cursor: pointer;
+}
+
+.context-files-container:hover, .context-files-container.border-primary {
+    border-color: #007bff;
+    background-color: rgba(0, 123, 255, 0.05);
+}
+
+.upload-icon {
+    color: #6c757d;
+    font-size: 2rem;
+}
+
+#selected-files-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+#start-github-search-btn {
+    padding: 10px 30px;
+    font-size: 1.1rem;
+}
+
+#search-status {
+    font-weight: 500;
+}
+
+/* Animation for search in progress */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+    display: inline-block;
+}
