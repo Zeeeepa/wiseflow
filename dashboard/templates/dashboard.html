@@ -10,9 +10,11 @@
     <link rel="stylesheet" href="/static/css/expanded_findings_view.css">
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <a href="#main-content" class="visually-hidden-focusable skip-link">Skip to main content</a>
+    
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark" aria-label="Main navigation">
         <div class="container-fluid">
-            <a class="navbar-brand" href="#">WiseFlow</a>
+            <a class="navbar-brand" href="#" aria-label="WiseFlow Home">WiseFlow</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
@@ -32,8 +34,9 @@
                     </li>
                 </ul>
                 <div class="ms-auto">
-                    <form class="d-flex" id="global-search-form">
-                        <input class="form-control me-2" type="search" placeholder="Search findings..." aria-label="Search" id="global-search-input">
+                    <form class="d-flex" id="global-search-form" role="search">
+                        <label for="global-search-input" class="visually-hidden">Search findings</label>
+                        <input class="form-control me-2" type="search" placeholder="Search findings..." aria-label="Search findings" id="global-search-input">
                         <button class="btn btn-outline-light" type="submit">Search</button>
                     </form>
                 </div>
@@ -41,7 +44,7 @@
         </div>
     </nav>
 
-    <div class="container-fluid mt-4">
+    <div class="container-fluid mt-4" id="main-content">
         <div class="row">
             <div class="col-md-3">
                 <div class="card mb-4">
@@ -49,13 +52,13 @@
                         <h5 class="card-title mb-0">Data Mining Tasks</h5>
                     </div>
                     <div class="card-body">
-                        <div class="list-group" id="task-list">
+                        <div class="list-group" id="task-list" role="list" aria-label="Data mining tasks">
                             <!-- Task list will be populated dynamically -->
                             <div class="text-center py-3">
                                 <div class="spinner-border text-primary" role="status">
                                     <span class="visually-hidden">Loading...</span>
                                 </div>
-                                <p class="mt-2">Loading tasks...</p>
+                                <p class="mt-2" aria-live="polite">Loading tasks...</p>
                             </div>
                         </div>
                         <div class="mt-3">
@@ -71,13 +74,14 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label for="date-range" class="form-label">Date Range</label>
-                            <select class="form-select" id="date-range">
+                            <select class="form-select" id="date-range" aria-describedby="date-range-help">
                                 <option value="today">Today</option>
                                 <option value="yesterday">Yesterday</option>
                                 <option value="last7" selected>Last 7 days</option>
                                 <option value="last30">Last 30 days</option>
                                 <option value="custom">Custom range</option>
                             </select>
+                            <div id="date-range-help" class="form-text">Select time period for filtering findings</div>
                         </div>
                         
                         <div class="mb-3" id="custom-date-range" style="display: none;">
@@ -95,24 +99,26 @@
                         
                         <div class="mb-3">
                             <label for="source-filter" class="form-label">Source</label>
-                            <select class="form-select" id="source-filter">
+                            <select class="form-select" id="source-filter" aria-describedby="source-filter-help">
                                 <option value="all" selected>All Sources</option>
                                 <option value="github">GitHub</option>
                                 <option value="youtube">YouTube</option>
                                 <option value="arxiv">ArXiv</option>
                                 <option value="web">Web</option>
                             </select>
+                            <div id="source-filter-help" class="form-text">Filter findings by data source</div>
                         </div>
                         
                         <div class="mb-3">
                             <label for="relevance-filter" class="form-label">Minimum Relevance</label>
-                            <select class="form-select" id="relevance-filter">
+                            <select class="form-select" id="relevance-filter" aria-describedby="relevance-filter-help">
                                 <option value="0" selected>All</option>
                                 <option value="0.3">Low (30%+)</option>
                                 <option value="0.5">Medium (50%+)</option>
                                 <option value="0.7">High (70%+)</option>
                                 <option value="0.9">Very High (90%+)</option>
                             </select>
+                            <div id="relevance-filter-help" class="form-text">Filter by minimum relevance score</div>
                         </div>
                         
                         <button class="btn btn-primary w-100" id="apply-filters-btn">Apply Filters</button>
@@ -124,17 +130,19 @@
                 <div class="card mb-4">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="card-title mb-0">Recent Findings</h5>
-                        <div class="btn-group">
-                            <button class="btn btn-outline-secondary" id="view-grid-btn">
-                                <i class="bi bi-grid"></i>
+                        <div class="btn-group" role="group" aria-label="View options">
+                            <button class="btn btn-outline-secondary" id="view-grid-btn" aria-label="Grid view">
+                                <i class="bi bi-grid" aria-hidden="true"></i>
+                                <span class="visually-hidden">Grid view</span>
                             </button>
-                            <button class="btn btn-outline-secondary active" id="view-list-btn">
-                                <i class="bi bi-list-ul"></i>
+                            <button class="btn btn-outline-secondary active" id="view-list-btn" aria-label="List view">
+                                <i class="bi bi-list-ul" aria-hidden="true"></i>
+                                <span class="visually-hidden">List view</span>
                             </button>
                         </div>
                     </div>
                     <div class="card-body">
-                        <div id="findings-container">
+                        <div id="findings-container" aria-live="polite">
                             <!-- Findings will be populated dynamically -->
                             <div class="text-center py-5">
                                 <div class="spinner-border text-primary" role="status">
@@ -156,7 +164,7 @@
                                 <div class="card mb-3">
                                     <div class="card-body">
                                         <h6 class="card-subtitle mb-2 text-muted">Source Distribution</h6>
-                                        <div id="source-chart" style="height: 200px;"></div>
+                                        <div id="source-chart" style="height: 200px;" aria-label="Source distribution chart" role="img"></div>
                                     </div>
                                 </div>
                             </div>
@@ -164,7 +172,7 @@
                                 <div class="card mb-3">
                                     <div class="card-body">
                                         <h6 class="card-subtitle mb-2 text-muted">Relevance Distribution</h6>
-                                        <div id="relevance-chart" style="height: 200px;"></div>
+                                        <div id="relevance-chart" style="height: 200px;" aria-label="Relevance distribution chart" role="img"></div>
                                     </div>
                                 </div>
                             </div>
@@ -174,7 +182,7 @@
                                 <div class="card">
                                     <div class="card-body">
                                         <h6 class="card-subtitle mb-2 text-muted">Findings Over Time</h6>
-                                        <div id="time-chart" style="height: 200px;"></div>
+                                        <div id="time-chart" style="height: 200px;" aria-label="Findings over time chart" role="img"></div>
                                     </div>
                                 </div>
                             </div>
@@ -194,7 +202,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div id="expanded-finding-content">
+                    <div id="expanded-finding-content" aria-live="polite">
                         <!-- Content will be populated dynamically -->
                     </div>
                 </div>
@@ -215,7 +223,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div id="search-results-container">
+                    <div id="search-results-container" aria-live="polite">
                         <!-- Search results will be populated dynamically -->
                     </div>
                 </div>
@@ -242,4 +250,3 @@
     <script src="/static/js/app.js"></script>
 </body>
 </html>
-
