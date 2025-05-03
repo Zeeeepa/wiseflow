@@ -18,6 +18,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+# Import from centralized imports and configuration modules
+from core.imports import get_logger, get_pb_client
+from core.config import load_config, get_config, get
+from core.initialize import initialize_environment
+
+# Initialize environment and load configuration
+initialize_environment()
+config = load_config()
+
 from core.export.webhook import WebhookManager, get_webhook_manager
 from core.llms.advanced.specialized_prompting import (
     SpecializedPromptProcessor,
@@ -59,7 +68,7 @@ app.add_middleware(
 webhook_manager = get_webhook_manager()
 
 # API key authentication
-API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
+API_KEY = get("api.api_key", os.environ.get("WISEFLOW_API_KEY", "dev-api-key"))
 
 def verify_api_key(x_api_key: str = Header(None)):
     """
