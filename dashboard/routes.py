@@ -43,6 +43,14 @@ async def resource_monitor(request: Request):
         {"request": request}
     )
 
+@router.get("/database", response_class=HTMLResponse)
+async def database_management(request: Request):
+    """Serve the database management interface."""
+    return templates.TemplateResponse(
+        "database_management.html", 
+        {"request": request}
+    )
+
 @router.get("/plugins", response_class=HTMLResponse)
 async def plugins_info(request: Request):
     """Get information about available plugins."""
