@@ -7,6 +7,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load active data mining tasks
     loadDataMiningTasks();
     
+    // Initialize advanced GitHub dialog functionality
+    initAdvancedGitHubDialog();
+
     // Add event listener for "Add YouTube Mining" button in listings tab
     document.getElementById('add-youtube-mining-btn').addEventListener('click', function() {
         // Show YouTube configuration dialog
@@ -31,6 +34,269 @@ function initDataMining() {
     
     // Add event listeners for task interconnection
     setupTaskInterconnection();
+}
+
+// Initialize advanced GitHub dialog functionality
+function initAdvancedGitHubDialog() {
+    // Add event listener for "Add More" button in reference context files
+    const addMoreBtn = document.getElementById('github-add-more-btn');
+    if (addMoreBtn) {
+        addMoreBtn.addEventListener('click', function() {
+            const fileInput = document.getElementById('github-context-file-input');
+            if (fileInput) {
+                fileInput.click();
+            }
+        });
+    }
+    
+    // Add event listeners for dialog buttons
+    setupGitHubDialogButtons();
+    
+    // Add event listener for search scheme change
+    const searchScheme = document.getElementById('github-search-scheme');
+    if (searchScheme) {
+        searchScheme.addEventListener('change', function() {
+            toggleAdvancedSearchOptions(this.value === 'advanced');
+        });
+    }
+}
+
+// Setup GitHub dialog buttons
+function setupGitHubDialogButtons() {
+    // Cancel button
+    const cancelBtn = document.getElementById('github-cancel-btn');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            // Switch back to listings tab
+            document.getElementById('listings-tab').click();
+        });
+    }
+    
+    // Save as Template button
+    const saveTemplateBtn = document.getElementById('github-save-template-btn');
+    if (saveTemplateBtn) {
+        saveTemplateBtn.addEventListener('click', function() {
+            saveGitHubSearchTemplate();
+        });
+    }
+    
+    // Preview button
+    const previewBtn = document.getElementById('github-preview-btn');
+    if (previewBtn) {
+        previewBtn.addEventListener('click', function() {
+            previewGitHubSearch();
+        });
+    }
+    
+    // Start button
+    const startBtn = document.getElementById('github-start-btn');
+    if (startBtn) {
+        startBtn.addEventListener('click', function() {
+            startGitHubSearch();
+        });
+    }
+}
+
+// Toggle advanced search options based on search scheme
+function toggleAdvancedSearchOptions(showAdvanced) {
+    const contentAnalysisSection = document.querySelector('.mb-4:has(label.form-label:contains("Content Analysis"))');
+    if (contentAnalysisSection) {
+        contentAnalysisSection.style.display = showAdvanced ? 'block' : 'none';
+    }
+    
+    // Show/hide additional options based on search scheme
+    const advancedOptions = document.querySelectorAll('#github-search-issues, #github-search-prs, #github-search-discussions');
+    advancedOptions.forEach(option => {
+        option.closest('.form-check').style.display = showAdvanced ? 'block' : 'none';
+    });
+}
+
+// Save GitHub search as template
+function saveGitHubSearchTemplate() {
+    const templateName = prompt('Enter a name for this template:');
+    if (!templateName) return;
+    
+    const templateData = collectGitHubFormData();
+    templateData.name = templateName;
+    
+    // Show saving indicator
+    const statusDiv = document.getElementById('github-search-status');
+    if (statusDiv) {
+        statusDiv.innerHTML = '<div class="alert alert-info">Saving template...</div>';
+    }
+    
+    // Send template data to server
+    fetch('/api/data-mining/templates', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(templateData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            if (statusDiv) {
+                statusDiv.innerHTML = '<div class="alert alert-success">Template saved successfully!</div>';
+                
+                // Clear status after 3 seconds
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 3000);
+            }
+        } else {
+            if (statusDiv) {
+                statusDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.message || 'Unknown error'}</div>`;
+            }
+        }
+    })
+    .catch(error => {
+        console.error('Error saving template:', error);
+        if (statusDiv) {
+            statusDiv.innerHTML = '<div class="alert alert-danger">Error saving template. Please try again.</div>';
+        }
+    });
+}
+
+// Preview GitHub search
+function previewGitHubSearch() {
+    const searchData = collectGitHubFormData();
+    
+    // Show preview indicator
+    const statusDiv = document.getElementById('github-search-status');
+    if (statusDiv) {
+        statusDiv.innerHTML = '<div class="alert alert-info">Generating preview...</div>';
+    }
+    
+    // Send search data to server for preview
+    fetch('/api/data-mining/preview', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(searchData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            // Display preview results
+            if (statusDiv) {
+                let previewHtml = '<div class="alert alert-success">';
+                previewHtml += '<h5>Preview Results</h5>';
+                previewHtml += '<p>Estimated repositories: ' + data.estimated_repos + '</p>';
+                previewHtml += '<p>Estimated code files: ' + data.estimated_files + '</p>';
+                previewHtml += '<p>Estimated processing time: ' + data.estimated_time + '</p>';
+                previewHtml += '</div>';
+                
+                statusDiv.innerHTML = previewHtml;
+            }
+        } else {
+            if (statusDiv) {
+                statusDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.message || 'Unknown error'}</div>`;
+            }
+        }
+    })
+    .catch(error => {
+        console.error('Error generating preview:', error);
+        if (statusDiv) {
+            statusDiv.innerHTML = '<div class="alert alert-danger">Error generating preview. Please try again.</div>';
+        }
+    });
+}
+
+// Start GitHub search
+function startGitHubSearch() {
+    const searchData = collectGitHubFormData();
+    
+    // Show starting indicator
+    const statusDiv = document.getElementById('github-search-status');
+    if (statusDiv) {
+        statusDiv.innerHTML = '<div class="alert alert-info">Starting search...</div>';
+    }
+    
+    // Create form data for file upload
+    const formData = new FormData();
+    formData.append('name', searchData.focus || 'GitHub Search');
+    formData.append('task_type', 'github');
+    formData.append('description', searchData.description || '');
+    formData.append('search_params', JSON.stringify(searchData));
+    
+    // Add context files if any
+    const fileInput = document.getElementById('github-context-file-input');
+    if (fileInput && fileInput.files.length > 0) {
+        for (let i = 0; i < fileInput.files.length; i++) {
+            formData.append('context_files', fileInput.files[i]);
+        }
+    }
+    
+    // Send search data to server
+    fetch('/api/data-mining/tasks', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            if (statusDiv) {
+                statusDiv.innerHTML = '<div class="alert alert-success">Search started successfully!</div>';
+                
+                // Switch to listings tab after 2 seconds
+                setTimeout(() => {
+                    document.getElementById('listings-tab').click();
+                    
+                    // Reload task listings
+                    loadDataMiningTasks();
+                }, 2000);
+            }
+        } else {
+            if (statusDiv) {
+                statusDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.message || 'Unknown error'}</div>`;
+            }
+        }
+    })
+    .catch(error => {
+        console.error('Error starting search:', error);
+        if (statusDiv) {
+            statusDiv.innerHTML = '<div class="alert alert-danger">Error starting search. Please try again.</div>';
+        }
+    });
+}
+
+// Collect GitHub form data
+function collectGitHubFormData() {
+    return {
+        focus: document.getElementById('github-search-focus')?.value || '',
+        description: document.getElementById('github-search-description')?.value || '',
+        goal: document.getElementById('github-search-goal')?.value || '',
+        search_scheme: document.getElementById('github-search-scheme')?.value || 'basic',
+        repository_filters: {
+            language: document.getElementById('github-language-filter')?.value || 'all',
+            stars: document.getElementById('github-stars-filter')?.value || 'any',
+            updated: document.getElementById('github-updated-filter')?.value || 'any'
+        },
+        options: {
+            search_repositories: document.getElementById('github-search-repos')?.checked || false,
+            search_code: document.getElementById('github-search-code')?.checked || false,
+            search_issues: document.getElementById('github-search-issues')?.checked || false,
+            search_prs: document.getElementById('github-search-prs')?.checked || false,
+            search_discussions: document.getElementById('github-search-discussions')?.checked || false
+        },
+        content_analysis: {
+            code_structure: document.getElementById('github-analyze-code-structure')?.checked || false,
+            documentation: document.getElementById('github-analyze-documentation')?.checked || false,
+            dependencies: document.getElementById('github-analyze-dependencies')?.checked || false,
+            test_coverage: document.getElementById('github-analyze-test-coverage')?.checked || false
+        },
+        parallel_workers: parseInt(document.getElementById('github-parallel-workers')?.value || '6'),
+        advanced_options: {
+            clone_locally: document.getElementById('github-clone-locally')?.checked || false,
+            follow_links: document.getElementById('github-follow-links')?.checked || false,
+            include_forks: document.getElementById('github-include-forks')?.checked || false,
+            save_to_db: document.getElementById('github-save-to-db')?.checked || false,
+            generate_report: document.getElementById('github-generate-report')?.checked || false,
+            use_custom_api: document.getElementById('github-use-custom-api')?.checked || false
+        }
+    };
 }
 
 // Load active data mining tasks
@@ -760,6 +1026,7 @@ function saveTaskInterconnection() {
         alert('Error interconnecting tasks');
     });
 }
+
 
 
 // Show YouTube configuration dialog

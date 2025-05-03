@@ -153,45 +153,22 @@
                         <h2 class="mb-4">GitHub Search</h2>
                         <div class="card">
                             <div class="card-header">
-                                Create GitHub Search Mining
+                                Advanced GitHub Data Mining Configuration
                             </div>
                             <div class="card-body">
                                 <form id="github-search-form">
                                     <div class="mb-3">
-                                        <label for="github-search-goal" class="form-label">Search Goal</label>
-                                        <input type="text" class="form-control" id="github-search-goal" placeholder="What are you looking to achieve?">
+                                        <label for="github-search-focus" class="form-label">Focus</label>
+                                        <input type="text" class="form-control" id="github-search-focus" placeholder="Enter your search focus">
                                     </div>
                                     
                                     <div class="mb-3">
-                                        <label for="github-search-description" class="form-label">Detailed Description</label>
-                                        <textarea class="form-control" id="github-search-description" rows="5" placeholder="Example: 'Find advanced dependency injection implementations in TypeScript projects with comprehensive test coverage and documentation.'&#10;&#10;Key aspects to include:&#10;- Specific patterns or approaches you're looking for&#10;- Desired complexity level"></textarea>
-                                    </div>
-                                    
-                                    <div class="row mb-3">
-                                        <div class="col-md-6">
-                                            <label for="github-search-strategy" class="form-label">Search Strategy</label>
-                                            <select class="form-select" id="github-search-strategy">
-                                                <option value="implementation">Implementation Search</option>
-                                                <option value="repository">Repository Search</option>
-                                                <option value="code">Code Search</option>
-                                                <option value="issue">Issue Search</option>
-                                                <option value="pr">PR Search</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label for="github-search-priority" class="form-label">Search Priority</label>
-                                            <select class="form-select" id="github-search-priority">
-                                                <option value="relevance">Relevance</option>
-                                                <option value="stars">Stars</option>
-                                                <option value="forks">Forks</option>
-                                                <option value="updated">Recently Updated</option>
-                                                <option value="help-wanted">Help Wanted</option>
-                                            </select>
-                                        </div>
+                                        <label for="github-search-description" class="form-label">Description</label>
+                                        <textarea class="form-control" id="github-search-description" rows="3" placeholder="Provide a detailed description of what you're looking for"></textarea>
                                     </div>
                                     
                                     <div class="mb-4">
-                                        <label class="form-label">Context Files</label>
+                                        <label class="form-label">Add Reference Context Files/URLs</label>
                                         <div class="context-files-container" id="github-context-files-container">
                                             <input type="file" id="github-context-file-input" multiple style="display: none;">
                                             <div class="text-center">
@@ -204,13 +181,174 @@
                                             <h6>Selected Files:</h6>
                                             <ul class="list-group" id="github-selected-files-list"></ul>
                                         </div>
+                                        <div class="mt-2">
+                                            <button type="button" class="btn btn-sm btn-outline-primary" id="github-add-more-btn">+ Add More</button>
+                                        </div>
                                         <small class="text-muted">Supported: js, jsx, ts, tsx, py, txt, md (Max 5MB)</small>
                                     </div>
                                     
+                                    <div class="mb-4">
+                                        <label class="form-label">Repository Filters</label>
+                                        <div class="row g-3">
+                                            <div class="col-md-4">
+                                                <label for="github-language-filter" class="form-label">Language</label>
+                                                <select class="form-select" id="github-language-filter">
+                                                    <option value="all">All Languages</option>
+                                                    <option value="javascript">JavaScript</option>
+                                                    <option value="typescript">TypeScript</option>
+                                                    <option value="python">Python</option>
+                                                    <option value="java">Java</option>
+                                                    <option value="go">Go</option>
+                                                    <option value="rust">Rust</option>
+                                                    <option value="c++">C++</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label for="github-stars-filter" class="form-label">Stars</label>
+                                                <select class="form-select" id="github-stars-filter">
+                                                    <option value="any">Any</option>
+                                                    <option value="100+">100+</option>
+                                                    <option value="1000+">1000+</option>
+                                                    <option value="10000+">10000+</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label for="github-updated-filter" class="form-label">Last Updated</label>
+                                                <select class="form-select" id="github-updated-filter">
+                                                    <option value="any">Any Time</option>
+                                                    <option value="week">Last Week</option>
+                                                    <option value="month">Last Month</option>
+                                                    <option value="year">Last Year</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="github-search-scheme" class="form-label">Search Scheme</label>
+                                        <select class="form-select" id="github-search-scheme">
+                                            <option value="basic">Basic Search</option>
+                                            <option value="advanced">Advanced Search</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div class="mb-4">
+                                        <label class="form-label">Options</label>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-search-repos" checked>
+                                            <label class="form-check-label" for="github-search-repos">
+                                                Search Repositories
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-search-code" checked>
+                                            <label class="form-check-label" for="github-search-code">
+                                                Search Code
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-search-issues" checked>
+                                            <label class="form-check-label" for="github-search-issues">
+                                                Search Issues
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-search-prs" checked>
+                                            <label class="form-check-label" for="github-search-prs">
+                                                Search Pull Requests
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-search-discussions" checked>
+                                            <label class="form-check-label" for="github-search-discussions">
+                                                Search Discussions
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-4">
+                                        <label class="form-label">Content Analysis</label>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-analyze-code-structure" checked>
+                                            <label class="form-check-label" for="github-analyze-code-structure">
+                                                Code Structure
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-analyze-documentation" checked>
+                                            <label class="form-check-label" for="github-analyze-documentation">
+                                                Documentation
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-analyze-dependencies" checked>
+                                            <label class="form-check-label" for="github-analyze-dependencies">
+                                                Dependencies
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-analyze-test-coverage">
+                                            <label class="form-check-label" for="github-analyze-test-coverage">
+                                                Test Coverage
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="github-search-goal" class="form-label">Goal</label>
+                                        <input type="text" class="form-control" id="github-search-goal" placeholder="What are you looking to achieve?">
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="github-parallel-workers" class="form-label">Parallel workers: <span id="github-workers-value">6</span> (1-12)</label>
+                                        <input type="range" class="form-range" min="1" max="12" value="6" id="github-parallel-workers" oninput="document.getElementById('github-workers-value').textContent = this.value">
+                                    </div>
+                                    
+                                    <div class="mb-4">
+                                        <label class="form-label">Advanced Options</label>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-clone-locally" checked>
+                                            <label class="form-check-label" for="github-clone-locally">
+                                                Clone repositories locally
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-follow-links" checked>
+                                            <label class="form-check-label" for="github-follow-links">
+                                                Follow repository links
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-include-forks" checked>
+                                            <label class="form-check-label" for="github-include-forks">
+                                                Include forks
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-save-to-db" checked>
+                                            <label class="form-check-label" for="github-save-to-db">
+                                                Save findings to database
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-generate-report" checked>
+                                            <label class="form-check-label" for="github-generate-report">
+                                                Generate summary report
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="github-use-custom-api">
+                                            <label class="form-check-label" for="github-use-custom-api">
+                                                Use custom API credentials
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
                                     <div class="text-center">
-                                        <button type="button" class="btn btn-primary" id="start-github-search-btn">
-                                            <i class="bi bi-play-fill"></i> Start Continuous Search
-                                        </button>
+                                        <button type="button" class="btn btn-secondary" id="github-cancel-btn">Cancel</button>
+                                        <button type="button" class="btn btn-primary" id="github-save-template-btn">Save as Template</button>
+                                        <button type="button" class="btn btn-info" id="github-preview-btn">Preview</button>
+                                        <button type="button" class="btn btn-success" id="github-start-btn">Start</button>
                                     </div>
                                     
                                     <div id="github-search-status" class="mt-3 text-center"></div>

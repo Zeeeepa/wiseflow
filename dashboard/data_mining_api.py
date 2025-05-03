@@ -103,6 +103,94 @@ async def get_data_mining_tasks(
         logger.error(f"Error getting data mining tasks: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting data mining tasks: {str(e)}")
 
+@router.post("/api/data-mining/templates")
+async def save_data_mining_template(
+    template_data: Dict[str, Any] = Body(...)
+) -> Dict[str, Any]:
+    """
+    Save a data mining template.
+    
+    Args:
+        template_data: Template data including name, type, and parameters
+    
+    Returns:
+        Dictionary containing the created template ID
+    """
+    try:
+        # Validate template data
+        if "name" not in template_data:
+            raise ValueError("Template name is required")
+        
+        # Save the template
+        template_id = await data_mining_manager.save_template(template_data)
+        
+        return {
+            "status": "success",
+            "message": "Template saved successfully",
+            "template_id": template_id
+        }
+    
+    except ValueError as e:
+        logger.error(f"Invalid template data: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    except Exception as e:
+        logger.error(f"Error saving template: {e}")
+        raise HTTPException(status_code=500, detail=f"Error saving template: {str(e)}")
+
+@router.get("/api/data-mining/templates")
+async def get_data_mining_templates(
+    template_type: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get all data mining templates, optionally filtered by type.
+    
+    Args:
+        template_type: Optional type filter (github, arxiv, web, youtube, etc.)
+    
+    Returns:
+        Dictionary containing the list of templates
+    """
+    try:
+        templates = await data_mining_manager.get_templates(template_type)
+        
+        return {
+            "status": "success",
+            "templates": templates
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting templates: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting templates: {str(e)}")
+
+@router.post("/api/data-mining/preview")
+async def preview_data_mining_task(
+    search_params: Dict[str, Any] = Body(...)
+) -> Dict[str, Any]:
+    """
+    Generate a preview of a data mining task.
+    
+    Args:
+        search_params: Search parameters
+    
+    Returns:
+        Dictionary containing preview information
+    """
+    try:
+        # Generate preview
+        preview_data = await data_mining_manager.generate_preview(search_params)
+        
+        return {
+            "status": "success",
+            "estimated_repos": preview_data.get("estimated_repos", 0),
+            "estimated_files": preview_data.get("estimated_files", 0),
+            "estimated_time": preview_data.get("estimated_time", "Unknown")
+        }
+    
+    except Exception as e:
+        logger.error(f"Error generating preview: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating preview: {str(e)}")
+
 @router.get("/api/data-mining/tasks/{task_id}")
 async def get_data_mining_task(
     task_id: str
