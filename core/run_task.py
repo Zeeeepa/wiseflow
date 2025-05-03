@@ -38,6 +38,7 @@ AUTO_SHUTDOWN_CHECK_INTERVAL = int(os.environ.get("AUTO_SHUTDOWN_CHECK_INTERVAL"
 # Configure error handling
 MAX_ERROR_COUNT = int(os.environ.get("MAX_ERROR_COUNT", "10"))
 ERROR_THRESHOLD_PERIOD = int(os.environ.get("ERROR_THRESHOLD_PERIOD", "3600"))  # Default: 1 hour
+CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT = int(os.environ.get("CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT", "300"))  # Default: 5 minutes
 
 # Initialize resource monitor
 resource_monitor = ResourceMonitor(
@@ -81,7 +82,11 @@ last_activity_time = datetime.now()
 error_tracker = {
     "count": 0,
     "timestamps": [],
-    "last_reset": datetime.now()
+    "last_reset": datetime.now(),
+    "state": "closed",  # Circuit breaker state: 'closed', 'open', or 'half-open'
+    "open_time": None,  # When the circuit breaker was opened
+    "test_request_time": None,  # When a test request was made in half-open state
+    "test_request_success": False  # Whether the test request was successful
 }
 
 def resource_alert(resource_type, current_value, threshold):
@@ -99,6 +104,30 @@ def track_error(error):
     """Track errors for circuit breaker pattern."""
     now = datetime.now()
     
+    # If circuit is already open, just log and return
+    if error_tracker["state"] == "open":
+        # Check if it's time to transition to half-open state
+        if error_tracker["open_time"] and (now - error_tracker["open_time"]).total_seconds() >= ERROR_THRESHOLD_PERIOD:
+            wiseflow_logger.info("Circuit breaker transitioning from open to half-open state")
+            error_tracker["state"] = "half-open"
+            error_tracker["test_request_time"] = now
+            error_tracker["test_request_success"] = False
+            return True  # Still tripped, but in half-open state
+        
+        # Still in open state
+        wiseflow_logger.warning(f"Circuit breaker is open, error suppressed: {error}")
+        return True
+    
+    # If in half-open state, this error means the test request failed
+    if error_tracker["state"] == "half-open":
+        wiseflow_logger.warning(f"Test request failed in half-open state: {error}")
+        # Go back to open state
+        error_tracker["state"] = "open"
+        error_tracker["open_time"] = now
+        error_tracker["test_request_success"] = False
+        return True
+    
+    # Normal closed state processing
     # Remove old error timestamps
     error_tracker["timestamps"] = [ts for ts in error_tracker["timestamps"] 
                                   if (now - ts).total_seconds() < ERROR_THRESHOLD_PERIOD]
@@ -116,6 +145,8 @@ def track_error(error):
     # Check if circuit breaker should trip
     if error_tracker["count"] >= MAX_ERROR_COUNT:
         wiseflow_logger.critical(f"Circuit breaker tripped: {error_tracker['count']} errors in {ERROR_THRESHOLD_PERIOD} seconds")
+        error_tracker["state"] = "open"
+        error_tracker["open_time"] = now
         return True
     
     return False
@@ -125,13 +156,44 @@ def reset_error_tracker():
     error_tracker["count"] = 0
     error_tracker["timestamps"] = []
     error_tracker["last_reset"] = datetime.now()
-    wiseflow_logger.info("Error tracker reset")
+    error_tracker["state"] = "closed"
+    error_tracker["open_time"] = None
+    error_tracker["test_request_time"] = None
+    error_tracker["test_request_success"] = False
+    wiseflow_logger.info("Error tracker reset, circuit breaker closed")
+
+def mark_test_request_success():
+    """Mark a test request as successful in half-open state."""
+    if error_tracker["state"] == "half-open":
+        wiseflow_logger.info("Test request successful in half-open state, closing circuit breaker")
+        reset_error_tracker()
+        return True
+    return False
 
 async def process_focus_task(focus, sites):
     """Process a focus point task."""
     global last_activity_time
     
     try:
+        # Check if circuit breaker is tripped
+        if error_tracker["state"] == "open":
+            now = datetime.now()
+            # Check if it's time to transition to half-open state
+            if error_tracker["open_time"] and (now - error_tracker["open_time"]).total_seconds() >= ERROR_THRESHOLD_PERIOD:
+                wiseflow_logger.info("Circuit breaker transitioning from open to half-open state")
+                error_tracker["state"] = "half-open"
+                error_tracker["test_request_time"] = now
+                error_tracker["test_request_success"] = False
+            else:
+                wiseflow_logger.warning(f"Circuit breaker is open, skipping task for focus point: {focus.get('focuspoint', '')}")
+                # Update task status in database
+                pb.update('focus_point', focus['id'], {
+                    "status": "error",
+                    "error_message": "Circuit breaker is open, task processing is paused",
+                    "updated_at": datetime.now().isoformat()
+                })
+                return False
+        
         wiseflow_logger.info(f"Processing focus point: {focus.get('focuspoint', '')}")
         last_activity_time = datetime.now()
         
@@ -142,6 +204,11 @@ async def process_focus_task(focus, sites):
             await perform_cross_source_analysis(focus)
         
         last_activity_time = datetime.now()
+        
+        # If we're in half-open state and this succeeded, close the circuit
+        if error_tracker["state"] == "half-open":
+            mark_test_request_success()
+        
         return True
     except Exception as e:
         wiseflow_logger.error(f"Error processing focus point {focus.get('id')}: {e}")
@@ -157,9 +224,15 @@ async def process_focus_task(focus, sites):
                 "updated_at": datetime.now().isoformat()
             })
             
-            # Wait before allowing more tasks
-            await asyncio.sleep(ERROR_THRESHOLD_PERIOD)
-            reset_error_tracker()
+            if error_tracker["state"] == "open":
+                # Wait before allowing more tasks
+                wiseflow_logger.info(f"Circuit breaker open, waiting {CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT} seconds before testing with a request")
+                await asyncio.sleep(CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT)
+                # Transition to half-open state
+                error_tracker["state"] = "half-open"
+                error_tracker["test_request_time"] = datetime.now()
+                error_tracker["test_request_success"] = False
+                wiseflow_logger.info("Circuit breaker transitioning to half-open state")
         
         return False
 
@@ -387,7 +460,7 @@ async def schedule_task():
             wiseflow_logger.info('Task scheduling loop started')
             
             # Check if circuit breaker is tripped
-            if error_tracker["count"] >= MAX_ERROR_COUNT:
+            if error_tracker["state"] == "open":
                 wiseflow_logger.warning("Circuit breaker active, pausing task scheduling")
                 await asyncio.sleep(60)  # Wait before checking again
                 continue

@@ -174,13 +174,36 @@ class ConnectorBase(PluginBase):
         Returns:
             Dictionary with status information
         """
+        # Use a whitelist approach for config to avoid exposing sensitive information
+        safe_config = {}
+        if self.config:
+            # Define a whitelist of safe keys to include
+            safe_keys = [
+                "name", "type", "enabled", "url", "base_url", "endpoint", 
+                "timeout", "max_retries", "retry_delay", "cache_enabled",
+                "max_results", "language", "format", "source", "category",
+                "tags", "description", "version", "author", "website",
+                "license", "max_concurrent_requests", "user_agent"
+            ]
+            
+            # Only include keys that are in the whitelist
+            for key in safe_keys:
+                if key in self.config:
+                    safe_config[key] = self.config[key]
+            
+            # Add any custom safe keys defined by the connector
+            if hasattr(self, "safe_config_keys") and isinstance(self.safe_config_keys, list):
+                for key in self.safe_config_keys:
+                    if key in self.config:
+                        safe_config[key] = self.config[key]
+        
         return {
             "name": self.name,
             "type": self.source_type,
             "last_run": self.last_run.isoformat() if self.last_run else None,
             "error_count": self.error_count,
             "is_enabled": self.is_enabled,
-            "config": {k: v for k, v in self.config.items() if k not in ["api_key", "password", "secret"]}
+            "config": safe_config
         }
 
 # Import connectors

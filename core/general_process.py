@@ -652,14 +652,226 @@ async def update_knowledge_graph(focus_id: str, item_ids: list[str]):
 
 
 async def extract_entities_from_content(content: str, source_url: str):
-    """Extract entities from content."""
-    # This is a placeholder for actual entity extraction logic
-    # In a real implementation, this would use NLP or LLM-based entity extraction
-    return []
+    """
+    Extract entities from content using NLP techniques.
+    
+    This function uses a combination of rule-based and model-based approaches
+    to extract entities from the content.
+    
+    Args:
+        content: The text content to extract entities from
+        source_url: The source URL of the content
+        
+    Returns:
+        List of entity objects
+    """
+    try:
+        wiseflow_logger.info(f"Extracting entities from content from {source_url}")
+        
+        # Import NLP libraries here to avoid loading them unless needed
+        import spacy
+        from collections import Counter
+        
+        # Load the NLP model (will download if not present)
+        try:
+            nlp = spacy.load("en_core_web_sm")
+        except OSError:
+            wiseflow_logger.info("Downloading spaCy model...")
+            import subprocess
+            subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"], 
+                          check=True, capture_output=True)
+            nlp = spacy.load("en_core_web_sm")
+        
+        # Process the content with spaCy
+        # Limit content size to avoid memory issues
+        max_content_length = 10000
+        if len(content) > max_content_length:
+            wiseflow_logger.warning(f"Content too large ({len(content)} chars), truncating to {max_content_length} chars")
+            content = content[:max_content_length]
+            
+        doc = nlp(content)
+        
+        # Extract named entities
+        entities = []
+        entity_counter = Counter()
+        
+        for ent in doc.ents:
+            # Filter out very common entities and unwanted types
+            if ent.label_ in ["DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"]:
+                continue
+                
+            # Count entity occurrences
+            entity_counter[f"{ent.text}|{ent.label_}"] += 1
+        
+        # Only keep entities that appear multiple times or are important types
+        important_entity_types = ["PERSON", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART"]
+        
+        for entity_key, count in entity_counter.items():
+            entity_text, entity_type = entity_key.split("|")
+            
+            # Include entity if it appears multiple times or is an important type
+            if count > 1 or entity_type in important_entity_types:
+                entity_obj = {
+                    "id": str(uuid.uuid4()),
+                    "name": entity_text,
+                    "type": entity_type,
+                    "source": source_url,
+                    "count": count,
+                    "metadata": {
+                        "extracted_at": datetime.now().isoformat()
+                    }
+                }
+                entities.append(entity_obj)
+        
+        wiseflow_logger.info(f"Extracted {len(entities)} entities from content")
+        return entities
+    except Exception as e:
+        wiseflow_logger.error(f"Error extracting entities: {e}")
+        # Return empty list on error to avoid breaking the pipeline
+        return []
 
 
 async def extract_relationships_from_insights(insights, entities):
-    """Extract relationships from insights."""
-    # This is a placeholder for actual relationship extraction logic
-    # In a real implementation, this would analyze insights to find relationships between entities
-    return []
+    """
+    Extract relationships between entities from insights.
+    
+    This function analyzes the insights to find relationships between entities.
+    
+    Args:
+        insights: The insights data
+        entities: The list of entities to find relationships between
+        
+    Returns:
+        List of relationship objects
+    """
+    try:
+        if not insights or not entities:
+            return []
+            
+        wiseflow_logger.info(f"Extracting relationships from insights with {len(entities)} entities")
+        
+        # Create a map of entity names to entity objects for quick lookup
+        entity_map = {entity["name"].lower(): entity for entity in entities}
+        
+        # Extract the insight text
+        insight_text = ""
+        if isinstance(insights, str):
+            insight_text = insights
+        elif isinstance(insights, dict):
+            # Extract text from various possible fields
+            for field in ["summary", "content", "text", "analysis", "insights"]:
+                if field in insights and isinstance(insights[field], str):
+                    insight_text += insights[field] + " "
+            
+            # If we have a list of insights, concatenate them
+            if "items" in insights and isinstance(insights["items"], list):
+                for item in insights["items"]:
+                    if isinstance(item, str):
+                        insight_text += item + " "
+                    elif isinstance(item, dict) and "text" in item:
+                        insight_text += item["text"] + " "
+        
+        if not insight_text:
+            wiseflow_logger.warning("No insight text found to extract relationships from")
+            return []
+        
+        # Import NLP libraries here to avoid loading them unless needed
+        import spacy
+        
+        # Load the NLP model (will download if not present)
+        try:
+            nlp = spacy.load("en_core_web_sm")
+        except OSError:
+            wiseflow_logger.info("Downloading spaCy model...")
+            import subprocess
+            subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"], 
+                          check=True, capture_output=True)
+            nlp = spacy.load("en_core_web_sm")
+        
+        # Process the insight text with spaCy
+        doc = nlp(insight_text)
+        
+        # Extract relationships using dependency parsing
+        relationships = []
+        
+        # Process each sentence to find relationships
+        for sent in doc.sents:
+            # Find all entity mentions in this sentence
+            entity_mentions = []
+            for token in sent:
+                token_text = token.text.lower()
+                # Check if this token is part of a known entity
+                for entity_name, entity in entity_map.items():
+                    if token_text in entity_name.split() or entity_name in token_text:
+                        entity_mentions.append((token, entity))
+            
+            # If we have at least two entities in this sentence, they might be related
+            if len(entity_mentions) >= 2:
+                for i in range(len(entity_mentions)):
+                    for j in range(i+1, len(entity_mentions)):
+                        token1, entity1 = entity_mentions[i]
+                        token2, entity2 = entity_mentions[j]
+                        
+                        # Skip if it's the same entity
+                        if entity1["id"] == entity2["id"]:
+                            continue
+                        
+                        # Find the relationship between these entities
+                        relationship_text = extract_relationship_text(sent, token1, token2)
+                        
+                        if relationship_text:
+                            relationship = {
+                                "id": str(uuid.uuid4()),
+                                "source_entity_id": entity1["id"],
+                                "target_entity_id": entity2["id"],
+                                "relationship_type": "mentioned_together",
+                                "description": relationship_text,
+                                "confidence": 0.7,  # Default confidence
+                                "metadata": {
+                                    "sentence": sent.text,
+                                    "extracted_at": datetime.now().isoformat()
+                                }
+                            }
+                            relationships.append(relationship)
+        
+        wiseflow_logger.info(f"Extracted {len(relationships)} relationships from insights")
+        return relationships
+    except Exception as e:
+        wiseflow_logger.error(f"Error extracting relationships: {e}")
+        # Return empty list on error to avoid breaking the pipeline
+        return []
+
+
+def extract_relationship_text(sentence, token1, token2):
+    """
+    Extract the text describing the relationship between two tokens in a sentence.
+    
+    Args:
+        sentence: The spaCy sentence object
+        token1: The first token
+        token2: The second token
+        
+    Returns:
+        A string describing the relationship, or None if no clear relationship
+    """
+    # Get the indices of the tokens
+    idx1 = token1.i
+    idx2 = token2.i
+    
+    # Ensure idx1 is the smaller index
+    if idx1 > idx2:
+        idx1, idx2 = idx2, idx1
+        token1, token2 = token2, token1
+    
+    # Check if the tokens are close enough to have a meaningful relationship
+    if idx2 - idx1 > 10:
+        return None
+    
+    # Extract the text between the tokens, including the tokens
+    relationship_span = sentence[idx1:idx2+1]
+    
+    # If the span is too long, it's probably not a clear relationship
+    if len(relationship_span) > 15:
+        return None
+    
+    return relationship_span.text

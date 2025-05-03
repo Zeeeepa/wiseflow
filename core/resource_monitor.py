@@ -82,6 +82,11 @@ class ResourceMonitor:
         # Callbacks for resource alerts
         self.callbacks = []
         
+        # Add thread safety with locks
+        self._history_lock = threading.RLock()
+        self._callback_lock = threading.RLock()
+        self._activity_lock = threading.RLock()
+        
         self._initialized = True
         logger.info("ResourceMonitor initialized")
         
@@ -115,7 +120,8 @@ class ResourceMonitor:
         Args:
             callback: Callback function
         """
-        self.callbacks.append(callback)
+        with self._callback_lock:
+            self.callbacks.append(callback)
         
     def remove_callback(self, callback: Callable[[str, float, float], None]):
         """
@@ -124,9 +130,10 @@ class ResourceMonitor:
         Args:
             callback: Callback function to remove
         """
-        if callback in self.callbacks:
-            self.callbacks.remove(callback)
-        
+        with self._callback_lock:
+            if callback in self.callbacks:
+                self.callbacks.remove(callback)
+    
     def _monitor_loop(self):
         """Main monitoring loop."""
         while not self.stop_event.is_set():
@@ -162,19 +169,20 @@ class ResourceMonitor:
             disk = psutil.disk_usage(os.getcwd())
             disk_percent = disk.percent
             
-            # Update history
+            # Update history with thread safety
             timestamp = time.time()
-            self.resource_history['cpu'].append(cpu_percent)
-            self.resource_history['memory'].append(memory_percent)
-            self.resource_history['disk'].append(disk_percent)
-            self.resource_history['timestamp'].append(timestamp)
-            
-            # Trim history if needed
-            if len(self.resource_history['cpu']) > self.history_max_size:
-                self.resource_history['cpu'] = self.resource_history['cpu'][-self.history_max_size:]
-                self.resource_history['memory'] = self.resource_history['memory'][-self.history_max_size:]
-                self.resource_history['disk'] = self.resource_history['disk'][-self.history_max_size:]
-                self.resource_history['timestamp'] = self.resource_history['timestamp'][-self.history_max_size:]
+            with self._history_lock:
+                self.resource_history['cpu'].append(cpu_percent)
+                self.resource_history['memory'].append(memory_percent)
+                self.resource_history['disk'].append(disk_percent)
+                self.resource_history['timestamp'].append(timestamp)
+                
+                # Trim history if needed
+                if len(self.resource_history['cpu']) > self.history_max_size:
+                    self.resource_history['cpu'] = self.resource_history['cpu'][-self.history_max_size:]
+                    self.resource_history['memory'] = self.resource_history['memory'][-self.history_max_size:]
+                    self.resource_history['disk'] = self.resource_history['disk'][-self.history_max_size:]
+                    self.resource_history['timestamp'] = self.resource_history['timestamp'][-self.history_max_size:]
                 
             # Log resource usage
             logger.debug(f"Resource usage: CPU={cpu_percent:.1f}%, Memory={memory_percent:.1f}%, Disk={disk_percent:.1f}%")
@@ -185,32 +193,41 @@ class ResourceMonitor:
                 # Publish resource warning event
                 event = create_resource_event(EventType.RESOURCE_WARNING, "cpu", cpu_percent, self.thresholds['cpu'])
                 publish_sync(event)
-                # Call callbacks
-                for callback in self.callbacks:
+                # Call callbacks with thread safety
+                with self._callback_lock:
+                    callbacks_copy = self.callbacks.copy()
+                
+                for callback in callbacks_copy:
                     try:
                         callback("cpu", cpu_percent, self.thresholds['cpu'])
                     except Exception as e:
                         logger.error(f"Error in resource callback: {str(e)}")
-                
+            
             if memory_percent > self.thresholds['memory']:
                 logger.warning(f"Memory usage above threshold: {memory_percent:.1f}% > {self.thresholds['memory']:.1f}%")
                 # Publish resource warning event
                 event = create_resource_event(EventType.RESOURCE_WARNING, "memory", memory_percent, self.thresholds['memory'])
                 publish_sync(event)
-                # Call callbacks
-                for callback in self.callbacks:
+                # Call callbacks with thread safety
+                with self._callback_lock:
+                    callbacks_copy = self.callbacks.copy()
+                
+                for callback in callbacks_copy:
                     try:
                         callback("memory", memory_percent, self.thresholds['memory'])
                     except Exception as e:
                         logger.error(f"Error in resource callback: {str(e)}")
-                
+            
             if disk_percent > self.thresholds['disk']:
                 logger.warning(f"Disk usage above threshold: {disk_percent:.1f}% > {self.thresholds['disk']:.1f}%")
                 # Publish resource warning event
                 event = create_resource_event(EventType.RESOURCE_WARNING, "disk", disk_percent, self.thresholds['disk'])
                 publish_sync(event)
-                # Call callbacks
-                for callback in self.callbacks:
+                # Call callbacks with thread safety
+                with self._callback_lock:
+                    callbacks_copy = self.callbacks.copy()
+                
+                for callback in callbacks_copy:
                     try:
                         callback("disk", disk_percent, self.thresholds['disk'])
                     except Exception as e:
@@ -256,9 +273,10 @@ class ResourceMonitor:
                     
     def record_activity(self):
         """Record user activity to reset idle timer."""
-        self.last_activity_time = time.time()
+        with self._activity_lock:
+            self.last_activity_time = time.time()
         logger.debug("Activity recorded")
-        
+    
     def get_resource_usage(self) -> Dict[str, float]:
         """Get current resource usage.
         
@@ -298,15 +316,22 @@ class ResourceMonitor:
         Returns:
             Dict[str, List]: Resource usage history
         """
-        if limit is None or limit >= len(self.resource_history['cpu']):
-            return self.resource_history
-            
-        return {
-            'cpu': self.resource_history['cpu'][-limit:],
-            'memory': self.resource_history['memory'][-limit:],
-            'disk': self.resource_history['disk'][-limit:],
-            'timestamp': self.resource_history['timestamp'][-limit:]
-        }
+        with self._history_lock:
+            if limit is None or limit >= len(self.resource_history['cpu']):
+                # Return a copy to avoid thread safety issues
+                return {
+                    'cpu': self.resource_history['cpu'][:],
+                    'memory': self.resource_history['memory'][:],
+                    'disk': self.resource_history['disk'][:],
+                    'timestamp': self.resource_history['timestamp'][:]
+                }
+                
+            return {
+                'cpu': self.resource_history['cpu'][-limit:],
+                'memory': self.resource_history['memory'][-limit:],
+                'disk': self.resource_history['disk'][-limit:],
+                'timestamp': self.resource_history['timestamp'][-limit:]
+            }
     
     def calculate_optimal_thread_count(self) -> int:
         """

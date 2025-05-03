@@ -129,6 +129,7 @@ class EventBus:
         self._event_history: List[Event] = []
         self._max_history_size = 1000
         self._lock = asyncio.Lock()
+        self._propagate_exceptions = False  # Default to not propagating exceptions
         self._initialized = True
         
         # Register built-in subscribers
@@ -145,14 +146,19 @@ class EventBus:
         """Log an event."""
         logger.debug(f"Event received: {event}")
     
-    def subscribe(self, event_type: Optional[EventType], callback: Callable[[Event], Any]) -> None:
+    def subscribe(self, event_type: Optional[EventType], callback: Callable[[Event], Any], source: Optional[str] = None) -> None:
         """
         Subscribe to an event type.
         
         Args:
             event_type: The event type to subscribe to, or None for all events
             callback: The callback function to call when the event is published
+            source: Optional source identifier for the callback, useful for bulk unsubscribing
         """
+        # Store the source with the callback for later unsubscription
+        if source:
+            setattr(callback, "__source__", source)
+            
         if event_type is None:
             # Subscribe to all event types
             for event_type in EventType:
@@ -178,6 +184,46 @@ class EventBus:
             if callback in self._subscribers[event_type]:
                 self._subscribers[event_type].remove(callback)
                 logger.debug(f"Unsubscribed from {event_type} with {callback.__name__}")
+    
+    def unsubscribe_by_source(self, source: str) -> None:
+        """
+        Unsubscribe all callbacks that were registered from a specific source.
+        
+        This is useful for preventing memory leaks when components are destroyed
+        but haven't properly unsubscribed their callbacks.
+        
+        Args:
+            source: The source identifier to unsubscribe all callbacks from
+        """
+        # We need to track callbacks by source, so we'll add this information
+        # when subscribing and use it here to unsubscribe
+        count = 0
+        for event_type in self._subscribers:
+            # We can't modify the list while iterating, so create a new list
+            callbacks_to_keep = []
+            for callback in self._subscribers[event_type]:
+                # Check if this callback was registered by the source
+                # This requires callbacks to have a __source__ attribute
+                if hasattr(callback, "__source__") and callback.__source__ == source:
+                    count += 1
+                else:
+                    callbacks_to_keep.append(callback)
+            
+            # Replace the subscribers list with the filtered list
+            self._subscribers[event_type] = callbacks_to_keep
+        
+        if count > 0:
+            logger.debug(f"Unsubscribed {count} callbacks from source: {source}")
+    
+    def set_propagate_exceptions(self, propagate: bool) -> None:
+        """
+        Configure whether exceptions in event subscribers should be propagated.
+        
+        Args:
+            propagate: If True, exceptions will be propagated; if False, they will be caught and logged
+        """
+        self._propagate_exceptions = propagate
+        logger.info(f"Event bus exception propagation set to: {propagate}")
     
     async def publish(self, event: Event) -> None:
         """
@@ -206,6 +252,8 @@ class EventBus:
                         callback(event)
                 except Exception as e:
                     logger.error(f"Error in event subscriber {callback.__name__}: {e}")
+                    if self._propagate_exceptions:
+                        raise  # Re-raise the exception if propagation is enabled
     
     def publish_sync(self, event: Event) -> None:
         """
@@ -256,13 +304,17 @@ class EventBus:
 event_bus = EventBus()
 
 # Convenience functions
-def subscribe(event_type: Optional[EventType], callback: Callable[[Event], Any]) -> None:
+def subscribe(event_type: Optional[EventType], callback: Callable[[Event], Any], source: Optional[str] = None) -> None:
     """Subscribe to an event type."""
-    event_bus.subscribe(event_type, callback)
+    event_bus.subscribe(event_type, callback, source)
 
 def unsubscribe(event_type: EventType, callback: Callable[[Event], Any]) -> None:
     """Unsubscribe from an event type."""
     event_bus.unsubscribe(event_type, callback)
+
+def unsubscribe_by_source(source: str) -> None:
+    """Unsubscribe all callbacks from a specific source."""
+    event_bus.unsubscribe_by_source(source)
 
 async def publish(event: Event) -> None:
     """Publish an event."""
@@ -330,3 +382,7 @@ def create_resource_event(event_type: EventType, resource_type: str, value: floa
     }
     return Event(event_type, data, "resource_monitor")
 
+# Add a convenience function for setting exception propagation
+def set_propagate_exceptions(propagate: bool) -> None:
+    """Configure whether exceptions in event subscribers should be propagated."""
+    event_bus.set_propagate_exceptions(propagate)
