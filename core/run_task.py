@@ -15,6 +15,7 @@ import json
 import signal
 import sys
 import psutil
+import traceback
 from datetime import datetime, timedelta
 
 from core.general_process import main_process, wiseflow_logger, pb
@@ -24,6 +25,7 @@ from core.llms.advanced import AdvancedLLMProcessor
 from core.resource_monitor import ResourceMonitor
 from core.thread_pool_manager import ThreadPoolManager, TaskPriority, TaskStatus
 from core.task_manager import TaskManager, TaskDependencyError
+from core.connectors import initialize_all_connectors, get_connector
 
 # Configure the maximum number of concurrent tasks
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
@@ -33,6 +35,12 @@ AUTO_SHUTDOWN_ENABLED = os.environ.get("AUTO_SHUTDOWN_ENABLED", "false").lower()
 AUTO_SHUTDOWN_IDLE_TIME = int(os.environ.get("AUTO_SHUTDOWN_IDLE_TIME", "3600"))  # Default: 1 hour
 AUTO_SHUTDOWN_CHECK_INTERVAL = int(os.environ.get("AUTO_SHUTDOWN_CHECK_INTERVAL", "300"))  # Default: 5 minutes
 
+# Configure error handling
+MAX_ERROR_COUNT = int(os.environ.get("MAX_ERROR_COUNT", "10"))
+ERROR_THRESHOLD_PERIOD = int(os.environ.get("ERROR_THRESHOLD_PERIOD", "3600"))  # Default: 1 hour
+CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT = int(os.environ.get("CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT", "300"))  # Default: 5 minutes
+
+# Initialize resource monitor
 resource_monitor = ResourceMonitor(
     check_interval=10.0,
     cpu_threshold=80.0,
@@ -50,6 +58,7 @@ thread_pool = ThreadPoolManager(
 )
 thread_pool.start()
 
+# Initialize task manager
 task_manager = TaskManager(
     thread_pool=thread_pool,
     resource_monitor=resource_monitor,
@@ -69,6 +78,17 @@ advanced_llm_processor = AdvancedLLMProcessor()
 # Track the last activity time
 last_activity_time = datetime.now()
 
+# Track errors for circuit breaker pattern
+error_tracker = {
+    "count": 0,
+    "timestamps": [],
+    "last_reset": datetime.now(),
+    "state": "closed",  # Circuit breaker state: 'closed', 'open', or 'half-open'
+    "open_time": None,  # When the circuit breaker was opened
+    "test_request_time": None,  # When a test request was made in half-open state
+    "test_request_success": False  # Whether the test request was successful
+}
+
 def resource_alert(resource_type, current_value, threshold):
     wiseflow_logger.warning(f"Resource alert: {resource_type} usage at {current_value:.1f}% (threshold: {threshold}%)")
     
@@ -80,11 +100,100 @@ def resource_alert(resource_type, current_value, threshold):
 # Register the resource alert callback
 resource_monitor.add_callback(resource_alert)
 
+def track_error(error):
+    """Track errors for circuit breaker pattern."""
+    now = datetime.now()
+    
+    # If circuit is already open, just log and return
+    if error_tracker["state"] == "open":
+        # Check if it's time to transition to half-open state
+        if error_tracker["open_time"] and (now - error_tracker["open_time"]).total_seconds() >= ERROR_THRESHOLD_PERIOD:
+            wiseflow_logger.info("Circuit breaker transitioning from open to half-open state")
+            error_tracker["state"] = "half-open"
+            error_tracker["test_request_time"] = now
+            error_tracker["test_request_success"] = False
+            return True  # Still tripped, but in half-open state
+        
+        # Still in open state
+        wiseflow_logger.warning(f"Circuit breaker is open, error suppressed: {error}")
+        return True
+    
+    # If in half-open state, this error means the test request failed
+    if error_tracker["state"] == "half-open":
+        wiseflow_logger.warning(f"Test request failed in half-open state: {error}")
+        # Go back to open state
+        error_tracker["state"] = "open"
+        error_tracker["open_time"] = now
+        error_tracker["test_request_success"] = False
+        return True
+    
+    # Normal closed state processing
+    # Remove old error timestamps
+    error_tracker["timestamps"] = [ts for ts in error_tracker["timestamps"] 
+                                  if (now - ts).total_seconds() < ERROR_THRESHOLD_PERIOD]
+    
+    # Add new error timestamp
+    error_tracker["timestamps"].append(now)
+    error_tracker["count"] = len(error_tracker["timestamps"])
+    
+    # Log error details
+    error_str = str(error)
+    error_traceback = traceback.format_exc()
+    wiseflow_logger.error(f"Error occurred: {error_str}\n{error_traceback}")
+    wiseflow_logger.warning(f"Error count: {error_tracker['count']} in the last {ERROR_THRESHOLD_PERIOD} seconds")
+    
+    # Check if circuit breaker should trip
+    if error_tracker["count"] >= MAX_ERROR_COUNT:
+        wiseflow_logger.critical(f"Circuit breaker tripped: {error_tracker['count']} errors in {ERROR_THRESHOLD_PERIOD} seconds")
+        error_tracker["state"] = "open"
+        error_tracker["open_time"] = now
+        return True
+    
+    return False
+
+def reset_error_tracker():
+    """Reset the error tracker."""
+    error_tracker["count"] = 0
+    error_tracker["timestamps"] = []
+    error_tracker["last_reset"] = datetime.now()
+    error_tracker["state"] = "closed"
+    error_tracker["open_time"] = None
+    error_tracker["test_request_time"] = None
+    error_tracker["test_request_success"] = False
+    wiseflow_logger.info("Error tracker reset, circuit breaker closed")
+
+def mark_test_request_success():
+    """Mark a test request as successful in half-open state."""
+    if error_tracker["state"] == "half-open":
+        wiseflow_logger.info("Test request successful in half-open state, closing circuit breaker")
+        reset_error_tracker()
+        return True
+    return False
+
 async def process_focus_task(focus, sites):
     """Process a focus point task."""
     global last_activity_time
     
     try:
+        # Check if circuit breaker is tripped
+        if error_tracker["state"] == "open":
+            now = datetime.now()
+            # Check if it's time to transition to half-open state
+            if error_tracker["open_time"] and (now - error_tracker["open_time"]).total_seconds() >= ERROR_THRESHOLD_PERIOD:
+                wiseflow_logger.info("Circuit breaker transitioning from open to half-open state")
+                error_tracker["state"] = "half-open"
+                error_tracker["test_request_time"] = now
+                error_tracker["test_request_success"] = False
+            else:
+                wiseflow_logger.warning(f"Circuit breaker is open, skipping task for focus point: {focus.get('focuspoint', '')}")
+                # Update task status in database
+                pb.update('focus_point', focus['id'], {
+                    "status": "error",
+                    "error_message": "Circuit breaker is open, task processing is paused",
+                    "updated_at": datetime.now().isoformat()
+                })
+                return False
+        
         wiseflow_logger.info(f"Processing focus point: {focus.get('focuspoint', '')}")
         last_activity_time = datetime.now()
         
@@ -95,9 +204,36 @@ async def process_focus_task(focus, sites):
             await perform_cross_source_analysis(focus)
         
         last_activity_time = datetime.now()
+        
+        # If we're in half-open state and this succeeded, close the circuit
+        if error_tracker["state"] == "half-open":
+            mark_test_request_success()
+        
         return True
     except Exception as e:
         wiseflow_logger.error(f"Error processing focus point {focus.get('id')}: {e}")
+        
+        # Track error for circuit breaker pattern
+        circuit_tripped = track_error(e)
+        if circuit_tripped:
+            wiseflow_logger.critical("Circuit breaker tripped, pausing task processing")
+            # Update task status in database
+            pb.update('focus_point', focus['id'], {
+                "status": "error",
+                "error_message": f"Circuit breaker tripped: Too many errors occurred. Last error: {str(e)}",
+                "updated_at": datetime.now().isoformat()
+            })
+            
+            if error_tracker["state"] == "open":
+                # Wait before allowing more tasks
+                wiseflow_logger.info(f"Circuit breaker open, waiting {CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT} seconds before testing with a request")
+                await asyncio.sleep(CIRCUIT_BREAKER_HALF_OPEN_TIMEOUT)
+                # Transition to half-open state
+                error_tracker["state"] = "half-open"
+                error_tracker["test_request_time"] = datetime.now()
+                error_tracker["test_request_success"] = False
+                wiseflow_logger.info("Circuit breaker transitioning to half-open state")
+        
         return False
 
 async def perform_cross_source_analysis(focus):
@@ -141,6 +277,7 @@ async def perform_cross_source_analysis(focus):
         wiseflow_logger.info(f"Cross-source analysis completed for focus point: {focus.get('focuspoint', '')}")
     except Exception as e:
         wiseflow_logger.error(f"Error performing cross-source analysis: {e}")
+        track_error(e)
 
 async def generate_insights(focus):
     """Generate insights for a focus point using advanced LLM processing."""
@@ -193,6 +330,7 @@ async def generate_insights(focus):
         last_activity_time = datetime.now()
     except Exception as e:
         wiseflow_logger.error(f"Error generating insights: {e}")
+        track_error(e)
 
 def process_focus_task_wrapper(focus, sites):
     """Synchronous wrapper for process_focus_task."""
@@ -267,53 +405,116 @@ async def monitor_resource_usage():
             )
             
             # Check if memory usage is too high
-            if memory_usage_mb > 1000:  # More than 1GB
-                wiseflow_logger.warning(f"Memory usage is very high: {memory_usage_mb:.2f} MB")
-                
-                # Reduce thread pool size
-                if thread_pool.get_metrics()['worker_count'] > thread_pool.min_workers:
-                    wiseflow_logger.info("Reducing thread pool size due to high memory usage")
-                    # The thread pool will automatically adjust based on resource monitor alerts
-            
+            if memory_usage_mb > 1024 * 2:  # 2 GB
+                wiseflow_logger.warning(f"Memory usage is high: {memory_usage_mb:.2f} MB. Requesting garbage collection.")
+                import gc
+                gc.collect()
         except Exception as e:
             wiseflow_logger.error(f"Error monitoring resource usage: {e}")
 
+async def initialize_connectors():
+    """Initialize all connectors."""
+    try:
+        wiseflow_logger.info("Initializing connectors...")
+        
+        # Get connector configurations from database
+        connector_configs = {}
+        try:
+            configs = pb.read('connector_configs')
+            for config in configs:
+                connector_configs[config.get('name')] = config.get('config', {})
+        except Exception as e:
+            wiseflow_logger.warning(f"Error loading connector configurations: {e}")
+        
+        # Initialize connectors
+        connectors = {}
+        for connector_type in ["web", "academic", "github", "youtube", "code_search"]:
+            connector = get_connector(connector_type, connector_configs.get(connector_type))
+            if connector:
+                connectors[connector_type] = connector
+        
+        # Initialize all connectors asynchronously
+        results = await initialize_all_connectors(connectors)
+        
+        # Log results
+        for name, success in results.items():
+            if success:
+                wiseflow_logger.info(f"Initialized connector: {name}")
+            else:
+                wiseflow_logger.warning(f"Failed to initialize connector: {name}")
+        
+        return connectors
+    except Exception as e:
+        wiseflow_logger.error(f"Error initializing connectors: {e}")
+        return {}
+
 async def schedule_task():
-    """Schedule and manage data mining tasks."""
+    """Schedule tasks for execution."""
     counter = 0
+    
+    # Initialize connectors
+    connectors = await initialize_connectors()
+    
     while True:
         try:
-            wiseflow_logger.info('Task execute loop started')
+            wiseflow_logger.info('Task scheduling loop started')
             
-            # Get active focus points
-            focus_points = pb.read('focus_points', filter='activated=True')
-            sites_record = pb.read('sites')
+            # Check if circuit breaker is tripped
+            if error_tracker["state"] == "open":
+                wiseflow_logger.warning("Circuit breaker active, pausing task scheduling")
+                await asyncio.sleep(60)  # Wait before checking again
+                continue
+            
+            # Get all active focus points
+            focus_points = pb.read(collection_name='focus_point', filter='activated=true')
+            
+            if not focus_points:
+                wiseflow_logger.info('No active focus points found')
+                await asyncio.sleep(60)
+                continue
+            
+            wiseflow_logger.info(f'Found {len(focus_points)} active focus points')
             
             for focus in focus_points:
-                # Check if there's already a task running for this focus point
-                existing_tasks = legacy_task_manager.get_tasks_by_focus(focus["id"])
-                active_tasks = [t for t in existing_tasks if t.status in ["pending", "running"]]
+                # Check if this focus point is due for processing
+                per_hour = focus.get('per_hour', 24)
+                if per_hour <= 0:
+                    per_hour = 24
                 
-                # Also check the new task manager
-                new_active_tasks = task_manager.get_tasks_by_tag(focus["id"])
+                # Calculate the next run time
+                last_run = None
+                tasks = pb.read(collection_name='tasks', filter=f"focus_id='{focus['id']}'", sort='-created')
+                if tasks:
+                    last_task = tasks[0]
+                    last_run = datetime.fromisoformat(last_task.get('created', '2000-01-01T00:00:00'))
                 
-                if active_tasks or new_active_tasks:
-                    wiseflow_logger.info(f"Focus point {focus.get('focuspoint', '')} already has active tasks")
-                    continue
+                if last_run:
+                    next_run = last_run + timedelta(hours=24/per_hour)
+                    if datetime.now() < next_run:
+                        wiseflow_logger.debug(f"Focus point {focus.get('focuspoint', '')} not due yet. Next run at {next_run}")
+                        continue
                 
                 # Get sites for this focus point
-                sites = [_record for _record in sites_record if _record['id'] in focus.get('sites', [])]
+                sites = []
+                if focus.get('sites'):
+                    site_ids = focus['sites'].split(',')
+                    for site_id in site_ids:
+                        site = pb.read_one(collection_name='sites', id=site_id)
+                        if site:
+                            sites.append(site)
                 
-                # Create a new task
+                wiseflow_logger.info(f"Scheduling task for focus point: {focus.get('focuspoint', '')}")
+                
+                # Determine if auto-shutdown should be enabled for this task
+                auto_shutdown = focus.get('auto_shutdown', False)
+                
+                # Create a task ID
                 task_id = create_task_id()
-                focus_id = focus["id"]
-                auto_shutdown = focus.get("auto_shutdown", False)
                 
-                # Register the task with the new task manager
                 try:
-                    # Register the main data collection task
+                    # Register the task with the new task manager
                     main_task_id = task_manager.register_task(
-                        name=f"Focus: {focus.get('focuspoint', '')}",
+                        name=f"Process: {focus.get('focuspoint', '')}",
                         func=process_focus_task_wrapper,
                         focus,
                         sites,
@@ -384,8 +585,10 @@ async def schedule_task():
                     
                 except TaskDependencyError as e:
                     wiseflow_logger.error(f"Task dependency error for focus point {focus.get('focuspoint', '')}: {e}")
+                    track_error(e)
                 except Exception as e:
                     wiseflow_logger.error(f"Error registering task for focus point {focus.get('focuspoint', '')}: {e}")
+                    track_error(e)
                     
                     # Fall back to the legacy task manager
                     wiseflow_logger.info(f"Falling back to legacy task manager for focus point: {focus.get('focuspoint', '')}")
@@ -454,6 +657,7 @@ async def schedule_task():
             
         except Exception as e:
             wiseflow_logger.error(f"Error in task scheduling loop: {e}")
+            track_error(e)
             # Sleep for a shorter time before retrying
             await asyncio.sleep(60)
 
@@ -494,6 +698,7 @@ async def main():
         wiseflow_logger.info(f"Resource monitor started with CPU threshold: {resource_monitor.thresholds['cpu']}%, Memory threshold: {resource_monitor.thresholds['memory']}%")
         wiseflow_logger.info(f"Thread pool started with {thread_pool.min_workers}-{thread_pool.max_workers} workers")
         wiseflow_logger.info(f"Task manager started with dependency and scheduling support")
+        wiseflow_logger.info(f"Error tracking enabled with threshold: {MAX_ERROR_COUNT} errors in {ERROR_THRESHOLD_PERIOD} seconds")
                 
         # Start the auto-shutdown checker if enabled
         if AUTO_SHUTDOWN_ENABLED:
@@ -520,4 +725,3 @@ async def main():
         
 if __name__ == "__main__":
     asyncio.run(main())
-
