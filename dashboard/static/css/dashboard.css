@@ -263,3 +263,95 @@ body {
     animation: spin 1s linear infinite;
     display: inline-block;
 }
+
+/* Data Mining Dashboard Styles */
+.data-source-card {
+    border: 1px solid #dee2e6;
+    border-radius: 10px;
+    transition: all 0.3s;
+    cursor: pointer;
+}
+
+.data-source-card:hover {
+    border-color: #007bff;
+    background-color: rgba(0, 123, 255, 0.05);
+    transform: translateY(-5px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+}
+
+.data-source-icon {
+    font-size: 2.5rem;
+    color: #6c757d;
+}
+
+.data-source-card:hover .data-source-icon {
+    color: #007bff;
+}
+
+.task-row {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.task-row:hover {
+    background-color: rgba(0, 123, 255, 0.05);
+}
+
+.task-progress {
+    height: 8px;
+    margin-bottom: 5px;
+}
+
+#data-mining-tasks .badge {
+    font-weight: normal;
+    padding: 5px 8px;
+}
+
+#taskDetailsModal .card {
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+#taskDetailsModal .card-body {
+    padding: 10px;
+}
+
+#taskDetailsModal h3 {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #007bff;
+}
+
+#taskDetailsModal .progress {
+    height: 20px;
+    border-radius: 10px;
+}
+
+#taskDetailsModal .progress-bar {
+    border-radius: 10px;
+}
+
+#newDataMiningModal .modal-body {
+    padding: 30px;
+}
+
+.filter-badge {
+    background-color: #e9ecef;
+    color: #495057;
+    padding: 5px 10px;
+    border-radius: 20px;
+    margin-right: 5px;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+}
+
+.filter-badge .close {
+    margin-left: 5px;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.filter-badge:hover {
+    background-color: #dee2e6;
+}
