@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search Dashboard - Wiseflow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Wiseflow Dashboard</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/search">Search</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/plugins">Plugins</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/monitor">Monitor</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Main content area with tabs -->
+            <div class="col-12 p-0">
+                <ul class="nav nav-tabs" id="searchTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="listings-tab" data-bs-toggle="tab" data-bs-target="#listings" type="button" role="tab" aria-controls="listings" aria-selected="true">Listings</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="github-tab" data-bs-toggle="tab" data-bs-target="#github" type="button" role="tab" aria-controls="github" aria-selected="false">GitHub Search</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="arxiv-tab" data-bs-toggle="tab" data-bs-target="#arxiv" type="button" role="tab" aria-controls="arxiv" aria-selected="false">Arxiv Search</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="web-tab" data-bs-toggle="tab" data-bs-target="#web" type="button" role="tab" aria-controls="web" aria-selected="false">Web Search</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="youtube-tab" data-bs-toggle="tab" data-bs-target="#youtube" type="button" role="tab" aria-controls="youtube" aria-selected="false">YouTube Search</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="other-tab" data-bs-toggle="tab" data-bs-target="#other" type="button" role="tab" aria-controls="other" aria-selected="false">Other Searches</button>
+                    </li>
+                </ul>
+                
+                <div class="tab-content p-4" id="searchTabsContent">
+                    <!-- Listings Tab -->
+                    <div class="tab-pane fade show active" id="listings" role="tabpanel" aria-labelledby="listings-tab">
+                        <h2 class="mb-4">Active Data Minings</h2>
+                        <div class="card mb-4">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <span>All Active Data Mining Listings</span>
+                                <div>
+                                    <button class="btn btn-primary btn-sm" id="add-github-mining-btn" data-bs-toggle="tab" data-bs-target="#github">Add GitHub Mining</button>
+                                    <button class="btn btn-primary btn-sm" id="add-arxiv-mining-btn" data-bs-toggle="tab" data-bs-target="#arxiv">Add Arxiv Mining</button>
+                                    <button class="btn btn-primary btn-sm" id="add-web-mining-btn" data-bs-toggle="tab" data-bs-target="#web">Add Web Mining</button>
+                                    <button class="btn btn-primary btn-sm" id="add-youtube-mining-btn" data-bs-toggle="tab" data-bs-target="#youtube">Add YouTube Mining</button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Type</th>
+                                                <th>Status</th>
+                                                <th>Last Updated</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="mining-listings">
+                                            <tr>
+                                                <td>GitHub Trending Repositories</td>
+                                                <td>GitHub</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>2023-05-15 14:30</td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-outline-primary">View Findings</button>
+                                                    <button class="btn btn-sm btn-outline-warning">Edit</button>
+                                                    <button class="btn btn-sm btn-outline-secondary">Turn Off</button>
+                                                    <button class="btn btn-sm btn-outline-danger">Remove</button>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>AI Research Papers</td>
+                                                <td>Arxiv</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>2023-05-14 09:15</td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-outline-primary">View Findings</button>
+                                                    <button class="btn btn-sm btn-outline-warning">Edit</button>
+                                                    <button class="btn btn-sm btn-outline-secondary">Turn Off</button>
+                                                    <button class="btn btn-sm btn-outline-danger">Remove</button>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>Machine Learning News</td>
+                                                <td>Web</td>
+                                                <td><span class="badge bg-secondary">Inactive</span></td>
+                                                <td>2023-05-10 16:45</td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-outline-primary">View Findings</button>
+                                                    <button class="btn btn-sm btn-outline-warning">Edit</button>
+                                                    <button class="btn btn-sm btn-outline-success">Turn On</button>
+                                                    <button class="btn btn-sm btn-outline-danger">Remove</button>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>AI Tutorial Videos</td>
+                                                <td>YouTube</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>2023-05-12 11:20</td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-outline-primary">View Findings</button>
+                                                    <button class="btn btn-sm btn-outline-warning">Edit</button>
+                                                    <button class="btn btn-sm btn-outline-secondary">Turn Off</button>
+                                                    <button class="btn btn-sm btn-outline-danger">Remove</button>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- GitHub Search Tab -->
+                    <div class="tab-pane fade" id="github" role="tabpanel" aria-labelledby="github-tab">
+                        <h2 class="mb-4">GitHub Search</h2>
+                        <div class="card">
+                            <div class="card-header">
+                                Create GitHub Search Mining
+                            </div>
+                            <div class="card-body">
+                                <form id="github-search-form">
+                                    <div class="mb-3">
+                                        <label for="github-search-goal" class="form-label">Search Goal</label>
+                                        <input type="text" class="form-control" id="github-search-goal" placeholder="What are you looking to achieve?">
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="github-search-description" class="form-label">Detailed Description</label>
+                                        <textarea class="form-control" id="github-search-description" rows="5" placeholder="Example: 'Find advanced dependency injection implementations in TypeScript projects with comprehensive test coverage and documentation.'&#10;&#10;Key aspects to include:&#10;- Specific patterns or approaches you're looking for&#10;- Desired complexity level"></textarea>
+                                    </div>
+                                    
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <label for="github-search-strategy" class="form-label">Search Strategy</label>
+                                            <select class="form-select" id="github-search-strategy">
+                                                <option value="implementation">Implementation Search</option>
+                                                <option value="repository">Repository Search</option>
+                                                <option value="code">Code Search</option>
+                                                <option value="issue">Issue Search</option>
+                                                <option value="pr">PR Search</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="github-search-priority" class="form-label">Search Priority</label>
+                                            <select class="form-select" id="github-search-priority">
+                                                <option value="relevance">Relevance</option>
+                                                <option value="stars">Stars</option>
+                                                <option value="forks">Forks</option>
+                                                <option value="updated">Recently Updated</option>
+                                                <option value="help-wanted">Help Wanted</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-4">
+                                        <label class="form-label">Context Files</label>
+                                        <div class="context-files-container" id="github-context-files-container">
+                                            <input type="file" id="github-context-file-input" multiple style="display: none;">
+                                            <div class="text-center">
+                                                <i class="bi bi-upload upload-icon mb-3"></i>
+                                                <p>Drag & drop context files, or click to select</p>
+                                                <button type="button" class="btn btn-outline-secondary" id="github-select-files-btn">Select Files</button>
+                                            </div>
+                                        </div>
+                                        <div id="github-selected-files-container" style="display: none;" class="mt-3">
+                                            <h6>Selected Files:</h6>
+                                            <ul class="list-group" id="github-selected-files-list"></ul>
+                                        </div>
+                                        <small class="text-muted">Supported: js, jsx, ts, tsx, py, txt, md (Max 5MB)</small>
+                                    </div>
+                                    
+                                    <div class="text-center">
+                                        <button type="button" class="btn btn-primary" id="start-github-search-btn">
+                                            <i class="bi bi-play-fill"></i> Start Continuous Search
+                                        </button>
+                                    </div>
+                                    
+                                    <div id="github-search-status" class="mt-3 text-center"></div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Arxiv Search Tab -->
+                    <div class="tab-pane fade" id="arxiv" role="tabpanel" aria-labelledby="arxiv-tab">
+                        <h2 class="mb-4">Arxiv Search</h2>
+                        <div class="card">
+                            <div class="card-header">
+                                Create Arxiv Search Mining
+                            </div>
+                            <div class="card-body">
+                                <form id="arxiv-search-form">
+                                    <div class="mb-3">
+                                        <label for="arxiv-search-goal" class="form-label">Search Goal</label>
+                                        <input type="text" class="form-control" id="arxiv-search-goal" placeholder="What research are you looking for?">
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="arxiv-search-description" class="form-label">Detailed Description</label>
+                                        <textarea class="form-control" id="arxiv-search-description" rows="5" placeholder="Example: 'Find recent papers on transformer architectures for computer vision tasks with state-of-the-art results.'&#10;&#10;Key aspects to include:&#10;- Specific research areas&#10;- Time period of interest&#10;- Desired metrics or benchmarks"></textarea>
+                                    </div>
+                                    
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <label for="arxiv-search-category" class="form-label">Category</label>
+                                            <select class="form-select" id="arxiv-search-category">
+                                                <option value="cs.AI">Computer Science - Artificial Intelligence</option>
+                                                <option value="cs.CL">Computer Science - Computation and Language</option>
+                                                <option value="cs.CV">Computer Science - Computer Vision</option>
+                                                <option value="cs.LG">Computer Science - Machine Learning</option>
+                                                <option value="stat.ML">Statistics - Machine Learning</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="arxiv-search-sort" class="form-label">Sort By</label>
+                                            <select class="form-select" id="arxiv-search-sort">
+                                                <option value="relevance">Relevance</option>
+                                                <option value="lastUpdated">Last Updated</option>
+                                                <option value="submitted">Submission Date</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-4">
+                                        <label class="form-label">Context Files</label>
+                                        <div class="context-files-container" id="arxiv-context-files-container">
+                                            <input type="file" id="arxiv-context-file-input" multiple style="display: none;">
+                                            <div class="text-center">
+                                                <i class="bi bi-upload upload-icon mb-3"></i>
+                                                <p>Drag & drop context files, or click to select</p>
+                                                <button type="button" class="btn btn-outline-secondary" id="arxiv-select-files-btn">Select Files</button>
+                                            </div>
+                                        </div>
+                                        <div id="arxiv-selected-files-container" style="display: none;" class="mt-3">
+                                            <h6>Selected Files:</h6>
+                                            <ul class="list-group" id="arxiv-selected-files-list"></ul>
+                                        </div>
+                                        <small class="text-muted">Supported: pdf, txt, md (Max 5MB)</small>
+                                    </div>
+                                    
+                                    <div class="text-center">
+                                        <button type="button" class="btn btn-primary" id="start-arxiv-search-btn">
+                                            <i class="bi bi-play-fill"></i> Start Continuous Search
+                                        </button>
+                                    </div>
+                                    
+                                    <div id="arxiv-search-status" class="mt-3 text-center"></div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Web Search Tab -->
+                    <div class="tab-pane fade" id="web" role="tabpanel" aria-labelledby="web-tab">
+                        <h2 class="mb-4">Web Search</h2>
+                        <div class="card">
+                            <div class="card-header">
+                                Create Web Search Mining
+                            </div>
+                            <div class="card-body">
+                                <form id="web-search-form">
+                                    <div class="mb-3">
+                                        <label for="web-search-goal" class="form-label">Search Goal</label>
+                                        <input type="text" class="form-control" id="web-search-goal" placeholder="What information are you looking for?">
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="web-search-description" class="form-label">Detailed Description</label>
+                                        <textarea class="form-control" id="web-search-description" rows="5" placeholder="Example: 'Find recent articles and blog posts about advancements in quantum computing and its applications in cryptography.'&#10;&#10;Key aspects to include:&#10;- Specific topics or subtopics&#10;- Time period of interest&#10;- Preferred sources or websites"></textarea>
+                                    </div>
+                                    
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <label for="web-search-type" class="form-label">Search Type</label>
+                                            <select class="form-select" id="web-search-type">
+                                                <option value="general">General Web Search</option>
+                                                <option value="news">News Articles</option>
+                                                <option value="blogs">Blog Posts</option>
+                                                <option value="academic">Academic Sources</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="web-search-timeframe" class="form-label">Time Frame</label>
+                                            <select class="form-select" id="web-search-timeframe">
+                                                <option value="day">Past 24 Hours</option>
+                                                <option value="week">Past Week</option>
+                                                <option value="month">Past Month</option>
+                                                <option value="year">Past Year</option>
+                                                <option value="any">Any Time</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-4">
+                                        <label class="form-label">Context Files</label>
+                                        <div class="context-files-container" id="web-context-files-container">
+                                            <input type="file" id="web-context-file-input" multiple style="display: none;">
+                                            <div class="text-center">
+                                                <i class="bi bi-upload upload-icon mb-3"></i>
+                                                <p>Drag & drop context files, or click to select</p>
+                                                <button type="button" class="btn btn-outline-secondary" id="web-select-files-btn">Select Files</button>
+                                            </div>
+                                        </div>
+                                        <div id="web-selected-files-container" style="display: none;" class="mt-3">
+                                            <h6>Selected Files:</h6>
+                                            <ul class="list-group" id="web-selected-files-list"></ul>
+                                        </div>
+                                        <small class="text-muted">Supported: txt, md, html (Max 5MB)</small>
+                                    </div>
+                                    
+                                    <div class="text-center">
+                                        <button type="button" class="btn btn-primary" id="start-web-search-btn">
+                                            <i class="bi bi-play-fill"></i> Start Continuous Search
+                                        </button>
+                                    </div>
+                                    
+                                    <div id="web-search-status" class="mt-3 text-center"></div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- YouTube Search Tab -->
+                    <div class="tab-pane fade" id="youtube" role="tabpanel" aria-labelledby="youtube-tab">
+                        <h2 class="mb-4">YouTube Search</h2>
+                        <div class="card">
+                            <div class="card-header">
+                                Create YouTube Search Mining
+                            </div>
+                            <div class="card-body">
+                                <form id="youtube-search-form">
+                                    <div class="mb-3">
+                                        <label for="youtube-search-goal" class="form-label">Search Goal</label>
+                                        <input type="text" class="form-control" id="youtube-search-goal" placeholder="What videos are you looking for?">
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="youtube-search-description" class="form-label">Detailed Description</label>
+                                        <textarea class="form-control" id="youtube-search-description" rows="5" placeholder="Example: 'Find tutorial videos on advanced React.js concepts like hooks, context API, and performance optimization techniques.'&#10;&#10;Key aspects to include:&#10;- Specific topics or subtopics&#10;- Preferred video length&#10;- Desired content type (tutorials, reviews, etc.)"></textarea>
+                                    </div>
+                                    
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <label for="youtube-search-type" class="form-label">Content Type</label>
+                                            <select class="form-select" id="youtube-search-type">
+                                                <option value="any">Any Type</option>
+                                                <option value="tutorial">Tutorials</option>
+                                                <option value="review">Reviews</option>
+                                                <option value="lecture">Lectures</option>
+                                                <option value="documentary">Documentaries</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="youtube-search-duration" class="form-label">Video Duration</label>
+                                            <select class="form-select" id="youtube-search-duration">
+                                                <option value="any">Any Length</option>
+                                                <option value="short">Short (< 4 minutes)</option>
+                                                <option value="medium">Medium (4-20 minutes)</option>
+                                                <option value="long">Long (> 20 minutes)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-4">
+                                        <label class="form-label">Context Files</label>
+                                        <div class="context-files-container" id="youtube-context-files-container">
+                                            <input type="file" id="youtube-context-file-input" multiple style="display: none;">
+                                            <div class="text-center">
+                                                <i class="bi bi-upload upload-icon mb-3"></i>
+                                                <p>Drag & drop context files, or click to select</p>
+                                                <button type="button" class="btn btn-outline-secondary" id="youtube-select-files-btn">Select Files</button>
+                                            </div>
+                                        </div>
+                                        <div id="youtube-selected-files-container" style="display: none;" class="mt-3">
+                                            <h6>Selected Files:</h6>
+                                            <ul class="list-group" id="youtube-selected-files-list"></ul>
+                                        </div>
+                                        <small class="text-muted">Supported: txt, md (Max 5MB)</small>
+                                    </div>
+                                    
+                                    <div class="text-center">
+                                        <button type="button" class="btn btn-primary" id="start-youtube-search-btn">
+                                            <i class="bi bi-play-fill"></i> Start Continuous Search
+                                        </button>
+                                    </div>
+                                    
+                                    <div id="youtube-search-status" class="mt-3 text-center"></div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Other Searches Tab -->
+                    <div class="tab-pane fade" id="other" role="tabpanel" aria-labelledby="other-tab">
+                        <h2 class="mb-4">Other Search Types</h2>
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card h-100">
+                                            <div class="card-body text-center">
+                                                <i class="bi bi-database-fill fs-1 mb-3 text-primary"></i>
+                                                <h5 class="card-title">Dataset Search</h5>
+                                                <p class="card-text">Search for datasets across various repositories and sources.</p>
+                                                <button class="btn btn-outline-primary mt-2" disabled>Coming Soon</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card h-100">
+                                            <div class="card-body text-center">
+                                                <i class="bi bi-book-fill fs-1 mb-3 text-primary"></i>
+                                                <h5 class="card-title">Academic Papers</h5>
+                                                <p class="card-text">Search for academic papers beyond Arxiv.</p>
+                                                <button class="btn btn-outline-primary mt-2" disabled>Coming Soon</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card h-100">
+                                            <div class="card-body text-center">
+                                                <i class="bi bi-chat-square-text-fill fs-1 mb-3 text-primary"></i>
+                                                <h5 class="card-title">Forum Discussions</h5>
+                                                <p class="card-text">Search for discussions on Stack Overflow, Reddit, and other forums.</p>
+                                                <button class="btn btn-outline-primary mt-2" disabled>Coming Soon</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card h-100">
+                                            <div class="card-body text-center">
+                                                <i class="bi bi-newspaper fs-1 mb-3 text-primary"></i>
+                                                <h5 class="card-title">News Articles</h5>
+                                                <p class="card-text">Search for news articles from various sources.</p>
+                                                <button class="btn btn-outline-primary mt-2" disabled>Coming Soon</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/search_dashboard.js"></script>
+</body>
+</html>
+

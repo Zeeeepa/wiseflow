@@ -10,6 +10,7 @@ from dashboard.visualization.trends import visualize_trend, detect_trend_pattern
 from dashboard.notification import NotificationManager, configure_notifications
 from dashboard.plugins import dashboard_plugin_manager
 from dashboard.routes import router as dashboard_router
+from dashboard.search_api import router as search_api_router
 from core.utils.pb_api import PbTalker
 import logging
 import os
@@ -99,6 +100,9 @@ app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__
 
 # Include dashboard router
 app.include_router(dashboard_router, prefix="/dashboard")
+
+# Include search API router
+app.include_router(search_api_router, prefix="/search")
 
 # Dashboard endpoints
 @app.get("/")
