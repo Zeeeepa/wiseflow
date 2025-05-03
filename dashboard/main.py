@@ -12,6 +12,7 @@ from dashboard.plugins import dashboard_plugin_manager
 from dashboard.routes import router as dashboard_router
 from dashboard.search_api import router as search_api_router
 from dashboard.data_mining_api import router as data_mining_api_router
+from core.plugins.connectors.research_connector import ResearchConnector
 from core.utils.pb_api import PbTalker
 import logging
 import os
@@ -69,6 +70,24 @@ class ConnectorRequest(BaseModel):
     connector_type: str
     query: str
     config: Optional[Dict[str, Any]] = None
+
+
+class ResearchRequest(BaseModel):
+    topic: str
+    research_mode: Optional[str] = "graph"
+    search_api: Optional[str] = "tavily"
+    max_search_depth: Optional[int] = 2
+    number_of_queries: Optional[int] = 2
+    visualization_enabled: Optional[bool] = True
+
+
+class ContinuousResearchRequest(BaseModel):
+    previous_results: Dict[str, Any]
+    new_topic: str
+    research_mode: Optional[str] = None
+    search_api: Optional[str] = None
+    max_search_depth: Optional[int] = None
+    number_of_queries: Optional[int] = None
 
 
 app = FastAPI(
@@ -435,3 +454,18 @@ def configure_notification_settings(request: NotificationSettingsRequest):
     settings = configure_notifications(request.settings)
     
     return settings
+
+
+# Research endpoints
+@app.post("/research", response_model=Dict[str, Any])
+def perform_research(request: ResearchRequest):
+    """Perform research using the specified research mode."""
+    research_connector = ResearchConnector()
+    return research_connector.perform_research(request.topic, request.research_mode, request.search_api, request.max_search_depth, request.number_of_queries, request.visualization_enabled)
+
+
+@app.post("/continuous-research", response_model=Dict[str, Any])
+def perform_continuous_research(request: ContinuousResearchRequest):
+    """Perform continuous research using the specified research mode."""
+    research_connector = ResearchConnector()
+    return research_connector.perform_continuous_research(request.previous_results, request.new_topic, request.research_mode, request.search_api, request.max_search_depth, request.number_of_queries)
