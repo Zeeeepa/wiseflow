@@ -48,6 +48,12 @@ async def data_mining_dashboard(request: Request):
     """Serve the data mining dashboard page."""
     return templates.TemplateResponse(
         "data_mining_dashboard.html", 
+      
+@router.get("/database", response_class=HTMLResponse)
+async def database_management(request: Request):
+    """Serve the database management interface."""
+    return templates.TemplateResponse(
+        "database_management.html", 
         {"request": request}
     )
 
