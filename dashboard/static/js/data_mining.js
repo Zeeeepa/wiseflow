@@ -117,7 +117,7 @@ function addTaskButtonEventListeners() {
     document.querySelectorAll('.view-findings-btn').forEach(button => {
         button.addEventListener('click', function() {
             const taskId = this.getAttribute('data-task-id');
-            viewTaskFindings(taskId);
+            showExpandedFindings(taskId);
         });
     });
     
@@ -750,4 +750,3 @@ function saveTaskInterconnection() {
         alert('Error interconnecting tasks');
     });
 }
-
