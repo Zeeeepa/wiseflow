@@ -1,357 +1,192 @@
-# AI Chief Intelligence Officer (Wiseflow)
+# WiseFlow: LLM-Powered Information Extraction and Analysis
 
-**[简体中文](README.md) | [日本語](README_JP.md) | [한국어](README_KR.md)**
+**[中文](README.md) | English | [日本語](README_JP.md) | [한국어](README_KR.md)**
 
-🚀 **Use large models to mine the information you are truly interested in from massive information and various sources every day!**
+🚀 **Use LLMs to dig out what you care about from massive amounts of information and a variety of sources daily!**
 
-What we lack is not information, but the ability to filter out noise from massive information, thereby revealing valuable information.
+We don't lack information, but rather the ability to filter noise from vast amounts of data, allowing valuable information to surface.
 
-🌱 See how AI Intelligence Officer helps you save time, filter irrelevant information, and organize key points of interest! 🌱
+🌱 See how WiseFlow helps you save time, filter irrelevant information, and organize your focus points! 🌱
 
-https://github.com/user-attachments/assets/fc328977-2366-4271-9909-a89d9e34a07b
+## 🔍 Overview
 
-## 🔥🔥🔥 The online trial service of AI Chief Intelligence Officer is now open for public testing
+WiseFlow is an LLM-powered system designed to extract, analyze, and organize information from various sources based on user-defined focus points. It helps users filter through the noise of the internet to find the specific information they care about.
 
-**No deployment or setup is required, and there is no need to apply for various keys. Just register to use it!**
+## 🏗️ Architecture
 
-Online trial address: https://www.aiqingbaoguan.com/
+WiseFlow consists of several interconnected modules:
 
-During the public testing period, registration will give you 10 free credits (each focus point consumes 1 credit per day, regardless of the number of information sources).
+1. **Core Module**: The main processing engine that handles data collection, analysis, and storage.
+2. **API Server**: A FastAPI server that provides RESTful endpoints for integration with other systems.
+3. **Dashboard**: A web interface for managing focus points, viewing extracted information, and configuring the system.
+4. **Connectors**: Modules for connecting to various data sources (web, academic, GitHub, YouTube, etc.).
+5. **Plugins**: Extensible components for custom data processing and analysis.
 
-*The online service is built on Alibaba Cloud, and access to websites outside mainland China is restricted. Additionally, the online service currently does not support WeChat official accounts. If your sources primarily consist of these two types, we recommend using the open-source version to deploy yourself.*
+## 🧩 Key Components
 
-## 🌟 V3.9-patch3 Version Released
+### Core Components
 
-For more information about this upgrade, please see [CHANGELOG.md](./CHANGELOG.md)
+- **Crawlers**: Web crawling and data collection from various sources
+- **Analyzers**: Text and multimodal content analysis
+- **Knowledge Graph**: Entity extraction, relationship mapping, and knowledge representation
+- **LLM Integration**: Advanced prompting strategies and specialized processing
+- **Task Management**: Concurrent task execution and resource monitoring
 
-Starting from this version, we have updated the version number naming rule: V0.3.9 -> V3.9, V0.3.8 -> V3.8, V0.3.7 -> V3.7, V0.3.6 -> V3.6, V0.3.5 -> V3.5 ...
+### API Server
 
-The current online service core is based on the V3.9-patch3 version.
+The API server provides endpoints for:
+- Content processing and analysis
+- Batch processing of multiple items
+- Webhook integration for event notifications
+- Integration with external systems
 
-**Users of V0.3.8 and earlier versions should preferably delete Crawl4ai in the python environment after upgrading (`pip uninstall crawl4ai`)**
+### Dashboard
 
-**Users upgrading from V0.3.7 or earlier versions should first execute `./pocketbase migrate` in the `pb` folder.**
+The dashboard offers:
+- Focus point management
+- Data visualization
+- Search functionality
+- Notification system
+- Plugin management
 
-Thanks to the following community members for their PRs in versions V0.3.5~V0.3.9:
+## 🔄 Data Flow
 
-  - @ourines contributed the install_pocketbase.sh automated installation script
-  - @ibaoger contributed the PocketBase automated installation script for Windows
-  - @tusik contributed the asynchronous llm wrapper and discovered the AsyncWebCrawler lifecycle issue
-  - @c469591 contributed the Windows version startup script
-  - @braumye contributed the Docker deployment solution
-  - @YikaJ provided optimizations for install_pocketbase.sh
-  - @xxxiaogangg contributed the export script reference
+1. **Data Collection**: Information is collected from configured sources (websites, RSS feeds, etc.)
+2. **Processing**: Content is processed using specialized prompting strategies
+3. **Analysis**: Entities, relationships, and insights are extracted
+4. **Storage**: Processed information is stored in the database
+5. **Retrieval**: Users can access and visualize the extracted information
 
+## 🛠️ Installation and Usage
 
-## 🧐 'Deep Search' VS 'Wide Search'
+### Prerequisites
 
-I position Wiseflow's product as a "wide search," in contrast to the currently popular "deep search."
+- Python 3.10+
+- PocketBase (for database)
+- Access to an LLM service (OpenAI, SiliconFlow, etc.)
 
-Specifically, "deep search" is oriented towards a specific question, where the LLM autonomously and dynamically plans the search path, continuously explores different pages, and collects enough information to give an answer or produce a report. However, sometimes we don't have a specific question and don't need in-depth exploration. We only need broad information collection (such as industry intelligence collection, background information collection on a subject, customer information collection, etc.). In these cases, breadth is clearly more meaningful. Although "deep search" can also accomplish this task, it's like using a cannon to kill a mosquito – inefficient and costly. Wiseflow is a powerful tool specifically designed for this "wide search" scenario.
+### Installation Steps
 
-## ✋ What makes Wiseflow different from other AI-powered crawlers?
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/TeamWiseFlow/wiseflow.git
+   ```
 
-The biggest difference is in the scraper stage, where we propose a pipeline different from existing crawlers: the "crawl-and-check integration" strategy. Specifically, we abandon the traditional filter-extractor process (of course, this process can also be integrated with LLM, as in Crawl4ai), and we no longer treat a single page as the minimum processing unit. Instead, building upon Crawl4ai's html2markdown, we further divide the page into blocks and, based on a series of characteristic algorithms, classify them into "content blocks" and "outbound link blocks." Different LLM extraction strategies are used based on the classification (each block is still analyzed by the LLM only once, but the analysis strategies differ to avoid token waste). This approach can handle list pages, content pages, and mixed pages.
+2. Set up PocketBase:
+   ```bash
+   chmod +x install_pocketbase
+   ./install_pocketbase
+   ```
 
-  - For "content blocks," summaries are extracted directly according to the focus points, avoiding information scattering and even completing tasks like translation in the process.
-  - For "outbound link blocks," information such as page layout is considered to determine which links are worth further exploration and which can be ignored. Therefore, users do not need to manually configure depth or maximum crawl quantity.
+3. Configure environment variables in `core/.env`:
+   ```
+   LLM_API_KEY=Your_API_KEY
+   LLM_API_BASE="https://api.siliconflow.cn/v1"
+   PRIMARY_MODEL="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
+   SECONDARY_MODEL="Qwen/Qwen2.5-14B-Instruct"
+   VL_MODEL="deepseek-ai/deepseek-vl2"
+   PROJECT_DIR="work_dir"
+   PB_API_AUTH="test@example.com|1234567890"
+   ```
 
-This approach is actually very similar to AI Search.
+4. Install dependencies:
+   ```bash
+   cd wiseflow/core
+   pip install -r requirements.txt
+   python -m playwright install --with-deps chromium
+   ```
 
-In addition, we have also written specialized parsing modules for specific types of pages, such as WeChat official account articles (which surprisingly have nine formats...). For this type of content, Wiseflow currently provides the best parsing results among similar products.
+5. Run the application:
+   ```bash
+   chmod +x run.sh
+   ./run.sh
+   ```
 
-## ✋ What's Next (4.x plan)?
+### Docker Deployment
 
-### Enhancements to the Crawler Fetching Stage
+For Docker deployment:
 
-The 3.x architecture uses Crawl4ai entirely for the crawler fetching part. In 4.x, we will continue to use this approach for regular page acquisition, but we will gradually add fetching solutions for social media platforms.
+1. Copy the environment file:
+   ```bash
+   cp env_docker .env
+   ```
 
-### Insight Module
+2. Edit the `.env` file with your configuration
 
-The truly valuable information may not be the "information that can be crawled," but the "hidden information" beneath it. The ability to intelligently correlate crawled information and analyze and extract the "hidden information" beneath it is what the 4.x Insight module will focus on.
+3. Start the services:
+   ```bash
+   docker compose up -d
+   ```
 
+## 🔌 Integration
 
-## 📥 Installation and Usage
+WiseFlow can be integrated with other systems in several ways:
 
-### 1. Clone the Code Repository
+1. **API Integration**: Use the RESTful API endpoints provided by the API server
+2. **Webhook Integration**: Configure webhooks to receive notifications on events
+3. **Direct Database Access**: Access the PocketBase database directly using SDKs
+4. **Plugin Development**: Create custom plugins for specialized processing
 
-🌹 Starring and forking are good habits 🌹
+## 🧪 Development
 
-**windows users please download git bash tool first** [link](https://git-scm.com/downloads/win)
-
-```bash
-git clone https://github.com/TeamWiseFlow/wiseflow.git
-```
-
-### 2. Execute the install_pocketbase script in the root directory
-
-linux/macos users please execute 
-
-```bash
-chmod +x install_pocketbase
-./install_pocketbase
-```
-
-**windows users please execute [install_pocketbase.ps1](./install_pocketbase.ps1) script**
-
-Wiseflow 3.x uses pocketbase as its database. You can also manually download the pocketbase client (remember to download version 0.23.4 and place it in the [pb](./pb) directory) and manually create the superuser (remember to save it in the .env file).
-
-For details, please refer to [pb/README.md](/pb/README.md)
-
-### 3. Continue Configuring the core/.env File
-
-🌟 **This is different from previous versions** - starting from V0.3.5, the .env file needs to be placed in the [core](./core) folder.
-
-#### 3.1 Large Language Model Configuration
-
-Wiseflow is a LLM native application, so please ensure you provide stable LLM service for the program.
-
-🌟 **Wiseflow does not restrict the source of model services - as long as the service is compatible with the openAI SDK, including locally deployed services like ollama, Xinference, etc.**
-
-#### Recommendation 1: Use MaaS Service Provided by Siliconflow
-
-Siliconflow provides online MaaS services for most mainstream open-source models. With its accumulated acceleration inference technology, its service has great advantages in both speed and price. When using siliconflow's service, the .env configuration can refer to the following:
-
-```
-LLM_API_KEY=Your_API_KEY
-LLM_API_BASE="https://api.siliconflow.cn/v1"
-PRIMARY_MODEL="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
-SECONDARY_MODEL="Qwen/Qwen2.5-14B-Instruct"
-VL_MODEL="deepseek-ai/deepseek-vl2"
-PROJECT_DIR="work_dir"
-```
-      
-😄 If you'd like, you can use my [siliconflow referral link](https://cloud.siliconflow.cn/i/WNLYbBpi), which will help me earn more token rewards 🌹
-
-#### Recommendation 2: Use AiHubMix Proxy for Closed-Source Commercial Models like OpenAI, Claude, Gemini
-
-If your information sources are mostly non-Chinese pages and you don't require the extracted info to be in Chinese, then it's recommended to use closed-source commercial models like OpenAI, Claude, Gemini. You can try the third-party proxy **AiHubMix**, seamlessly access a wide range of leading AI models like OpenAI, Claude, Google, Llama, and more with just one API.
-
-When using AiHubMix models, the .env configuration can refer to the following:
-
-```
-LLM_API_KEY=Your_API_KEY
-LLM_API_BASE="https://aihubmix.com/v1" # refer to https://doc.aihubmix.com/
-PRIMARY_MODEL="gpt-4o"
-SECONDARY_MODEL="gpt-4o-mini"
-VL_MODEL="gpt-4o"
-PROJECT_DIR="work_dir"
-```
-
-😄 Welcome to register using the [AiHubMix referral link](https://aihubmix.com?aff=Gp54) 🌹
-
-#### Use Local Large Language Model Service
-
-Taking Xinference as an example, the .env configuration can refer to the following:
+### Code Structure
 
 ```
-# LLM_API_KEY='' no need for local service, please comment out or delete
-LLM_API_BASE='http://127.0.0.1:9997' # 'http://127.0.0.1:11434/v1' for ollama
-PRIMARY_MODEL=launched_model_id
-VL_MODEL=launched_model_id
-PROJECT_DIR="work_dir"
+wiseflow/
+├── api_server.py         # FastAPI server for API endpoints
+├── core/                 # Core functionality
+│   ├── agents/           # Agent-based processing
+│   ├── analysis/         # Data analysis modules
+│   ├── connectors/       # Data source connectors
+│   ├── crawl4ai/         # Web crawling functionality
+│   ├── export/           # Data export utilities
+│   ├── knowledge/        # Knowledge graph implementation
+│   ├── llms/             # LLM integration
+│   ├── plugins/          # Plugin system
+│   ├── references/       # Reference management
+│   ├── scrapers/         # Web scraping utilities
+│   ├── task/             # Task management
+│   └── utils/            # Utility functions
+├── dashboard/            # Web dashboard
+│   ├── plugins/          # Dashboard plugins
+│   ├── visualization/    # Data visualization
+│   └── main.py           # Dashboard entry point
+└── pb/                   # PocketBase database
 ```
 
-#### 3.2 Pocketbase Account and Password Configuration
+### Adding New Features
 
-```
-PB_API_AUTH="test@example.com|1234567890" 
-```
+1. **New Connectors**: Add new data source connectors in `core/connectors/`
+2. **New Analyzers**: Implement new analysis modules in `core/analysis/`
+3. **New Plugins**: Create custom plugins in `core/plugins/`
+4. **New Visualizations**: Add new visualization components in `dashboard/visualization/`
 
-This is where you set the superuser username and password for the pocketbase database, remember to separate them with | (if the install_pocketbase.sh script executed successfully, this should already exist)
+## 📄 License
 
-
-#### 3.3 Zhipu (bigmodel) Platform Key Configuration (for Search Engine Services)
-
-🚨 **Note: The Zhipu platform will charge for the web_search_pro interface starting from March 14, 2025. Please ensure your account balance when using the search function.**
-[Zhipu Platform Announcement](https://bigmodel.cn/dev/api/search-tool/web-search-pro)
-
-```
-ZHIPU_API_KEY=Your_API_KEY
-```
-
-(Application here: https://bigmodel.cn/ ~~currently free~~ 0.03 CNY/query, please ensure your account balance)
-
-#### 3.4 Other Optional Configurations
-
-The following are all optional configurations:
-- #VERBOSE="true" 
-
-  Whether to enable observation mode. When enabled, debug information will be recorded in the logger file (by default only output to console);
-
-- #PB_API_BASE="" 
-
-  Only needs to be configured if your pocketbase is not running on the default IP or port. Under default circumstances, you can ignore this.
-
-- #LLM_CONCURRENT_NUMBER=8 
-
- Used to control the number of concurrent LLM requests. Default is 1 if not set (before enabling, please ensure your LLM provider supports the configured concurrency. Use local large models with caution unless you are confident in your hardware capabilities)
-
-### 4. Running the Program
-
-✋ The V0.3.5 version architecture and dependencies are significantly different from previous versions. Please make sure to re-pull the code, delete (or rebuild) pb_data
-
-It is recommended to use conda to build a virtual environment (of course you can skip this step, or use other Python virtual environment solutions)
-
-```bash
-conda create -n wiseflow python=3.12
-conda activate wiseflow
-```
-
-then
-
-```bash
-cd wiseflow
-cd core
-pip install -r requirements.txt
-python -m playwright install --with-deps chromium
-```
-
-Afterwards, MacOS&Linux users execute
-
-```bash
-chmod +x run.sh
-./run.sh
-```
-
-Windows users execute
-
-```bash
-python windows_run.py
-```
-
-- This script will automatically determine if pocketbase is already running, and if not, it will automatically start it. However, please note that when you terminate the process with ctrl+c or ctrl+z, the pocketbase process will not be terminated until you close the terminal.
-
-- run.sh will first execute a crawling task for all sources that have been activated (set to true), and then execute periodically at the set frequency in hours.
-
-### 5. Focus Points and Source Addition
-    
-After starting the program, open the pocketbase Admin dashboard UI (http://127.0.0.1:8090/_/)
-
-#### 5.1 Opening the Sites Form
-
-This form allows you to configure sources, noting that sources must be selected in the subsequent focus_point form.
-
-Sites field explanations:
-- url, the URL of the source, the source does not need to provide specific article pages, just the article list pages.
-- type, the type, either web or rss.
-    
-#### 5.2 Opening the Focus Point Form
-
-This form allows you to specify your focus points, and LLM will refine, filter, and categorize information based on this.
-    
-Field explanations:
-- focuspoint, focus point description (required), such as "Christmas holiday discount information" or "bid announcement"
-- explanation, detailed explanation or specific convention of the focus point, such as "xx series products" or "published after January 1, 2025, and with an amount over 10 million" etc.
-- activated, whether to activate. If closed, this focus point will be ignored, and can be reopened after closing.
-- per_hour, crawl frequency, in hours, integer type (1-24 range, we recommend not to exceed once a day, i.e., set to 24)
-- search_engine, whether to enable the search engine for each crawl
-- sites, select the corresponding source
-
-**Note: After version V0.3.8, adjustments to configurations do not require restarting the program, and will automatically take effect at the next execution.**
-
-## 🐳 Docker Deployment
-
-If you want to deploy Wiseflow using Docker, we provide complete containerization support.
-
-### 1. Prerequisites
-
-Make sure Docker is installed on your system.
-
-### 2. Configure Environment Variables
-
-Copy the `env_docker` file as `.env` in the root directory:
-
-```bash
-cp env_docker .env
-```
-
-### 3. Modify the `.env` File According to the《[Installation and Usage](#-installation-and-usage)》Section
-
-The following environment variables must be modified as needed:
-
-```bash
-LLM_API_KEY=""
-LLM_API_BASE="https://api.siliconflow.cn/v1"
-PB_SUPERUSER_EMAIL="test@example.com"
-PB_SUPERUSER_PASSWORD="1234567890" #no '&' in the password and at least 10 characters
-```
-
-### 4. Start the Service
-
-Execute in the project root directory:
-
-```bash
-docker compose up -d
-```
-
-After the service starts:
-
-- PocketBase Admin Interface: http://localhost:8090/_/
-- Wiseflow service will automatically run and connect to PocketBase
-
-### 5. Stop the Service
-
-```bash
-docker compose down
-```
-
-### 6. Important Notes
-
-- The `./pb/pb_data` directory is used to store PocketBase related files
-- The `./docker/pip_cache` directory is used to store Python dependency package cache to avoid repeated downloads
-- The `./core/work_dir` directory is used to store Wiseflow runtime logs, you can modify `PROJECT_DIR` in the `.env` file
-
-## 📚 How to Use the Data Crawled by wiseflow in Your Own Program
-
-1. Refer to the [dashboard](dashboard) part of the source code for secondary development.
-
-Note that the core part of wiseflow does not require a dashboard, and the current product does not integrate a dashboard. If you need a dashboard, please download [V0.2.1 version](https://github.com/TeamWiseFlow/wiseflow/releases/tag/V0.2.1)
-
-2. Directly obtain data from Pocketbase
-
-All crawled data by wiseflow will be instantly stored in pocketbase, so you can directly operate the pocketbase database to obtain data.
-
-PocketBase, as a popular lightweight database, currently has SDKs for Go/Javascript/Python and other languages.
-   - Go : https://pocketbase.io/docs/go-overview/
-   - Javascript : https://pocketbase.io/docs/js-overview/
-   - python : https://github.com/vaphes/pocketbase
-
-3.  The online service will also launch a sync API soon, supporting the synchronization of online crawling results to the local, which can be used to build a "dynamic knowledge base", etc. Please stay tuned:
-
-   - Online experience address: https://www.aiqingbaoguan.com/
-   - Online service API use case: https://github.com/TeamWiseFlow/wiseflow_plus
-
-
-## 🛡️ License
-
-This project is open-source under the [Apache2.0](LICENSE) license.
-
-For cooperation, please contact **Email: zm.zhao@foxmail.com**
-
-- Commercial customers, please contact us for registration. The product promises to be forever free.
-
+This project is licensed under the [Apache 2.0 License](LICENSE).
 
 ## 📬 Contact
 
-If you have any questions or suggestions, please feel free to leave a message via [issue](https://github.com/TeamWiseFlow/wiseflow/issues).
+For any questions or suggestions, please open an [issue](https://github.com/TeamWiseFlow/wiseflow/issues).
 
+## 🤝 Acknowledgements
 
-## 🤝 This Project is Based on the Following Excellent Open-Source Projects:
+This project is based on the following excellent open-source projects:
 
-- crawl4ai（Open-source LLM Friendly Web Crawler & Scraper） https://github.com/unclecode/crawl4ai
-- pocketbase (Open Source realtime backend in 1 file) https://github.com/pocketbase/pocketbase
-- python-pocketbase (pocketBase client SDK for python) https://github.com/vaphes/pocketbase
-- feedparser (Parse feeds in Python) https://github.com/kurtmckee/feedparser
+- [crawl4ai](https://github.com/unclecode/crawl4ai) - Open-source LLM Friendly Web Crawler & Scraper
+- [pocketbase](https://github.com/pocketbase/pocketbase) - Open Source realtime backend in 1 file
+- [python-pocketbase](https://github.com/vaphes/pocketbase) - PocketBase client SDK for Python
+- [feedparser](https://github.com/kurtmckee/feedparser) - Parse feeds in Python
 
-Also inspired by [GNE](https://github.com/GeneralNewsExtractor/GeneralNewsExtractor)  [AutoCrawler](https://github.com/kingname/AutoCrawler)  [SeeAct](https://github.com/OSU-NLP-Group/SeeAct) .
+The development of this project was inspired by [GNE](https://github.com/GeneralNewsExtractor/GeneralNewsExtractor), [AutoCrawler](https://github.com/kingname/AutoCrawler), and [SeeAct](https://github.com/OSU-NLP-Group/SeeAct).
 
 ## Citation
 
-If you reference or cite part or all of this project in your related work, please specify the following information:
+If you reference or cite this project in your work, please include the following information:
 
 ```
-Author: Wiseflow Team
+Author: WiseFlow Team
 https://github.com/TeamWiseFlow/wiseflow
-Licensed under Apache2.0
+Licensed under Apache 2.0
 ```
+

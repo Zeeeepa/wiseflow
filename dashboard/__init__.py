@@ -2,9 +2,9 @@ import os
 import time
 import json
 import uuid
-from get_report import get_report, logger, pb
-from get_search import search_insight
-from tranlsation_volcengine import text_translate
+from dashboard.get_report import get_report, logger, pb
+from dashboard.get_search import search_insight
+from dashboard.tranlsation_volcengine import text_translate
 
 
 class BackendService:

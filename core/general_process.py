@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
-from utils.pb_api import PbTalker
-from utils.general_utils import get_logger, extract_and_convert_dates, is_chinese, isURL
-from agents.get_info import *
-from agents.insights import InsightExtractor
+from core.utils.pb_api import PbTalker
+from core.utils.general_utils import get_logger, extract_and_convert_dates, is_chinese, isURL
+from core.agents.get_info import *
+from core.agents.insights import InsightExtractor
 import json
-from scrapers import *
-from utils.zhipu_search import run_v4_async
+from core.scrapers import *
+from core.utils.zhipu_search import run_v4_async
 from urllib.parse import urlparse
-from crawl4ai import AsyncWebCrawler, CacheMode
+from core.crawl4ai import AsyncWebCrawler, CacheMode
 from datetime import datetime
 import asyncio
 import time
 import feedparser
-from plugins import PluginManager
-from connectors import ConnectorBase, DataItem
-from references import ReferenceManager
-from analysis.multimodal_analysis import process_item_with_images
-from analysis.multimodal_knowledge_integration import integrate_multimodal_analysis_with_knowledge_graph
+from core.plugins import PluginManager
+from core.connectors import ConnectorBase, DataItem
+from core.references import ReferenceManager
+from core.analysis.multimodal_analysis import process_item_with_images
+from core.analysis.multimodal_knowledge_integration import integrate_multimodal_analysis_with_knowledge_graph
 
 project_dir = os.environ.get("PROJECT_DIR", "")
 if project_dir:
