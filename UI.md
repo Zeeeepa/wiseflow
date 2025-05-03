@@ -1,24 +1,27 @@
-1. Main Dashboard Interface
+# Data Mining Dashboard UI Mockups
 
-   
+## 1. Main Dashboard Interface
 
-
-
+```
 +-------------------------------------------------------+
 |                       Dashboard                       |
 +-------------------------------------------------------+
 | Active Data Mining                           [+ New]  |
 +-------------------------------------------------------+
-|1.  GitHub - Python Agentic RAG - 2h 37min - 85%       |
-|2. GitHub - Database For Data Mining - 14h 37min - 92%|
-|3.  WebResearch - Best Ways to create codebase RAG - 78%|
-|4.  YouTube - AI Agent Frameworks - 5h 12min - 45%     |
-|5.  ArXiv - Vector Databases - 8h 03min - 63%          |
-|6.  ArXiv - Vector implementations - 12h 03min - 63%   |
+| 1. GitHub - Python Agentic RAG - 2h 37min - 85%       |
+| 2. GitHub - Database For Data Mining - 14h 37min - 92%|
+| 3. WebResearch - Best Ways to create codebase RAG - 78%|
+| 4. YouTube - AI Agent Frameworks - 5h 12min - 45%     |
+| 5. ArXiv - Vector Databases - 8h 03min - 63%          |
+| 6. ArXiv - Vector implementations - 12h 03min - 63%   |
 +-------------------------------------------------------+
 | [Refresh] [Filter ▼] [Sort By: Runtime ▼] [Export]    |
 +-------------------------------------------------------+
-3. New Process Selection Dialog
+```
+
+## 2. New Process Selection Dialog
+
+```
 +-------------------------------------------------------+
 |                  Select Data Source                   |
 +-------------------------------------------------------+
@@ -32,11 +35,11 @@
 +-------------------------------------------------------+
 |                    [Cancel]  [Help]                   |
 +-------------------------------------------------------+
+```
 
+## 3. GitHub Configuration Dialog
 
-4. GitHub Configuration Dialog
-
-
+```
 +-------------------------------------------------------+
 | GitHub Data Mining Configuration                      |
 +-------------------------------------------------------+
@@ -72,11 +75,11 @@
 +-------------------------------------------------------+
 |          [Cancel]    [Save as Template]    [Start]    |
 +-------------------------------------------------------+
+```
 
+## 4. WebSearch Configuration Dialog
 
-4. WebSearch Configuration Dialog
-
-
+```
 +-------------------------------------------------------+
 | WebSearch Data Mining Configuration                   |
 +-------------------------------------------------------+
@@ -123,11 +126,11 @@
 +-------------------------------------------------------+
 |          [Cancel]    [Save as Template]    [Start]    |
 +-------------------------------------------------------+
+```
 
+## 5. YouTube Configuration Dialog
 
-5. YouTube Configuration Dialog
-
-
+```
 +-------------------------------------------------------+
 | YouTube Data Mining Configuration                     |
 +-------------------------------------------------------+
@@ -174,12 +177,11 @@
 +-------------------------------------------------------+
 |          [Cancel]    [Save as Template]    [Start]    |
 +-------------------------------------------------------+
+```
 
+## 6. ArXiv Configuration Dialog
 
-6. ArXiv Configuration Dialog
-
-
-
+```
 +-------------------------------------------------------+
 | ArXiv Data Mining Configuration                       |
 +-------------------------------------------------------+
@@ -231,9 +233,11 @@
 +-------------------------------------------------------+
 |          [Cancel]    [Save as Template]    [Start]    |
 +-------------------------------------------------------+
-:computer: View my work
-10:43
-7. Detailed Process View Dialog
+```
+
+## 7. Detailed Process View Dialog
+
+```
 +-------------------------------------------------------+
 | WebSearch: DataCollection                             |
 | Focus: Best Ways to create codebase RAG               |
@@ -252,22 +256,18 @@
 +---------------+---------------------------------------+
 | Actions: [Pause] [Stop] [Export] [Save Articles]      |
 +-------------------------------------------------------+
+```
 
+## 8. Expanded Findings View
 
-8. Expanded Findings View
-Building Effective RAG Systems for Codebases       |
-Vector Databases for Code Search                   |
-Hybrid Retrieval Methods for Source Code           |
-Optimizing RAG for Large Codebases                 |
-Code-Specific Embedding Models                     |
-
-
+```
 +-------------------------------------------------------+
 | Findings: WebSearch - Best Ways to create codebase RAG|
 +-------------------------------------------------------+
 | Filter: [                                           ] |
 | Sort By: [Relevance ▼]                                |
 +-------------------------------------------------------+
+| 1. Building Effective RAG Systems for Codebases       |
 |    URL: ArticleURL1                                   |
 |    Relevance: 95%                                     |
 |    Summary: This article discusses techniques for     |
@@ -276,6 +276,7 @@ Code-Specific Embedding Models                     |
 |    retrieval strategies optimized for source code.    |
 |    [View] [Save] [Export]                             |
 +-------------------------------------------------------+
+| 2. Vector Databases for Code Search                   |
 |    URL: ArticleURL2                                   |
 |    Relevance: 92%                                     |
 |    Summary: Comprehensive comparison of vector        |
@@ -284,6 +285,7 @@ Code-Specific Embedding Models                     |
 |    and repository sizes.                              |
 |    [View] [Save] [Export]                             |
 +-------------------------------------------------------+
+| 3. Hybrid Retrieval Methods for Source Code           |
 |    URL: ArticleURL3                                   |
 |    Relevance: 88%                                     |
 |    Summary: Analysis of hybrid retrieval methods      |
@@ -292,6 +294,7 @@ Code-Specific Embedding Models                     |
 |    analysis.                                          |
 |    [View] [Save] [Export]                             |
 +-------------------------------------------------------+
+| 4. Optimizing RAG for Large Codebases                 |
 |    URL: ArticleURL4                                   |
 |    Relevance: 85%                                     |
 |    Summary: Strategies for scaling RAG systems to     |
@@ -300,6 +303,7 @@ Code-Specific Embedding Models                     |
 |    and hierarchical retrieval approaches.             |
 |    [View] [Save] [Export]                             |
 +-------------------------------------------------------+
+| 5. Code-Specific Embedding Models                     |
 |    URL: ArticleURL5                                   |
 |    Relevance: 82%                                     |
 |    Summary: Overview of embedding models trained      |
@@ -312,41 +316,42 @@ Code-Specific Embedding Models                     |
 +-------------------------------------------------------+
 | Actions: [Export All] [Create Report] [Visualize]     |
 +-------------------------------------------------------+
+```
 
+## 9. Templates Management Interface
 
-9. Templates Management Interface
-GitHub - Python Framework Analysis                 |
-ArXiv - Latest LLM Research                        |
-WebSearch - RAG Implementation Patterns            |
-YouTube - AI Agent Tutorials                       |
-GitHub - Vector Database Implementations           |
-
+```
 +-------------------------------------------------------+
 | Saved Templates                                       |
 +-------------------------------------------------------+
 | Filter: [                                           ] |
 | Type: [All ▼]                                         |
 +-------------------------------------------------------+
+| 1. GitHub - Python Framework Analysis                 |
 |    Type: GitHub                                       |
 |    Created: 2025-04-15                                |
 |    Last Used: 2025-05-01                              |
 |    [Load] [Edit] [Delete]                             |
 +-------------------------------------------------------+
+| 2. ArXiv - Latest LLM Research                        |
 |    Type: ArXiv                                        |
 |    Created: 2025-04-10                                |
 |    Last Used: 2025-04-28                              |
 |    [Load] [Edit] [Delete]                             |
 +-------------------------------------------------------+
+| 3. WebSearch - RAG Implementation Patterns            |
 |    Type: WebSearch                                    |
 |    Created: 2025-04-05                                |
 |    Last Used: 2025-04-22                              |
 |    [Load] [Edit] [Delete]                             |
 +-------------------------------------------------------+
+| 4. YouTube - AI Agent Tutorials                       |
 |    Type: YouTube                                      |
 |    Created: 2025-03-20                                |
 |    Last Used: 2025-04-18                              |
 |    [Load] [Edit] [Delete]                             |
 +-------------------------------------------------------+
+| 5. GitHub - Vector Database Implementations           |
 |    Type: GitHub                                       |
 |    Created: 2025-03-15                                |
 |    Last Used: 2025-04-15                              |
@@ -356,15 +361,11 @@ GitHub - Vector Database Implementations           |
 +-------------------------------------------------------+
 | Actions: [Export Templates] [Import Templates]        |
 +-------------------------------------------------------+
+```
 
+## 10. Database Management Interface
 
-10. Database Management Interface
-"Hybrid RAG Architecture for Code Repositories"    |
-"CodeRAG: A Framework for Code Retrieval"          |
-"Vector Embeddings for Source Code"                |
-"Building AI Agents for Code Analysis"             |
-
-
+```
 +-------------------------------------------------------+
 | Findings Database                                     |
 +-------------------------------------------------------+
@@ -381,21 +382,25 @@ GitHub - Vector Database Implementations           |
 |                                                       |
 | Recent Findings:                                      |
 |                                                       |
+| 1. "Hybrid RAG Architecture for Code Repositories"    |
 |    Source: WebSearch - ArticleURL1                    |
 |    Added: 2025-05-03                                  |
 |    Tags: RAG, Code Search, Vector DB                  |
 |    [View] [Edit Tags] [Add to Collection]             |
 +-------------------------------------------------------+
+| 2. "CodeRAG: A Framework for Code Retrieval"          |
 |    Source: GitHub - Repository123                     |
 |    Added: 2025-05-02                                  |
 |    Tags: RAG, Framework, Python                       |
 |    [View] [Edit Tags] [Add to Collection]             |
 +-------------------------------------------------------+
+| 3. "Vector Embeddings for Source Code"                |
 |    Source: ArXiv - Paper456                           |
 |    Added: 2025-05-01                                  |
 |    Tags: Embeddings, Vector DB, Research              |
 |    [View] [Edit Tags] [Add to Collection]             |
 +-------------------------------------------------------+
+| 4. "Building AI Agents for Code Analysis"             |
 |    Source: YouTube - VideoURL789                      |
 |    Added: 2025-04-30                                  |
 |    Tags: AI Agents, Code Analysis, Tutorial           |
@@ -405,10 +410,11 @@ GitHub - Vector Database Implementations           |
 +-------------------------------------------------------+
 | Actions: [Export] [Create Report] [Visualize] [Backup]|
 +-------------------------------------------------------+
+```
 
+## 11. Settings Interface
 
-
-12. Settings Interface
+```
 +-------------------------------------------------------+
 | Settings                                              |
 +-------------------------------------------------------+
@@ -453,7 +459,11 @@ GitHub - Vector Database Implementations           |
 +-------------------------------------------------------+
 | [Cancel] [Reset to Defaults] [Save Changes]           |
 +-------------------------------------------------------+
-13. Visualization Interface
+```
+
+## 12. Visualization Interface
+
+```
 +-------------------------------------------------------+
 | Data Visualization                                    |
 +-------------------------------------------------------+
@@ -486,13 +496,4 @@ GitHub - Vector Database Implementations           |
 +-------------------------------------------------------+
 | Actions: [Export Graph] [Save View] [Share]           |
 +-------------------------------------------------------+
-These mockups provide a comprehensive view of all the main interfaces for your data mining program.
-Each interface is designed to be intuitive and functional, with clear navigation between different parts of the system.
-The mockups include all the key functionality you mentioned:
-Main dashboard with simple line-by-line listing of active processes
-New process creation dialog with different data source options
-Detailed configuration dialogs for each data source type
-Process detail view showing status, findings, and parameters
-Database integration for saving and managing findings
-Template management for reusing configurations
-Visualization tools for analyzing relationships between findings
+```
