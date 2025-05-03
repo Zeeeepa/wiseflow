@@ -7,7 +7,7 @@ goto :main
 
 :error
 echo.
-echo Error occurred! Error code: %errorlevel%
+echo Error occurred %errorlevel%
 echo.
 echo Press any key to exit...
 pause >nul
@@ -126,7 +126,7 @@ if not exist "%SCRIPT_DIR%wiseflow\pb\pocketbase.exe" (
     echo Installing PocketBase...
     echo Installing PocketBase >> "%SCRIPT_DIR%deploy_log.txt"
     
-    :: Check if PowerShell script exists
+    :: Check if PowerShell script exists - FIXED: Look in the correct location
     if exist "%SCRIPT_DIR%wiseflow\install_pocketbase.ps1" (
         powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%wiseflow\install_pocketbase.ps1"
         if %ERRORLEVEL% NEQ 0 (
@@ -135,7 +135,7 @@ if not exist "%SCRIPT_DIR%wiseflow\pb\pocketbase.exe" (
             goto :error
         )
     ) else (
-        echo PocketBase installation script not found.
+        echo PocketBase installation script not found in either location.
         echo PocketBase script missing >> "%SCRIPT_DIR%deploy_log.txt"
         goto :error
     )
@@ -345,4 +345,3 @@ pause >nul
 
 endlocal
 exit /b 0
-
