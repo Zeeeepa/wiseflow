@@ -7,6 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/arxiv_dialog.css">
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark">
@@ -361,8 +362,11 @@
                     <div class="tab-pane fade" id="youtube" role="tabpanel" aria-labelledby="youtube-tab">
                         <h2 class="mb-4">YouTube Search</h2>
                         <div class="card">
-                            <div class="card-header">
-                                Create YouTube Search Mining
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <span>Create YouTube Search Mining</span>
+                                <button class="btn btn-primary btn-sm" id="open-youtube-config-btn" onclick="showYouTubeConfigDialog()">
+                                    <i class="bi bi-gear-fill"></i> Advanced Configuration
+                                </button>
                             </div>
                             <div class="card-body">
                                 <form id="youtube-search-form">
@@ -480,14 +484,24 @@
                     
                     <!-- Include the interconnections tab content -->
                     {% include 'interconnections_tab.html' %}
+                    
+                    <!-- Include ArXiv Dialog -->
+                    {% include 'arxiv_dialog.html' %}
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- Include the YouTube Configuration Dialog -->
+    {% include 'youtube_config_dialog.html' %}
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-    <script src="/static/js/search_dashboard.js"></script>
+    <script src="/static/js/dashboard.js"></script>
     <script src="/static/js/data_mining.js"></script>
+    <script src="/static/js/youtube_config.js"></script>
+    <script src="/static/js/expanded_findings_view.js"></script>
+    <script src="/static/js/search_dashboard.js"></script>
+    <script src="/static/js/arxiv_dialog.js"></script>
 </body>
 </html>
