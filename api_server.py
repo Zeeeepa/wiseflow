@@ -31,6 +31,10 @@ from core.llms.advanced.specialized_prompting import (
     TASK_EXTRACTION,
     TASK_REASONING
 )
+from core.config import (
+    API_HOST, API_PORT, API_RELOAD, WISEFLOW_API_KEY,
+    PRIMARY_MODEL
+)
 
 # Set up logging
 logging.basicConfig(
@@ -59,7 +63,7 @@ app.add_middleware(
 webhook_manager = get_webhook_manager()
 
 # API key authentication
-API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
+API_KEY = WISEFLOW_API_KEY
 
 def verify_api_key(x_api_key: str = Header(None)):
     """
@@ -137,7 +141,7 @@ class ContentProcessorManager:
     def __init__(self):
         """Initialize the content processor manager."""
         self.prompt_processor = SpecializedPromptProcessor(
-            default_model=os.environ.get("PRIMARY_MODEL", "gpt-3.5-turbo"),
+            default_model=PRIMARY_MODEL,
             default_temperature=0.7,
             default_max_tokens=1000,
         )
@@ -648,7 +652,7 @@ if __name__ == "__main__":
     # Run the FastAPI app with uvicorn
     uvicorn.run(
         "api_server:app",
-        host=os.environ.get("API_HOST", "0.0.0.0"),
-        port=int(os.environ.get("API_PORT", 8000)),
-        reload=os.environ.get("API_RELOAD", "false").lower() == "true"
+        host=API_HOST,
+        port=API_PORT,
+        reload=API_RELOAD
     )
