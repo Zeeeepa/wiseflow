@@ -2,11 +2,10 @@
 import asyncio
 from loguru import logger
 import os, re
-from llms.openai_wrapper import openai_llm as llm
+from core.llms.openai_wrapper import openai_llm as llm
 # from core.llms.siliconflow_wrapper import sfa_llm # or other llm wrapper
-from utils.general_utils import normalize_url, url_pattern
+from core.utils.general_utils import normalize_url, url_pattern
 from .get_info_prompts import *
-
 
 common_file_exts = [
     'jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'svg', 'm3u8',
