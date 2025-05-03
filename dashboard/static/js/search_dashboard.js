@@ -64,9 +64,13 @@ document.addEventListener('DOMContentLoaded', function() {
 // Initialize the advanced GitHub dialog
 function initializeAdvancedGitHubDialog() {
     // Hide content analysis section by default (only show when advanced search is selected)
-    const contentAnalysisSection = document.querySelector('.mb-4:has(label.form-label:contains("Content Analysis"))');
-    if (contentAnalysisSection) {
-        contentAnalysisSection.style.display = 'none';
+    const contentAnalysisSections = document.querySelectorAll('.mb-4');
+    for (const section of contentAnalysisSections) {
+        const label = section.querySelector('label.form-label');
+        if (label && label.textContent.includes('Content Analysis')) {
+            section.style.display = 'none';
+            break;
+        }
     }
     
     // Hide advanced search options by default

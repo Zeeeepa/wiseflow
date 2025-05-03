@@ -15,149 +15,82 @@ function initExpandedFindingsView() {
  * Create the expanded findings view modal
  */
 function createExpandedFindingsModal() {
-    // Check if modal already exists
-    let modal = document.getElementById('expandedFindingsModal');
-    if (modal) return;
-    
-    // Create modal element
-    modal = document.createElement('div');
-    modal.className = 'modal fade';
-    modal.id = 'expandedFindingsModal';
-    modal.tabIndex = '-1';
-    modal.setAttribute('aria-labelledby', 'expandedFindingsModalLabel');
-    modal.setAttribute('aria-hidden', 'true');
-    
-    // Set modal content
-    modal.innerHTML = `
-        <div class="modal-dialog modal-xl">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="expandedFindingsModalLabel">Findings: WebSearch - Best Ways to create codebase RAG</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="findings-container">
-                        <div class="findings-header d-flex justify-content-between align-items-center mb-3">
-                            <div class="filter-container">
-                                <label for="findings-filter" class="me-2">Filter:</label>
-                                <input type="text" id="findings-filter" class="form-control form-control-sm d-inline-block" style="width: 250px;">
-                            </div>
-                            <div class="sort-container">
-                                <label for="findings-sort" class="me-2">Sort By:</label>
-                                <select id="findings-sort" class="form-select form-select-sm d-inline-block" style="width: 150px;">
-                                    <option value="relevance">Relevance</option>
-                                    <option value="date">Date</option>
-                                    <option value="source">Source</option>
-                                    <option value="title">Title</option>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <div class="findings-list">
-                            <div class="findings-item card mb-3">
-                                <div class="card-body">
-                                    <h5 class="card-title">Building Effective RAG Systems for Codebases</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">URL: <a href="#" class="article-url">ArticleURL1</a></h6>
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <span class="badge bg-primary">Relevance: 95%</span>
-                                        <div class="btn-group">
-                                            <button class="btn btn-sm btn-outline-primary view-btn">View</button>
-                                            <button class="btn btn-sm btn-outline-success save-btn">Save</button>
-                                            <button class="btn btn-sm btn-outline-secondary export-btn">Export</button>
-                                        </div>
-                                    </div>
-                                    <p class="card-text">This article discusses techniques for implementing RAG systems specifically for code repositories, focusing on embedding methods and retrieval strategies optimized for source code.</p>
+    try {
+        // Check if modal already exists
+        let modal = document.getElementById('expandedFindingsModal');
+        if (modal) return;
+        
+        // Create modal element
+        modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.id = 'expandedFindingsModal';
+        modal.tabIndex = '-1';
+        modal.setAttribute('aria-labelledby', 'expandedFindingsModalLabel');
+        modal.setAttribute('aria-hidden', 'true');
+        
+        // Set modal content
+        modal.innerHTML = `
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="expandedFindingsModalLabel">Findings: WebSearch - Best Ways to create codebase RAG</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="findings-container">
+                            <div class="findings-header d-flex justify-content-between align-items-center mb-3">
+                                <div class="filter-container">
+                                    <label for="findings-filter" class="me-2">Filter:</label>
+                                    <input type="text" id="findings-filter" class="form-control form-control-sm d-inline-block" style="width: 250px;">
+                                </div>
+                                <div class="sort-container">
+                                    <label for="findings-sort" class="me-2">Sort By:</label>
+                                    <select id="findings-sort" class="form-select form-select-sm d-inline-block" style="width: 150px;">
+                                        <option value="relevance">Relevance</option>
+                                        <option value="date">Date</option>
+                                        <option value="source">Source</option>
+                                        <option value="title">Title</option>
+                                    </select>
                                 </div>
                             </div>
                             
-                            <div class="findings-item card mb-3">
-                                <div class="card-body">
-                                    <h5 class="card-title">Vector Databases for Code Search</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">URL: <a href="#" class="article-url">ArticleURL2</a></h6>
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <span class="badge bg-primary">Relevance: 92%</span>
-                                        <div class="btn-group">
-                                            <button class="btn btn-sm btn-outline-primary view-btn">View</button>
-                                            <button class="btn btn-sm btn-outline-success save-btn">Save</button>
-                                            <button class="btn btn-sm btn-outline-secondary export-btn">Export</button>
-                                        </div>
+                            <div class="findings-list">
+                                <!-- Findings items will be populated dynamically -->
+                                <div class="text-center py-5">
+                                    <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">Loading...</span>
                                     </div>
-                                    <p class="card-text">Comprehensive comparison of vector databases for code search applications, with benchmarks on different programming languages and repository sizes.</p>
+                                    <p class="mt-3">Loading findings...</p>
                                 </div>
                             </div>
                             
-                            <div class="findings-item card mb-3">
-                                <div class="card-body">
-                                    <h5 class="card-title">Hybrid Retrieval Methods for Source Code</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">URL: <a href="#" class="article-url">ArticleURL3</a></h6>
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <span class="badge bg-primary">Relevance: 88%</span>
-                                        <div class="btn-group">
-                                            <button class="btn btn-sm btn-outline-primary view-btn">View</button>
-                                            <button class="btn btn-sm btn-outline-success save-btn">Save</button>
-                                            <button class="btn btn-sm btn-outline-secondary export-btn">Export</button>
-                                        </div>
-                                    </div>
-                                    <p class="card-text">Analysis of hybrid retrieval methods combining semantic search with traditional code search techniques like AST parsing and symbol analysis.</p>
-                                </div>
+                            <div class="findings-pagination d-flex justify-content-between align-items-center mt-4">
+                                <button class="btn btn-sm btn-outline-secondary" id="prev-page-btn" disabled>Previous</button>
+                                <span>Page 1 of 1</span>
+                                <button class="btn btn-sm btn-outline-secondary" id="next-page-btn" disabled>Next</button>
                             </div>
-                            
-                            <div class="findings-item card mb-3">
-                                <div class="card-body">
-                                    <h5 class="card-title">Optimizing RAG for Large Codebases</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">URL: <a href="#" class="article-url">ArticleURL4</a></h6>
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <span class="badge bg-primary">Relevance: 85%</span>
-                                        <div class="btn-group">
-                                            <button class="btn btn-sm btn-outline-primary view-btn">View</button>
-                                            <button class="btn btn-sm btn-outline-success save-btn">Save</button>
-                                            <button class="btn btn-sm btn-outline-secondary export-btn">Export</button>
-                                        </div>
-                                    </div>
-                                    <p class="card-text">Strategies for scaling RAG systems to handle very large codebases with millions of lines of code, including chunking strategies and hierarchical retrieval approaches.</p>
-                                </div>
-                            </div>
-                            
-                            <div class="findings-item card mb-3">
-                                <div class="card-body">
-                                    <h5 class="card-title">Code-Specific Embedding Models</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">URL: <a href="#" class="article-url">ArticleURL5</a></h6>
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <span class="badge bg-primary">Relevance: 82%</span>
-                                        <div class="btn-group">
-                                            <button class="btn btn-sm btn-outline-primary view-btn">View</button>
-                                            <button class="btn btn-sm btn-outline-success save-btn">Save</button>
-                                            <button class="btn btn-sm btn-outline-secondary export-btn">Export</button>
-                                        </div>
-                                    </div>
-                                    <p class="card-text">Overview of embedding models trained specifically for code, comparing their performance against general-purpose text embeddings when used in RAG systems.</p>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="findings-pagination d-flex justify-content-between align-items-center mt-4">
-                            <button class="btn btn-sm btn-outline-secondary" id="prev-page-btn" disabled>Previous</button>
-                            <span>Page 1 of 4</span>
-                            <button class="btn btn-sm btn-outline-secondary" id="next-page-btn">Next</button>
                         </div>
                     </div>
-                </div>
-                <div class="modal-footer">
-                    <div class="actions-container d-flex justify-content-between w-100">
-                        <div>
-                            <button type="button" class="btn btn-outline-primary" id="export-all-btn">Export All</button>
-                            <button type="button" class="btn btn-outline-success" id="create-report-btn">Create Report</button>
-                            <button type="button" class="btn btn-outline-info" id="visualize-btn">Visualize</button>
+                    <div class="modal-footer">
+                        <div class="actions-container d-flex justify-content-between w-100">
+                            <div>
+                                <button type="button" class="btn btn-outline-primary" id="export-all-btn">Export All</button>
+                                <button type="button" class="btn btn-outline-success" id="create-report-btn">Create Report</button>
+                                <button type="button" class="btn btn-outline-info" id="visualize-btn">Visualize</button>
+                            </div>
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                         </div>
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                     </div>
                 </div>
             </div>
-        </div>
-    `;
-    
-    // Append modal to body
-    document.body.appendChild(modal);
+        `;
+        
+        // Append modal to body
+        document.body.appendChild(modal);
+    } catch (error) {
+        console.error('Failed to create expanded findings modal:', error);
+        throw new Error('Failed to initialize expanded findings view');
+    }
 }
 
 /**
@@ -238,121 +171,90 @@ function showExpandedFindings(taskId) {
  * @returns {Promise} - Promise resolving to findings data
  */
 function fetchTaskFindings(taskId) {
-    // This would be replaced with an actual API call
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    
+    // In a real application, this would be an API call
     return new Promise((resolve, reject) => {
-        // Mock data for demonstration
-        setTimeout(() => {
-            // Simulate successful response
-            if (taskId) {
-                resolve({
-                    task: {
-                        task_id: taskId,
-                        name: 'Best Ways to create codebase RAG',
-                        task_type: 'WebSearch',
-                        status: 'active'
-                    },
-                    items: [
-                        {
-                            id: '1',
-                            title: 'Building Effective RAG Systems for Codebases',
-                            url: 'ArticleURL1',
-                            relevance: 95,
-                            summary: 'This article discusses techniques for implementing RAG systems specifically for code repositories, focusing on embedding methods and retrieval strategies optimized for source code.'
+        try {
+            // Mock data for demonstration
+            setTimeout(() => {
+                // Simulate successful response
+                if (taskId) {
+                    clearTimeout(timeoutId);
+                    resolve({
+                        task: {
+                            task_id: taskId,
+                            name: 'Best Ways to create codebase RAG',
+                            task_type: 'WebSearch',
+                            status: 'active'
                         },
-                        {
-                            id: '2',
-                            title: 'Vector Databases for Code Search',
-                            url: 'ArticleURL2',
-                            relevance: 92,
-                            summary: 'Comprehensive comparison of vector databases for code search applications, with benchmarks on different programming languages and repository sizes.'
-                        },
-                        {
-                            id: '3',
-                            title: 'Hybrid Retrieval Methods for Source Code',
-                            url: 'ArticleURL3',
-                            relevance: 88,
-                            summary: 'Analysis of hybrid retrieval methods combining semantic search with traditional code search techniques like AST parsing and symbol analysis.'
-                        },
-                        {
-                            id: '4',
-                            title: 'Optimizing RAG for Large Codebases',
-                            url: 'ArticleURL4',
-                            relevance: 85,
-                            summary: 'Strategies for scaling RAG systems to handle very large codebases with millions of lines of code, including chunking strategies and hierarchical retrieval approaches.'
-                        },
-                        {
-                            id: '5',
-                            title: 'Code-Specific Embedding Models',
-                            url: 'ArticleURL5',
-                            relevance: 82,
-                            summary: 'Overview of embedding models trained specifically for code, comparing their performance against general-purpose text embeddings when used in RAG systems.'
+                        items: [
+                            {
+                                id: '1',
+                                title: 'Building Effective RAG Systems for Codebases',
+                                url: 'ArticleURL1',
+                                relevance: 95,
+                                summary: 'This article discusses techniques for implementing RAG systems specifically for code repositories, focusing on embedding methods and retrieval strategies optimized for source code.'
+                            },
+                            {
+                                id: '2',
+                                title: 'Vector Databases for Code Search',
+                                url: 'ArticleURL2',
+                                relevance: 92,
+                                summary: 'Comprehensive comparison of vector databases for code search applications, with benchmarks on different programming languages and repository sizes.'
+                            },
+                            {
+                                id: '3',
+                                title: 'Hybrid Retrieval Methods for Source Code',
+                                url: 'ArticleURL3',
+                                relevance: 88,
+                                summary: 'Analysis of hybrid retrieval methods combining semantic search with traditional code search techniques like AST parsing and symbol analysis.'
+                            },
+                            {
+                                id: '4',
+                                title: 'Optimizing RAG for Large Codebases',
+                                url: 'ArticleURL4',
+                                relevance: 85,
+                                summary: 'Strategies for scaling RAG systems to handle very large codebases with millions of lines of code, including chunking strategies and hierarchical retrieval approaches.'
+                            },
+                            {
+                                id: '5',
+                                title: 'Code-Specific Embedding Models',
+                                url: 'ArticleURL5',
+                                relevance: 82,
+                                summary: 'Overview of embedding models trained specifically for code, comparing their performance against general-purpose text embeddings when used in RAG systems.'
+                            }
+                        ],
+                        pagination: {
+                            current_page: 1,
+                            total_pages: 4,
+                            total_items: 20
                         }
-                    ],
-                    pagination: {
-                        current_page: 1,
-                        total_pages: 4,
-                        total_items: 20
-                    }
-                });
-            } else {
-                // Simulate error response
-                reject(new Error('Invalid task ID'));
-            }
-    return new Promise((resolve) => {
-        // Mock data for demonstration
-        setTimeout(() => {
-            resolve({
-                task: {
-                    task_id: taskId,
-                    name: 'Best Ways to create codebase RAG',
-                    task_type: 'WebSearch',
-                    status: 'active'
-                },
-                items: [
-                    {
-                        id: '1',
-                        title: 'Building Effective RAG Systems for Codebases',
-                        url: 'ArticleURL1',
-                        relevance: 95,
-                        summary: 'This article discusses techniques for implementing RAG systems specifically for code repositories, focusing on embedding methods and retrieval strategies optimized for source code.'
-                    },
-                    {
-                        id: '2',
-                        title: 'Vector Databases for Code Search',
-                        url: 'ArticleURL2',
-                        relevance: 92,
-                        summary: 'Comprehensive comparison of vector databases for code search applications, with benchmarks on different programming languages and repository sizes.'
-                    },
-                    {
-                        id: '3',
-                        title: 'Hybrid Retrieval Methods for Source Code',
-                        url: 'ArticleURL3',
-                        relevance: 88,
-                        summary: 'Analysis of hybrid retrieval methods combining semantic search with traditional code search techniques like AST parsing and symbol analysis.'
-                    },
-                    {
-                        id: '4',
-                        title: 'Optimizing RAG for Large Codebases',
-                        url: 'ArticleURL4',
-                        relevance: 85,
-                        summary: 'Strategies for scaling RAG systems to handle very large codebases with millions of lines of code, including chunking strategies and hierarchical retrieval approaches.'
-                    },
-                    {
-                        id: '5',
-                        title: 'Code-Specific Embedding Models',
-                        url: 'ArticleURL5',
-                        relevance: 82,
-                        summary: 'Overview of embedding models trained specifically for code, comparing their performance against general-purpose text embeddings when used in RAG systems.'
-                    }
-                ],
-                pagination: {
-                    current_page: 1,
-                    total_pages: 4,
-                    total_items: 20
+                    });
+                } else {
+                    // Simulate error response
+                    clearTimeout(timeoutId);
+                    reject(new Error('Invalid task ID'));
                 }
-            });
-        }, 500);
+            }, 1500);
+        } catch (error) {
+            clearTimeout(timeoutId);
+            reject(error);
+        }
     });
+    
+    // In a real application, this would be:
+    /*
+    return fetch(`/api/tasks/${taskId}/findings`, {
+        signal: controller.signal
+    })
+    .then(response => {
+        if (!response.ok) throw new Error('Network response was not ok');
+        return response.json();
+    })
+    .finally(() => clearTimeout(timeoutId));
+    */
 }
 
 /**
@@ -397,7 +299,7 @@ function populateFindingsList(findings) {
     });
     
     // Update pagination
-    updatePagination(1, 4);
+    updatePagination(1, 1);
 }
 
 /**
@@ -447,28 +349,33 @@ function filterFindings(filterText) {
 }
 
 /**
- * Sort findings based on selected criteria
- * @param {string} sortBy - Criteria to sort by (relevance, date, source, title)
+ * Sort findings based on the selected sort option
+ * @param {string} sortBy - The sort option (relevance, date, source, title)
  */
 function sortFindings(sortBy) {
     const findingsList = document.querySelector('.findings-list');
-    const findingItems = Array.from(document.querySelectorAll('.findings-item'));
+    const findingItems = Array.from(findingsList.querySelectorAll('.findings-item'));
     
     findingItems.sort((a, b) => {
         if (sortBy === 'relevance') {
-            const relevanceA = parseInt(a.querySelector('.badge').textContent.match(/\d+/)[0] || '0');
-            const relevanceB = parseInt(b.querySelector('.badge').textContent.match(/\d+/)[0] || '0');
+            const relevanceA = parseInt(a.querySelector('.badge').textContent.match(/\d+/)?.[0] || '0');
+            const relevanceB = parseInt(b.querySelector('.badge').textContent.match(/\d+/)?.[0] || '0');
             return relevanceB - relevanceA; // Higher relevance first
         } else if (sortBy === 'title') {
             const titleA = a.querySelector('.card-title').textContent;
             const titleB = b.querySelector('.card-title').textContent;
             return titleA.localeCompare(titleB);
+        } else if (sortBy === 'date') {
+            // In a real application, this would use actual dates
+            // For now, we'll use the ID as a proxy for date
+            const idA = a.getAttribute('data-id');
+            const idB = b.getAttribute('data-id');
+            return idA.localeCompare(idB);
         } else if (sortBy === 'source') {
             const sourceA = a.querySelector('.article-url').textContent;
             const sourceB = b.querySelector('.article-url').textContent;
             return sourceA.localeCompare(sourceB);
         }
-        // Default to relevance sorting
         return 0;
     });
     
@@ -637,4 +544,3 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
-
