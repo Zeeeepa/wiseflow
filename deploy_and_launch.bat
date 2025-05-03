@@ -25,20 +25,27 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-REM Check Python version safely
-python -c "import sys; print('Python ' + sys.version)" || (
-    echo Failed to check Python version.
-    echo Press any key to exit...
-    pause >nul
-    exit /b 1
+REM Fix: Add a fallback method for Python version detection
+python -c "import sys; print(sys.version_info[0])" > python_version.tmp 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo Warning: Could not determine Python version using primary method.
+    echo Trying alternative method...
+    python --version > python_version_full.tmp 2>&1
+    for /f "tokens=2 delims= " %%i in (python_version_full.tmp) do (
+        for /f "tokens=1 delims=." %%j in ("%%i") do set PYTHON_MAJOR=%%j
+    )
+    del python_version_full.tmp
+) else (
+    set /p PYTHON_MAJOR=<python_version.tmp
+    del python_version.tmp
 )
 
-for /f "tokens=2 delims=." %%i in ('python -c "import sys; print(sys.version.split('.')[0])"') do set PYTHON_MAJOR=%%i
 echo Detected Python version: %PYTHON_MAJOR%
 if %PYTHON_MAJOR% LSS 3 (
     echo Python version must be 3.8 or higher.
     echo Press any key to exit...
     pause >nul
+    cd "%ORIGINAL_DIR%"
     exit /b 1
 )
 
@@ -147,7 +154,17 @@ if /i "!CREATE_VENV!"=="y" (
         echo Activating conda environment...
         call conda activate wiseflow
         if %ERRORLEVEL% NEQ 0 (
-            echo Failed to activate conda environment. Continuing without it...
+            echo Failed to activate conda environment.
+            set /p CONTINUE_WITHOUT_ENV=Continue without environment? (y/n): 
+            if /i "!CONTINUE_WITHOUT_ENV!"=="n" (
+                echo Aborting setup as requested.
+                echo Press any key to exit...
+                pause >nul
+                cd "%ORIGINAL_DIR%"
+                exit /b 1
+            ) else (
+                echo Continuing without conda environment...
+            )
         )
     ) else (
         echo Conda not found. Using venv instead...
@@ -168,7 +185,17 @@ if /i "!CREATE_VENV!"=="y" (
         echo Activating virtual environment...
         call venv\Scripts\activate.bat
         if %ERRORLEVEL% NEQ 0 (
-            echo Failed to activate virtual environment. Continuing without it...
+            echo Failed to activate virtual environment.
+            set /p CONTINUE_WITHOUT_ENV=Continue without environment? (y/n): 
+            if /i "!CONTINUE_WITHOUT_ENV!"=="n" (
+                echo Aborting setup as requested.
+                echo Press any key to exit...
+                pause >nul
+                cd "%ORIGINAL_DIR%"
+                exit /b 1
+            ) else (
+                echo Continuing without virtual environment...
+            )
         )
     )
 )
@@ -209,6 +236,9 @@ echo ===== WiseFlow Setup Complete =====
 echo.
 echo Starting WiseFlow...
 
+REM Fix: Navigate back to the main directory before checking for run scripts
+cd ..
+
 REM Check if windows_run.py exists
 if exist windows_run.py (
     python windows_run.py
@@ -234,4 +264,3 @@ echo WiseFlow has been closed. Press any key to exit...
 pause >nul
 
 endlocal
-
