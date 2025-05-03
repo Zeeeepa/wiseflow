@@ -97,8 +97,16 @@ if not exist core\.env (
 )
 
 REM Check for Python version
-for /f "tokens=2 delims=." %%i in ('python -c "import sys; print(sys.version.split(\".\")[0])"') do set PYTHON_MAJOR=%%i
+for /f "tokens=1,2 delims=." %%i in ('python -c "import sys; print(sys.version.split(\".\")[0] + \".\" + sys.version.split(\".\")[1])"') do (
+    set PYTHON_MAJOR=%%i
+    set PYTHON_MINOR=%%j
+)
 if %PYTHON_MAJOR% LSS 3 (
+    echo Python version must be 3.8 or higher.
+    echo Press any key to exit...
+    pause >nul
+    exit /b 1
+) else if %PYTHON_MAJOR% EQU 3 if %PYTHON_MINOR% LSS 8 (
     echo Python version must be 3.8 or higher.
     echo Press any key to exit...
     pause >nul
@@ -115,11 +123,29 @@ if /i "!CREATE_VENV!"=="y" (
         set PYTHON_VERSION=3.12
         if defined WISEFLOW_PYTHON_VERSION set PYTHON_VERSION=!WISEFLOW_PYTHON_VERSION!
         conda create -n wiseflow python=!PYTHON_VERSION! -y
+        if %ERRORLEVEL% NEQ 0 (
+            echo Failed to create conda environment.
+            echo Press any key to exit...
+            pause >nul
+            exit /b 1
+        )
         call conda activate wiseflow
+        if %ERRORLEVEL% NEQ 0 (
+            echo Failed to activate conda environment.
+            echo Press any key to exit...
+            pause >nul
+            exit /b 1
+        )
     ) else (
         echo Conda not found. Using venv instead...
         python -m venv venv
         call venv\Scripts\activate
+        if %ERRORLEVEL% NEQ 0 (
+            echo Failed to activate virtual environment.
+            echo Press any key to exit...
+            pause >nul
+            exit /b 1
+        )
     )
 )
 
@@ -160,4 +186,3 @@ echo WiseFlow has been closed. Press any key to exit...
 pause >nul
 
 endlocal
-
