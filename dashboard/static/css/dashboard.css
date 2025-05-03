@@ -206,3 +206,34 @@ body {
     animation: spin 1s linear infinite;
     display: inline-block;
 }
+
+/* Settings page styles */
+.card-header button {
+    text-decoration: none;
+    color: #333;
+    font-weight: bold;
+    width: 100%;
+    text-align: left;
+    padding: 0;
+}
+
+.card-header button:hover {
+    color: #007bff;
+}
+
+.card-header button i {
+    margin-right: 10px;
+    transition: transform 0.3s;
+}
+
+.form-range {
+    width: 100%;
+}
+
+.input-group-text {
+    cursor: pointer;
+}
+
+#alertContainer {
+    max-width: 400px;
+}

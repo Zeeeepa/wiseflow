@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wiseflow Settings</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Wiseflow Dashboard</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/search">Search</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/plugins">Plugins</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/monitor">Monitor</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/settings">Settings</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-md-2 sidebar">
+                <div class="sidebar-heading">Settings</div>
+                <a href="#interface-section" class="sidebar-link active">Interface</a>
+                <a href="#database-section" class="sidebar-link">Database</a>
+                <a href="#processing-section" class="sidebar-link">Processing</a>
+                <a href="#api-keys-section" class="sidebar-link">API Keys</a>
+            </div>
+            
+            <div class="col-md-10 p-4">
+                <h2 class="mb-4">Settings</h2>
+                
+                <div class="card mb-4">
+                    <div class="card-header" id="interface-section">
+                        <h5 class="mb-0">
+                            <button class="btn btn-link" type="button" data-bs-toggle="collapse" data-bs-target="#interfaceCollapse">
+                                <i class="bi bi-chevron-down"></i> Interface
+                            </button>
+                        </h5>
+                    </div>
+                    <div id="interfaceCollapse" class="collapse show">
+                        <div class="card-body">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="darkMode" checked>
+                                <label class="form-check-label" for="darkMode">
+                                    Dark Mode
+                                </label>
+                            </div>
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="compactView" checked>
+                                <label class="form-check-label" for="compactView">
+                                    Compact View
+                                </label>
+                            </div>
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="showTooltips">
+                                <label class="form-check-label" for="showTooltips">
+                                    Show Tooltips
+                                </label>
+                            </div>
+                            <div class="mb-3">
+                                <label for="refreshRate" class="form-label">Refresh Rate:</label>
+                                <select class="form-select" id="refreshRate">
+                                    <option value="10">10 seconds</option>
+                                    <option value="30" selected>30 seconds</option>
+                                    <option value="60">1 minute</option>
+                                    <option value="300">5 minutes</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mb-4">
+                    <div class="card-header" id="database-section">
+                        <h5 class="mb-0">
+                            <button class="btn btn-link" type="button" data-bs-toggle="collapse" data-bs-target="#databaseCollapse">
+                                <i class="bi bi-chevron-down"></i> Database
+                            </button>
+                        </h5>
+                    </div>
+                    <div id="databaseCollapse" class="collapse">
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="storageLocation" class="form-label">Storage Location:</label>
+                                <input type="text" class="form-control" id="storageLocation" value="/data/findings">
+                            </div>
+                            <div class="mb-3">
+                                <label for="autoBackup" class="form-label">Auto-backup:</label>
+                                <select class="form-select" id="autoBackup">
+                                    <option value="never">Never</option>
+                                    <option value="hourly">Hourly</option>
+                                    <option value="daily" selected>Daily</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="retentionPeriod" class="form-label">Retention Period:</label>
+                                <select class="form-select" id="retentionPeriod">
+                                    <option value="30">30 days</option>
+                                    <option value="60">60 days</option>
+                                    <option value="90" selected>90 days</option>
+                                    <option value="180">180 days</option>
+                                    <option value="365">365 days</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mb-4">
+                    <div class="card-header" id="processing-section">
+                        <h5 class="mb-0">
+                            <button class="btn btn-link" type="button" data-bs-toggle="collapse" data-bs-target="#processingCollapse">
+                                <i class="bi bi-chevron-down"></i> Processing
+                            </button>
+                        </h5>
+                    </div>
+                    <div id="processingCollapse" class="collapse">
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="maxParallelTasks" class="form-label">Max Parallel Tasks:</label>
+                                <input type="number" class="form-control" id="maxParallelTasks" value="8" min="1" max="32">
+                            </div>
+                            <div class="mb-3">
+                                <label for="defaultWorkers" class="form-label">Default Workers Per Task:</label>
+                                <input type="number" class="form-control" id="defaultWorkers" value="4" min="1" max="16">
+                            </div>
+                            <div class="mb-3">
+                                <label for="cpuLimit" class="form-label">CPU Limit: <span id="cpuLimitValue">80%</span></label>
+                                <input type="range" class="form-range" id="cpuLimit" min="10" max="100" step="5" value="80">
+                            </div>
+                            <div class="mb-3">
+                                <label for="memoryLimit" class="form-label">Memory Limit: <span id="memoryLimitValue">70%</span></label>
+                                <input type="range" class="form-range" id="memoryLimit" min="10" max="100" step="5" value="70">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mb-4">
+                    <div class="card-header" id="api-keys-section">
+                        <h5 class="mb-0">
+                            <button class="btn btn-link" type="button" data-bs-toggle="collapse" data-bs-target="#apiKeysCollapse">
+                                <i class="bi bi-chevron-down"></i> API Keys
+                            </button>
+                        </h5>
+                    </div>
+                    <div id="apiKeysCollapse" class="collapse">
+                        <div class="card-body">
+                            <div class="mb-4">
+                                <h6>GitHub</h6>
+                                <div class="mb-3">
+                                    <label for="githubApiKey" class="form-label">API Key:</label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control" id="githubApiKey" value="************************">
+                                        <button class="btn btn-outline-secondary" type="button" id="toggleGithubKey">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="githubRateLimit" class="form-label">Rate Limit:</label>
+                                    <input type="text" class="form-control" id="githubRateLimit" value="5000 requests/hour" readonly>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-4">
+                                <h6>Search Engines</h6>
+                                <div class="mb-3">
+                                    <label for="googleApiKey" class="form-label">Google API Key:</label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control" id="googleApiKey" value="************************">
+                                        <button class="btn btn-outline-secondary" type="button" id="toggleGoogleKey">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="bingApiKey" class="form-label">Bing API Key:</label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control" id="bingApiKey" value="************************">
+                                        <button class="btn btn-outline-secondary" type="button" id="toggleBingKey">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="customSearchId" class="form-label">Custom Search Engine ID:</label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control" id="customSearchId" value="******************">
+                                        <button class="btn btn-outline-secondary" type="button" id="toggleSearchId">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-4">
+                                <h6>YouTube</h6>
+                                <div class="mb-3">
+                                    <label for="youtubeApiKey" class="form-label">API Key:</label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control" id="youtubeApiKey" value="************************">
+                                        <button class="btn btn-outline-secondary" type="button" id="toggleYoutubeKey">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="youtubeRateLimit" class="form-label">Rate Limit:</label>
+                                    <input type="text" class="form-control" id="youtubeRateLimit" value="10000 units/day" readonly>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-4">
+                                <h6>ArXiv</h6>
+                                <div class="mb-3">
+                                    <label for="arxivEmail" class="form-label">Email:</label>
+                                    <input type="email" class="form-control" id="arxivEmail" value="user@example.com">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="arxivRateLimit" class="form-label">Rate Limit:</label>
+                                    <input type="text" class="form-control" id="arxivRateLimit" value="100 requests/minute" readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="d-flex justify-content-end">
+                    <button class="btn btn-secondary me-2" id="resetButton">Reset to Defaults</button>
+                    <button class="btn btn-primary" id="saveButton">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/settings.js"></script>
+</body>
+</html>
+

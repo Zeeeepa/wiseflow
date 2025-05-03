@@ -59,3 +59,11 @@ async def plugins_info(request: Request):
             "analyzers": analyzers
         }
     )
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    """Serve the settings page."""
+    return templates.TemplateResponse(
+        "settings.html", 
+        {"request": request}
+    )
