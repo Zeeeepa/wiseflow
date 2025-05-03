@@ -1,0 +1,65 @@
+/* ArXiv Configuration Dialog CSS */
+
+/* Modal styling */
+#arxivConfigModal .modal-dialog {
+    max-width: 800px;
+}
+
+#arxivConfigModal .modal-body {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+/* Form styling */
+#arxiv-config-form .form-label {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+#arxiv-config-form .form-check {
+    margin-bottom: 0.5rem;
+}
+
+/* Error message styling */
+#arxiv-config-form .text-danger {
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+/* Reference context container */
+#reference-context-container {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* Buttons */
+.add-more-context-btn {
+    white-space: nowrap;
+}
+
+.remove-context-btn {
+    white-space: nowrap;
+}
+
+/* Checkbox styling */
+#arxiv-config-form .form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+/* Number input styling */
+#arxiv-config-form input[type="number"] {
+    max-width: 100px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    #arxivConfigModal .modal-dialog {
+        max-width: 95%;
+        margin: 10px auto;
+    }
+    
+    #arxiv-config-form input[type="number"] {
+        max-width: 100%;
+    }
+}

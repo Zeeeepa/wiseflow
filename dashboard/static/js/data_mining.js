@@ -11,6 +11,10 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('add-youtube-mining-btn').addEventListener('click', function() {
         // Show YouTube configuration dialog
         showYouTubeConfigDialog();
+    // Add event listener for the "Add Arxiv Mining" button to open the ArXiv dialog
+    document.getElementById('add-arxiv-mining-btn').addEventListener('click', function() {
+        const arxivConfigModal = new bootstrap.Modal(document.getElementById('arxivConfigModal'));
+        arxivConfigModal.show();
     });
 });
 
@@ -123,7 +127,7 @@ function addTaskButtonEventListeners() {
     document.querySelectorAll('.view-findings-btn').forEach(button => {
         button.addEventListener('click', function() {
             const taskId = this.getAttribute('data-task-id');
-            viewTaskFindings(taskId);
+            showExpandedFindings(taskId);
         });
     });
     
@@ -862,3 +866,4 @@ function saveYouTubeConfig() {
         alert('Error saving YouTube configuration');
     });
 }
+
