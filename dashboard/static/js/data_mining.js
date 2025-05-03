@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Show YouTube configuration dialog
         showYouTubeConfigDialog();
         // Publish event for YouTube dialog opened
-        EventBus.publish(EventBus.Events.OPEN_DIALOG, { dialogType: 'youtube' });
+        EventBus.publish(EVENTS.DIALOG_OPENED, { dialogType: 'youtube' });
     });
     
     // Add event listener for the "Add Arxiv Mining" button to open the ArXiv dialog
@@ -23,16 +23,16 @@ document.addEventListener('DOMContentLoaded', function() {
         const arxivConfigModal = new bootstrap.Modal(document.getElementById('arxivConfigModal'));
         arxivConfigModal.show();
         // Publish event for ArXiv dialog opened
-        EventBus.publish(EventBus.Events.OPEN_DIALOG, { dialogType: 'arxiv' });
+        EventBus.publish(EVENTS.DIALOG_OPENED, { dialogType: 'arxiv' });
     });
 
     // Subscribe to template events
-    EventBus.subscribe(EventBus.Events.TEMPLATE_LOADED, handleTemplateLoaded);
+    EventBus.subscribe(EVENTS.DATA_LOADED, handleTemplateLoaded);
     
     // Subscribe to task events
-    EventBus.subscribe(EventBus.Events.TASK_CREATED, handleTaskCreated);
-    EventBus.subscribe(EventBus.Events.TASK_UPDATED, handleTaskUpdated);
-    EventBus.subscribe(EventBus.Events.TASK_DELETED, handleTaskDeleted);
+    EventBus.subscribe(EVENTS.DATA_SAVED, handleTaskCreated);
+    EventBus.subscribe(EVENTS.DATA_SAVED, handleTaskUpdated);
+    EventBus.subscribe(EVENTS.DATA_DELETED, handleTaskDeleted);
 });
 
 // Handle template loaded event
@@ -384,9 +384,8 @@ function loadDataMiningTasks() {
         miningListings.innerHTML = '<tr><td colspan="5" class="text-center"><i class="bi bi-arrow-repeat spin me-2"></i> Loading tasks...</td></tr>';
     }
     
-    // Fetch tasks from API
-    fetch('/data-mining/api/data-mining/tasks')
-        .then(response => response.json())
+    // Fetch tasks from API using ApiService
+    ApiService.dataMining.getTasks()
         .then(data => {
             if (data.status === 'success' && data.tasks) {
                 displayDataMiningTasks(data.tasks);
