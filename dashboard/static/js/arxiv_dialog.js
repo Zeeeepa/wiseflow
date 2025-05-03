@@ -24,6 +24,14 @@ function initArxivDialog() {
     document.getElementById('save-template-btn').addEventListener('click', function() {
         saveAsTemplate();
     });
+    
+    // Add event listener to clear error message when user types in focus field
+    document.getElementById('arxiv-focus').addEventListener('input', function() {
+        const errorElement = document.getElementById('arxiv-focus-error');
+        if (errorElement) {
+            errorElement.textContent = '';
+        }
+    });
 
     // Initialize tooltips
     var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -85,17 +93,10 @@ function showMoreSubcategories() {
     moreBtn.parentElement.style.display = 'none';
 }
 
-// Function to start ArXiv mining
-function startArxivMining() {
-    // Get form values
+// Function to get all form values
+function getArxivConfig() {
     const focus = document.getElementById('arxiv-focus').value;
     const description = document.getElementById('arxiv-description').value;
-    
-    // Validate required fields
-    if (!focus) {
-        alert('Please enter a focus for your ArXiv search');
-        return;
-    }
     
     // Get reference context inputs
     const referenceContexts = [];
@@ -138,8 +139,7 @@ function startArxivMining() {
         advancedOptions.push(checkbox.value);
     });
     
-    // Create configuration object
-    const config = {
+    return {
         focus: focus,
         description: description,
         referenceContexts: referenceContexts,
@@ -151,6 +151,27 @@ function startArxivMining() {
         parallelWorkers: parallelWorkers,
         advancedOptions: advancedOptions
     };
+}
+
+// Function to start ArXiv mining
+function startArxivMining() {
+    // Get form values
+    const focus = document.getElementById('arxiv-focus').value;
+    
+    // Validate required fields
+    if (!focus) {
+        // Improved validation with form feedback
+        const errorElement = document.getElementById('arxiv-focus-error');
+        if (errorElement) {
+            errorElement.textContent = 'Please enter a focus for your ArXiv search';
+        } else {
+            alert('Please enter a focus for your ArXiv search');
+        }
+        return;
+    }
+    
+    // Get all form values
+    const config = getArxivConfig();
     
     // Send configuration to server
     fetch('/data-mining/api/arxiv/start', {
@@ -180,7 +201,7 @@ function startArxivMining() {
     })
     .catch(error => {
         console.error('Error starting ArXiv mining:', error);
-        alert('Error starting ArXiv mining. Please try again.');
+        alert('Error starting ArXiv mining: ' + (error.message || 'Please try again.'));
     });
 }
 
@@ -191,21 +212,24 @@ function saveAsTemplate() {
     
     // Validate required fields
     if (!focus) {
-        alert('Please enter a focus for your template');
+        // Improved validation with form feedback
+        const errorElement = document.getElementById('arxiv-focus-error');
+        if (errorElement) {
+            errorElement.textContent = 'Please enter a focus for your template';
+        } else {
+            alert('Please enter a focus for your template');
+        }
         return;
     }
     
-    // Get all form values (same as startArxivMining function)
-    // ...
+    // Get all form values using the shared function
+    const config = getArxivConfig();
     
     // Create template object
     const template = {
         name: focus,
         type: 'arxiv',
-        config: {
-            // Same configuration as in startArxivMining
-            // ...
-        }
+        config: config
     };
     
     // Send template to server
@@ -226,7 +250,6 @@ function saveAsTemplate() {
     })
     .catch(error => {
         console.error('Error saving template:', error);
-        alert('Error saving template. Please try again.');
+        alert('Error saving template: ' + (error.message || 'Please try again.'));
     });
 }
-

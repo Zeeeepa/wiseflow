@@ -20,6 +20,12 @@
     margin-bottom: 0.5rem;
 }
 
+/* Error message styling */
+#arxiv-config-form .text-danger {
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
 /* Reference context container */
 #reference-context-container {
     max-height: 200px;
@@ -57,4 +63,3 @@
         max-width: 100%;
     }
 }
-
