@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('add-youtube-mining-btn').addEventListener('click', function() {
         // Show YouTube configuration dialog
         showYouTubeConfigDialog();
+    });
+    
     // Add event listener for the "Add Arxiv Mining" button to open the ArXiv dialog
     document.getElementById('add-arxiv-mining-btn').addEventListener('click', function() {
         const arxivConfigModal = new bootstrap.Modal(document.getElementById('arxivConfigModal'));
@@ -102,12 +104,25 @@ function toggleAdvancedSearchOptions(showAdvanced) {
     const contentAnalysisSection = document.querySelector('.mb-4:has(label.form-label:contains("Content Analysis"))');
     if (contentAnalysisSection) {
         contentAnalysisSection.style.display = showAdvanced ? 'block' : 'none';
+    } else {
+        // Alternative selector for browsers that don't support :has
+        const contentAnalysisSections = document.querySelectorAll('.mb-4');
+        for (const section of contentAnalysisSections) {
+            const label = section.querySelector('label.form-label');
+            if (label && label.textContent.includes('Content Analysis')) {
+                section.style.display = showAdvanced ? 'block' : 'none';
+                break;
+            }
+        }
     }
     
     // Show/hide additional options based on search scheme
     const advancedOptions = document.querySelectorAll('#github-search-issues, #github-search-prs, #github-search-discussions');
     advancedOptions.forEach(option => {
-        option.closest('.form-check').style.display = showAdvanced ? 'block' : 'none';
+        const formCheck = option.closest('.form-check');
+        if (formCheck) {
+            formCheck.style.display = showAdvanced ? 'block' : 'none';
+        }
     });
 }
 
@@ -118,6 +133,7 @@ function saveGitHubSearchTemplate() {
     
     const templateData = collectGitHubFormData();
     templateData.name = templateName;
+    templateData.type = 'github';
     
     // Show saving indicator
     const statusDiv = document.getElementById('github-search-status');
@@ -133,7 +149,12 @@ function saveGitHubSearchTemplate() {
         },
         body: JSON.stringify(templateData)
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+    })
     .then(data => {
         if (data.status === 'success') {
             if (statusDiv) {
@@ -176,7 +197,12 @@ function previewGitHubSearch() {
         },
         body: JSON.stringify(searchData)
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+    })
     .then(data => {
         if (data.status === 'success') {
             // Display preview results
@@ -208,6 +234,12 @@ function previewGitHubSearch() {
 function startGitHubSearch() {
     const searchData = collectGitHubFormData();
     
+    // Validate required fields
+    if (!searchData.focus) {
+        alert('Please enter a focus for your search.');
+        return;
+    }
+    
     // Show starting indicator
     const statusDiv = document.getElementById('github-search-status');
     if (statusDiv) {
@@ -234,7 +266,12 @@ function startGitHubSearch() {
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+    })
     .then(data => {
         if (data.status === 'success') {
             if (statusDiv) {
@@ -1027,8 +1064,6 @@ function saveTaskInterconnection() {
     });
 }
 
-
-
 // Show YouTube configuration dialog
 function showYouTubeConfigDialog() {
     // Create modal if it doesn't exist
@@ -1134,4 +1169,3 @@ function saveYouTubeConfig() {
         alert('Error saving YouTube configuration');
     });
 }
-

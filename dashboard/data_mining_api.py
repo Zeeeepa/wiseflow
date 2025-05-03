@@ -2,7 +2,7 @@
 Data Mining API endpoints for the dashboard.
 """
 
-from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form, BackgroundTasks, Query
 from typing import Dict, Any, List, Optional
 import logging
 import json
@@ -11,8 +11,9 @@ import asyncio
 from datetime import datetime
 
 from core.task.data_mining_manager import data_mining_manager
+from core.utils.general_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Create router
 router = APIRouter()

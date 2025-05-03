@@ -641,6 +641,190 @@ class DataMiningManager:
         })
         
         return analysis_results
+    
+    async def save_template(self, template_data: Dict[str, Any]) -> str:
+        """
+        Save a data mining template.
+        
+        Args:
+            template_data: Template data including name, type, and parameters
+            
+        Returns:
+            ID of the created template
+        """
+        if "name" not in template_data:
+            raise ValueError("Template name is required")
+            
+        template_id = f"template_{uuid.uuid4().hex[:8]}"
+        
+        template = {
+            "template_id": template_id,
+            "name": template_data["name"],
+            "type": template_data.get("type", "generic"),
+            "parameters": template_data,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "last_used": None
+        }
+        
+        try:
+            self.pb.add(collection_name='data_mining_templates', body=template)
+            self.logger.info(f"Created data mining template {template_id}")
+            return template_id
+        except Exception as e:
+            self.logger.error(f"Error creating data mining template: {e}")
+            raise
+    
+    async def get_templates(self, template_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all data mining templates, optionally filtered by type.
+        
+        Args:
+            template_type: Optional type filter (github, arxiv, web, youtube, etc.)
+            
+        Returns:
+            List of template dictionaries
+        """
+        try:
+            filter_query = f"type='{template_type}'" if template_type else ""
+            results = self.pb.read(collection_name='data_mining_templates', filter=filter_query, sort="-created_at")
+            return results
+        except Exception as e:
+            self.logger.error(f"Error getting data mining templates: {e}")
+            return []
+    
+    async def generate_preview(self, search_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate a preview of a data mining task.
+        
+        Args:
+            search_params: Search parameters
+            
+        Returns:
+            Dictionary containing preview information
+        """
+        task_type = search_params.get("task_type", "")
+        if not task_type and "search_scheme" in search_params:
+            # Try to determine task type from search parameters
+            if "repository_filters" in search_params:
+                task_type = "github"
+            elif "content_types" in search_params and "videos" in search_params.get("content_types", {}):
+                task_type = "youtube"
+            elif "categories" in search_params:
+                task_type = "arxiv"
+            else:
+                task_type = "web"
+        
+        preview_data = {
+            "estimated_repos": 0,
+            "estimated_files": 0,
+            "estimated_time": "Unknown"
+        }
+        
+        try:
+            if task_type == "github":
+                # Estimate GitHub search results
+                language = search_params.get("repository_filters", {}).get("language", "all")
+                stars = search_params.get("repository_filters", {}).get("stars", "any")
+                
+                # Simple estimation logic
+                base_repos = 50
+                if stars == "1000+":
+                    base_repos = 20
+                elif stars == "10000+":
+                    base_repos = 5
+                
+                language_multiplier = 1.0
+                if language != "all":
+                    if language in ["javascript", "python", "java", "c++"]:
+                        language_multiplier = 1.5
+                    else:
+                        language_multiplier = 0.7
+                
+                estimated_repos = int(base_repos * language_multiplier)
+                estimated_files = estimated_repos * 50  # Assume average 50 files per repo
+                
+                # Estimate time based on parallel workers
+                parallel_workers = search_params.get("parallel_workers", 6)
+                estimated_minutes = (estimated_repos * 2) / parallel_workers
+                estimated_time = f"{int(estimated_minutes)} minutes"
+                
+                preview_data = {
+                    "estimated_repos": estimated_repos,
+                    "estimated_files": estimated_files,
+                    "estimated_time": estimated_time
+                }
+                
+            elif task_type == "youtube":
+                # Estimate YouTube search results
+                content_types = search_params.get("contentTypes", {})
+                max_results = search_params.get("maxResults", 50)
+                
+                type_count = sum(1 for v in content_types.values() if v)
+                estimated_videos = max_results * max(1, type_count)
+                
+                # Estimate time based on processing options
+                processing_options = search_params.get("processingOptions", {})
+                time_per_video = 1  # Base time in minutes
+                
+                if processing_options.get("transcribeAudio", False):
+                    time_per_video += 2
+                if processing_options.get("extractKeyPoints", False):
+                    time_per_video += 1
+                if processing_options.get("downloadVideos", False):
+                    time_per_video += 3
+                if processing_options.get("analyzeComments", False):
+                    time_per_video += 2
+                
+                parallel_workers = search_params.get("parallelWorkers", 2)
+                estimated_minutes = (estimated_videos * time_per_video) / parallel_workers
+                estimated_time = f"{int(estimated_minutes)} minutes"
+                
+                preview_data = {
+                    "estimated_videos": estimated_videos,
+                    "estimated_time": estimated_time
+                }
+                
+            elif task_type == "arxiv":
+                # Estimate arXiv search results
+                max_results = search_params.get("max_results", 100)
+                categories = search_params.get("categories", [])
+                
+                category_multiplier = len(categories) if categories else 1
+                estimated_papers = min(max_results, 50 * category_multiplier)
+                
+                # Estimate time
+                estimated_minutes = estimated_papers * 0.5  # Assume 30 seconds per paper
+                estimated_time = f"{int(estimated_minutes)} minutes"
+                
+                preview_data = {
+                    "estimated_papers": estimated_papers,
+                    "estimated_time": estimated_time
+                }
+                
+            elif task_type == "web":
+                # Estimate web search results
+                max_results = search_params.get("max_results", 20)
+                follow_links = search_params.get("follow_links", False)
+                
+                estimated_pages = max_results
+                if follow_links:
+                    estimated_pages *= 3  # Assume each result has 2 relevant links
+                
+                # Estimate time
+                estimated_minutes = estimated_pages * 1  # Assume 1 minute per page
+                estimated_time = f"{int(estimated_minutes)} minutes"
+                
+                preview_data = {
+                    "estimated_pages": estimated_pages,
+                    "estimated_time": estimated_time
+                }
+            
+            return preview_data
+            
+        except Exception as e:
+            self.logger.error(f"Error generating preview: {e}")
+            return preview_data
 
 # Create a singleton instance
 data_mining_manager = DataMiningManager()
