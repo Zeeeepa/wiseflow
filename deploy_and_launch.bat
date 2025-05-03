@@ -4,6 +4,9 @@ setlocal enabledelayedexpansion
 echo ===== WiseFlow Deployment and Launch Script =====
 echo.
 
+REM Keep track of the original directory
+set "ORIGINAL_DIR=%CD%"
+
 REM Check if Git is installed
 where git >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
@@ -22,6 +25,23 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
+REM Check Python version safely
+python -c "import sys; print('Python ' + sys.version)" || (
+    echo Failed to check Python version.
+    echo Press any key to exit...
+    pause >nul
+    exit /b 1
+)
+
+for /f "tokens=2 delims=." %%i in ('python -c "import sys; print(sys.version.split('.')[0])"') do set PYTHON_MAJOR=%%i
+echo Detected Python version: %PYTHON_MAJOR%
+if %PYTHON_MAJOR% LSS 3 (
+    echo Python version must be 3.8 or higher.
+    echo Press any key to exit...
+    pause >nul
+    exit /b 1
+)
+
 REM Check if repository exists, if not clone it
 if not exist wiseflow\ (
     echo Cloning WiseFlow repository...
@@ -32,6 +52,7 @@ if not exist wiseflow\ (
         pause >nul
         exit /b 1
     )
+    cd wiseflow
 ) else (
     echo WiseFlow repository already exists.
     
@@ -41,12 +62,10 @@ if not exist wiseflow\ (
         echo Updating WiseFlow repository...
         cd wiseflow
         git pull
-        cd ..
+    ) else (
+        cd wiseflow
     )
 )
-
-REM Navigate to wiseflow directory
-cd wiseflow
 
 REM Install PocketBase if not already installed
 if not exist pb\pocketbase.exe (
@@ -56,6 +75,7 @@ if not exist pb\pocketbase.exe (
         echo Failed to install PocketBase.
         echo Press any key to exit...
         pause >nul
+        cd "%ORIGINAL_DIR%"
         exit /b 1
     )
 )
@@ -96,41 +116,79 @@ if not exist core\.env (
     pause >nul
 )
 
-REM Check for Python version
-for /f "tokens=2 delims=." %%i in ('python -c "import sys; print(sys.version.split(\".\")[0])"') do set PYTHON_MAJOR=%%i
-if %PYTHON_MAJOR% LSS 3 (
-    echo Python version must be 3.8 or higher.
-    echo Press any key to exit...
-    pause >nul
-    exit /b 1
-)
-
 REM Ask if user wants to create a Python virtual environment
 set /p CREATE_VENV=Do you want to create a Python virtual environment? (y/n): 
 if /i "!CREATE_VENV!"=="y" (
     REM Check if conda is available
     where conda >nul 2>nul
-    if %ERRORLEVEL% EQU 0 (
+    set CONDA_AVAILABLE=%ERRORLEVEL%
+    
+    if %CONDA_AVAILABLE% EQU 0 (
         echo Using Conda to create environment...
         set PYTHON_VERSION=3.12
         if defined WISEFLOW_PYTHON_VERSION set PYTHON_VERSION=!WISEFLOW_PYTHON_VERSION!
-        conda create -n wiseflow python=!PYTHON_VERSION! -y
+        
+        REM Check if conda environment already exists
+        conda env list | findstr /C:"wiseflow" >nul
+        if %ERRORLEVEL% NEQ 0 (
+            conda create -n wiseflow python=!PYTHON_VERSION! -y
+            if %ERRORLEVEL% NEQ 0 (
+                echo Failed to create conda environment.
+                echo Press any key to exit...
+                pause >nul
+                cd "%ORIGINAL_DIR%"
+                exit /b 1
+            )
+        ) else (
+            echo Conda environment 'wiseflow' already exists.
+        )
+        
+        REM Activate conda environment
+        echo Activating conda environment...
         call conda activate wiseflow
+        if %ERRORLEVEL% NEQ 0 (
+            echo Failed to activate conda environment. Continuing without it...
+        )
     ) else (
         echo Conda not found. Using venv instead...
-        python -m venv venv
-        call venv\Scripts\activate
+        if not exist venv\ (
+            python -m venv venv
+            if %ERRORLEVEL% NEQ 0 (
+                echo Failed to create virtual environment.
+                echo Press any key to exit...
+                pause >nul
+                cd "%ORIGINAL_DIR%"
+                exit /b 1
+            )
+        ) else (
+            echo Virtual environment already exists.
+        )
+        
+        REM Activate venv
+        echo Activating virtual environment...
+        call venv\Scripts\activate.bat
+        if %ERRORLEVEL% NEQ 0 (
+            echo Failed to activate virtual environment. Continuing without it...
+        )
     )
 )
 
 REM Install dependencies
 echo Installing Python dependencies...
-cd core
+cd core || (
+    echo Failed to navigate to core directory.
+    echo Press any key to exit...
+    pause >nul
+    cd "%ORIGINAL_DIR%"
+    exit /b 1
+)
+
 pip install -r requirements.txt
 if %ERRORLEVEL% NEQ 0 (
     echo Failed to install Python dependencies.
     echo Press any key to exit...
     pause >nul
+    cd "%ORIGINAL_DIR%"
     exit /b 1
 )
 
@@ -141,6 +199,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo Failed to install Playwright.
     echo Press any key to exit...
     pause >nul
+    cd "%ORIGINAL_DIR%"
     exit /b 1
 )
 
@@ -149,10 +208,25 @@ echo.
 echo ===== WiseFlow Setup Complete =====
 echo.
 echo Starting WiseFlow...
-python windows_run.py
+
+REM Check if windows_run.py exists
+if exist windows_run.py (
+    python windows_run.py
+) else (
+    echo windows_run.py not found. Trying to run app.py instead...
+    if exist app.py (
+        python app.py
+    ) else (
+        echo Could not find the main application file.
+        echo Press any key to exit...
+        pause >nul
+        cd "%ORIGINAL_DIR%"
+        exit /b 1
+    )
+)
 
 REM Return to original directory
-cd ..
+cd "%ORIGINAL_DIR%"
 
 REM Keep the window open after completion
 echo.
