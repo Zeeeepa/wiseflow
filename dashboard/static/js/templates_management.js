@@ -21,7 +21,178 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Setup import/export buttons
     setupBottomActions();
+    
+    // Load templates from API
+    loadTemplates();
+    
+    // Subscribe to template events
+    EventBus.subscribe(EventBus.Events.TEMPLATE_CREATED, handleTemplateCreated);
+    EventBus.subscribe(EventBus.Events.TEMPLATE_UPDATED, handleTemplateUpdated);
+    EventBus.subscribe(EventBus.Events.TEMPLATE_DELETED, handleTemplateDeleted);
 });
+
+// Load templates from API
+function loadTemplates() {
+    // Show loading indicator
+    const templatesContainer = document.querySelector('.templates-container');
+    if (templatesContainer) {
+        templatesContainer.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2">Loading templates...</p>
+            </div>
+        `;
+    }
+    
+    // Fetch templates from API
+    ApiClient.dataMining.getTemplates()
+        .then(data => {
+            if (data.status === 'success' && data.templates) {
+                displayTemplates(data.templates);
+                
+                // Update state
+                StateManager.dispatch({
+                    type: 'SET_TEMPLATES',
+                    payload: data.templates
+                });
+            } else {
+                if (templatesContainer) {
+                    templatesContainer.innerHTML = `
+                        <div class="alert alert-info">
+                            <p>No templates found.</p>
+                            <p>Create templates by saving configurations from data mining tasks.</p>
+                        </div>
+                    `;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading templates:', error);
+            if (templatesContainer) {
+                templatesContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <p>Error loading templates. Please try again.</p>
+                        <button class="btn btn-outline-primary mt-2" id="retry-load-btn">
+                            <i class="bi bi-arrow-clockwise"></i> Retry
+                        </button>
+                    </div>
+                `;
+                
+                // Add event listener to retry button
+                document.getElementById('retry-load-btn').addEventListener('click', loadTemplates);
+            }
+        });
+}
+
+// Display templates
+function displayTemplates(templates) {
+    const templatesContainer = document.querySelector('.templates-container');
+    if (!templatesContainer) return;
+    
+    if (templates.length === 0) {
+        templatesContainer.innerHTML = `
+            <div class="alert alert-info">
+                <p>No templates found.</p>
+                <p>Create templates by saving configurations from data mining tasks.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    // Clear existing content
+    templatesContainer.innerHTML = '';
+    
+    // Sort templates by created_at (newest first)
+    templates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    // Add each template to the container
+    templates.forEach(template => {
+        const templateCard = document.createElement('div');
+        templateCard.className = 'template-card';
+        templateCard.setAttribute('data-template-id', template.template_id);
+        templateCard.setAttribute('data-template-type', template.type);
+        
+        // Format dates
+        const createdDate = WiseFlowUtils.formatDateTime(template.created_at);
+        const lastUsedDate = template.last_used_at ? 
+            WiseFlowUtils.formatDateTime(template.last_used_at) : 
+            'Never';
+        
+        templateCard.innerHTML = `
+            <div class="template-title">${template.name}</div>
+            <div class="template-meta">
+                <span class="badge bg-${getTemplateBadgeColor(template.type)}">${template.type}</span>
+                <span class="ms-2">Created: ${createdDate}</span>
+                <span class="ms-2">Last Used: ${lastUsedDate}</span>
+            </div>
+            <div class="template-actions">
+                <button class="btn btn-sm btn-outline-primary load-template-btn">Load</button>
+                <button class="btn btn-sm btn-outline-secondary edit-template-btn">Edit</button>
+                <button class="btn btn-sm btn-outline-danger delete-template-btn">Delete</button>
+            </div>
+        `;
+        
+        templatesContainer.appendChild(templateCard);
+    });
+    
+    // Add event listeners to the newly created buttons
+    setupTemplateActions();
+    
+    // Update pagination
+    updatePagination();
+}
+
+// Get template badge color based on type
+function getTemplateBadgeColor(type) {
+    switch(type.toLowerCase()) {
+        case 'github':
+            return 'primary';
+        case 'arxiv':
+            return 'success';
+        case 'web':
+        case 'webresearch':
+            return 'info';
+        case 'youtube':
+            return 'danger';
+        default:
+            return 'secondary';
+    }
+}
+
+// Handle template created event
+function handleTemplateCreated(data) {
+    console.log('Template created:', data);
+    
+    // Refresh the template list
+    loadTemplates();
+    
+    // Show success notification
+    WiseFlowUtils.showToast(`Template "${data.name}" created successfully`, 'success');
+}
+
+// Handle template updated event
+function handleTemplateUpdated(data) {
+    console.log('Template updated:', data);
+    
+    // Refresh the template list
+    loadTemplates();
+    
+    // Show success notification
+    WiseFlowUtils.showToast(`Template "${data.name}" updated successfully`, 'success');
+}
+
+// Handle template deleted event
+function handleTemplateDeleted(data) {
+    console.log('Template deleted:', data);
+    
+    // Refresh the template list
+    loadTemplates();
+    
+    // Show success notification
+    WiseFlowUtils.showToast(`Template deleted successfully`, 'success');
+}
 
 // Filter templates based on search text and type
 function filterTemplates() {
@@ -46,6 +217,16 @@ function filterTemplates() {
     
     // Update pagination after filtering
     updatePagination();
+    
+    // Update state
+    StateManager.dispatch({
+        type: 'SET_FILTERS',
+        payload: {
+            searchText: searchText,
+            templateType: selectedType
+        },
+        persist: true
+    });
 }
 
 // Setup event listeners for template action buttons
@@ -250,4 +431,3 @@ function setupBottomActions() {
         });
     }
 }
-
