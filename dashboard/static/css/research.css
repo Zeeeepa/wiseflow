@@ -1,0 +1,199 @@
+/**
+ * Research Dashboard CSS
+ * Styles for the research connector UI
+ */
+
+/* Research card styles */
+.research-card {
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.research-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* Mode icon styles */
+.mode-icon {
+    font-size: 2.5rem;
+    margin-bottom: 15px;
+    transition: transform 0.3s ease;
+}
+
+.research-card:hover .mode-icon {
+    transform: scale(1.1);
+}
+
+/* API badge styles */
+.api-badge {
+    font-size: 0.8rem;
+    margin-right: 5px;
+    font-weight: normal;
+}
+
+/* Result section styles */
+.result-section {
+    border-left: 3px solid #0d6efd;
+    padding-left: 15px;
+    margin-bottom: 20px;
+    transition: border-color 0.3s ease;
+}
+
+.result-section:hover {
+    border-left-color: #0a58ca;
+}
+
+.result-section h6 {
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+/* Research history styles */
+.research-history {
+    max-height: 600px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+.research-history::-webkit-scrollbar {
+    width: 6px;
+}
+
+.research-history::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.research-history::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 3px;
+}
+
+.research-history::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+.list-group-item {
+    transition: background-color 0.3s ease;
+}
+
+.list-group-item:hover {
+    background-color: #f8f9fa;
+}
+
+/* Visualization container styles */
+.visualization-container {
+    height: 400px;
+    border-radius: 10px;
+    overflow: hidden;
+    background-color: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.3s ease;
+}
+
+.visualization-container:hover {
+    background-color: #e9ecef;
+}
+
+/* Settings section styles */
+.settings-section {
+    background-color: #f8f9fa;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+    transition: box-shadow 0.3s ease;
+}
+
+.settings-section:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+}
+
+.settings-section h6 {
+    font-weight: 600;
+    margin-bottom: 15px;
+    color: #495057;
+}
+
+/* Form control styles */
+.form-control, .form-select {
+    border-radius: 8px;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Button styles */
+.btn {
+    border-radius: 8px;
+    transition: transform 0.2s ease;
+}
+
+.btn:active {
+    transform: scale(0.98);
+}
+
+/* Research results animation */
+.research-results {
+    transition: opacity 0.5s ease;
+}
+
+.research-results.d-none {
+    opacity: 0;
+}
+
+.research-results:not(.d-none) {
+    opacity: 1;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .research-card {
+        margin-bottom: 15px;
+    }
+    
+    .visualization-container {
+        height: 300px;
+    }
+    
+    .settings-section {
+        padding: 15px;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .research-card {
+        background-color: #2b3035;
+        color: #e9ecef;
+    }
+    
+    .settings-section {
+        background-color: #2b3035;
+    }
+    
+    .visualization-container {
+        background-color: #212529;
+    }
+    
+    .result-section {
+        border-left-color: #0d6efd;
+    }
+    
+    .list-group-item {
+        background-color: #2b3035;
+        color: #e9ecef;
+        border-color: #495057;
+    }
+    
+    .list-group-item:hover {
+        background-color: #343a40;
+    }
+}
+
