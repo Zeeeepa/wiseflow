@@ -6,6 +6,16 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load active data mining tasks
     loadDataMiningTasks();
+    
+    // Add event listener for "Add YouTube Mining" button in listings tab
+    document.getElementById('add-youtube-mining-btn').addEventListener('click', function() {
+        // Show YouTube configuration dialog
+        showYouTubeConfigDialog();
+    // Add event listener for the "Add Arxiv Mining" button to open the ArXiv dialog
+    document.getElementById('add-arxiv-mining-btn').addEventListener('click', function() {
+        const arxivConfigModal = new bootstrap.Modal(document.getElementById('arxivConfigModal'));
+        arxivConfigModal.show();
+    });
 });
 
 // Initialize data mining functionality
@@ -750,3 +760,111 @@ function saveTaskInterconnection() {
         alert('Error interconnecting tasks');
     });
 }
+
+
+// Show YouTube configuration dialog
+function showYouTubeConfigDialog() {
+    // Create modal if it doesn't exist
+    let modal = document.getElementById('youtubeConfigModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.id = 'youtubeConfigModal';
+        modal.tabIndex = '-1';
+        modal.setAttribute('aria-labelledby', 'youtubeConfigModalLabel');
+        modal.setAttribute('aria-hidden', 'true');
+        
+        modal.innerHTML = `
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="youtubeConfigModalLabel">YouTube Configuration</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="youtubeConfigForm">
+                            <div class="mb-3">
+                                <label for="youtube-search-type" class="form-label">Search Type</label>
+                                <select class="form-select" id="youtube-search-type" required>
+                                    <option value="videos">Videos</option>
+                                    <option value="playlists">Playlists</option>
+                                    <option value="channels">Channels</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="youtube-search-timeframe" class="form-label">Timeframe</label>
+                                <select class="form-select" id="youtube-search-timeframe" required>
+                                    <option value="all">All Time</option>
+                                    <option value="last-week">Last Week</option>
+                                    <option value="last-month">Last Month</option>
+                                    <option value="last-year">Last Year</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="youtube-search-duration" class="form-label">Duration</label>
+                                <select class="form-select" id="youtube-search-duration" required>
+                                    <option value="all">All</option>
+                                    <option value="short">Short</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="long">Long</option>
+                                </select>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="saveYouTubeConfigBtn">Save Configuration</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Add event listener for save button
+        document.getElementById('saveYouTubeConfigBtn').addEventListener('click', function() {
+            saveYouTubeConfig();
+        });
+    }
+}
+
+// Save YouTube configuration
+function saveYouTubeConfig() {
+    const searchType = document.getElementById('youtube-search-type').value;
+    const timeframe = document.getElementById('youtube-search-timeframe').value;
+    const duration = document.getElementById('youtube-search-duration').value;
+    
+    // Prepare configuration data
+    const configData = {
+        search_type: searchType,
+        timeframe: timeframe,
+        duration: duration
+    };
+    
+    // Save configuration via API
+    fetch('/data-mining/api/data-mining/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(configData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('youtubeConfigModal'));
+            modal.hide();
+            
+            // Show success message
+            alert('YouTube configuration saved successfully');
+        } else {
+            alert(`Error saving configuration: ${data.message || 'Unknown error'}`);
+        }
+    })
+    .catch(error => {
+        console.error('Error saving YouTube configuration:', error);
+        alert('Error saving YouTube configuration');
+    });
+}
+

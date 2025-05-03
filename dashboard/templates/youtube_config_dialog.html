@@ -1,0 +1,152 @@
+<!-- YouTube Configuration Dialog -->
+<div class="modal fade" id="youtubeConfigModal" tabindex="-1" aria-labelledby="youtubeConfigModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="youtubeConfigModalLabel">YouTube Data Mining Configuration</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="youtube-config-form">
+          <!-- Focus -->
+          <div class="mb-3">
+            <label for="youtube-focus" class="form-label">Focus:</label>
+            <input type="text" class="form-control" id="youtube-focus" placeholder="Enter your search focus...">
+          </div>
+          
+          <!-- Description -->
+          <div class="mb-3">
+            <label for="youtube-description" class="form-label">Description:</label>
+            <textarea class="form-control" id="youtube-description" rows="2" placeholder="Describe what you're looking for..."></textarea>
+          </div>
+          
+          <!-- Reference Context Files/URLs -->
+          <div class="mb-3">
+            <label class="form-label">Add Reference Context Files/URLs:</label>
+            <div id="youtube-reference-container">
+              <div class="input-group mb-2">
+                <input type="text" class="form-control youtube-reference" placeholder="Enter file path or URL...">
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="youtube-add-reference-btn">+ Add More</button>
+          </div>
+          
+          <!-- Content Types -->
+          <div class="mb-3">
+            <label class="form-label">Content Types:</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-videos" checked>
+              <label class="form-check-label" for="youtube-videos">Videos</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-playlists" checked>
+              <label class="form-check-label" for="youtube-playlists">Playlists</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-live-streams">
+              <label class="form-check-label" for="youtube-live-streams">Live Streams</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-shorts">
+              <label class="form-check-label" for="youtube-shorts">Shorts</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-channels">
+              <label class="form-check-label" for="youtube-channels">Channels</label>
+            </div>
+          </div>
+          
+          <!-- Time Range -->
+          <div class="mb-3">
+            <label for="youtube-time-range" class="form-label">Time Range:</label>
+            <select class="form-select" id="youtube-time-range">
+              <option value="day">Last 24 Hours</option>
+              <option value="week">Last Week</option>
+              <option value="month">Last Month</option>
+              <option value="3months">Last 3 Months</option>
+              <option value="6months" selected>Last 6 Months</option>
+              <option value="year">Last Year</option>
+              <option value="all">All Time</option>
+            </select>
+          </div>
+          
+          <!-- Video Length -->
+          <div class="mb-3">
+            <label class="form-label">Video Length:</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-short-videos">
+              <label class="form-check-label" for="youtube-short-videos">Short (&lt;5 min)</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-medium-videos" checked>
+              <label class="form-check-label" for="youtube-medium-videos">Medium (5-20 min)</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-long-videos" checked>
+              <label class="form-check-label" for="youtube-long-videos">Long (&gt;20 min)</label>
+            </div>
+          </div>
+          
+          <!-- Max Results -->
+          <div class="mb-3">
+            <label for="youtube-max-results" class="form-label">Max Results: <span id="youtube-max-results-value">50</span></label>
+            <input type="range" class="form-range" id="youtube-max-results" min="10" max="200" step="10" value="50">
+            <small class="text-muted">(10-200)</small>
+          </div>
+          
+          <!-- Processing Options -->
+          <div class="mb-3">
+            <label class="form-label">Processing Options:</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-transcribe" checked>
+              <label class="form-check-label" for="youtube-transcribe">Transcribe audio</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-extract-key-points" checked>
+              <label class="form-check-label" for="youtube-extract-key-points">Extract key points</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-download-videos">
+              <label class="form-check-label" for="youtube-download-videos">Download videos</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-analyze-comments" checked>
+              <label class="form-check-label" for="youtube-analyze-comments">Analyze comments</label>
+            </div>
+          </div>
+          
+          <!-- Parallel Workers -->
+          <div class="mb-3">
+            <label for="youtube-workers" class="form-label">Parallel workers: <span id="youtube-workers-value">2</span></label>
+            <input type="range" class="form-range" id="youtube-workers" min="1" max="5" step="1" value="2">
+            <small class="text-muted">(1-5)</small>
+          </div>
+          
+          <!-- Advanced Options -->
+          <div class="mb-3">
+            <label class="form-label">Advanced Options:</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-follow-recommended" checked>
+              <label class="form-check-label" for="youtube-follow-recommended">Follow recommended videos</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-save-to-db" checked>
+              <label class="form-check-label" for="youtube-save-to-db">Save findings to database</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-use-api-key">
+              <label class="form-check-label" for="youtube-use-api-key">Use API key:</label>
+              <input type="text" class="form-control mt-2" id="youtube-api-key" placeholder="Enter YouTube API key..." disabled>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success" id="youtube-save-template-btn">Save as Template</button>
+        <button type="button" class="btn btn-primary" id="youtube-start-btn">Start</button>
+      </div>
+    </div>
+  </div>
+</div>
+

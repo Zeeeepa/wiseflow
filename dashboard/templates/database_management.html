@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wiseflow - Database Management</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Wiseflow Dashboard</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/search">Search</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/plugins">Plugins</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/monitor">Monitor</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/database">Database</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-md-2 sidebar">
+                <div class="sidebar-heading">Database</div>
+                <a href="#" class="sidebar-link active">Findings</a>
+                <a href="#" class="sidebar-link">Collections</a>
+                <a href="#" class="sidebar-link">Tags</a>
+                <a href="#" class="sidebar-link">Reports</a>
+                
+                <div class="sidebar-heading">Sources</div>
+                <a href="#" class="sidebar-link">GitHub</a>
+                <a href="#" class="sidebar-link">WebSearch</a>
+                <a href="#" class="sidebar-link">YouTube</a>
+                <a href="#" class="sidebar-link">ArXiv</a>
+            </div>
+            
+            <div class="col-md-10 main-content">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title">Findings Database</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="input-group">
+                                    <input type="text" class="form-control" placeholder="Search findings...">
+                                    <button class="btn btn-primary" type="button">
+                                        <i class="bi bi-search"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="d-flex justify-content-end">
+                                    <select class="form-select me-2" style="max-width: 150px;">
+                                        <option selected>All Sources</option>
+                                        <option>GitHub</option>
+                                        <option>WebSearch</option>
+                                        <option>YouTube</option>
+                                        <option>ArXiv</option>
+                                    </select>
+                                    <select class="form-select me-2" style="max-width: 150px;">
+                                        <option selected>All Time</option>
+                                        <option>Today</option>
+                                        <option>This Week</option>
+                                        <option>This Month</option>
+                                        <option>This Year</option>
+                                    </select>
+                                    <select class="form-select" style="max-width: 150px;">
+                                        <option selected>All Tags</option>
+                                        <option>RAG</option>
+                                        <option>Vector DB</option>
+                                        <option>AI Agents</option>
+                                        <option>Code Search</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Collections</h6>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <ul class="list-group list-group-flush">
+                                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                <span><i class="bi bi-chevron-right"></i> RAG Systems</span>
+                                                <span class="badge bg-primary rounded-pill">42</span>
+                                            </li>
+                                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                <span><i class="bi bi-chevron-right"></i> Vector Databases</span>
+                                                <span class="badge bg-primary rounded-pill">28</span>
+                                            </li>
+                                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                <span><i class="bi bi-chevron-right"></i> AI Agents</span>
+                                                <span class="badge bg-primary rounded-pill">35</span>
+                                            </li>
+                                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                <span><i class="bi bi-chevron-right"></i> Code Search</span>
+                                                <span class="badge bg-primary rounded-pill">19</span>
+                                            </li>
+                                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                <span><i class="bi bi-chevron-right"></i> LLM Applications</span>
+                                                <span class="badge bg-primary rounded-pill">56</span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-9">
+                                <h6 class="mb-3">Recent Findings:</h6>
+                                
+                                <div class="card mb-3">
+                                    <div class="card-body">
+                                        <h5 class="card-title">"Hybrid RAG Architecture for Code Repositories"</h5>
+                                        <div class="d-flex mb-2">
+                                            <span class="me-3"><strong>Source:</strong> WebSearch - ArticleURL1</span>
+                                            <span><strong>Added:</strong> 2025-05-03</span>
+                                        </div>
+                                        <div class="mb-2">
+                                            <span class="badge bg-info me-1">RAG</span>
+                                            <span class="badge bg-info me-1">Code Search</span>
+                                            <span class="badge bg-info">Vector DB</span>
+                                        </div>
+                                        <div class="d-flex">
+                                            <button class="btn btn-sm btn-outline-primary me-2">View</button>
+                                            <button class="btn btn-sm btn-outline-secondary me-2">Edit Tags</button>
+                                            <button class="btn btn-sm btn-outline-success">Add to Collection</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="card mb-3">
+                                    <div class="card-body">
+                                        <h5 class="card-title">"CodeRAG: A Framework for Code Retrieval"</h5>
+                                        <div class="d-flex mb-2">
+                                            <span class="me-3"><strong>Source:</strong> GitHub - Repository123</span>
+                                            <span><strong>Added:</strong> 2025-05-02</span>
+                                        </div>
+                                        <div class="mb-2">
+                                            <span class="badge bg-info me-1">RAG</span>
+                                            <span class="badge bg-info me-1">Framework</span>
+                                            <span class="badge bg-info">Python</span>
+                                        </div>
+                                        <div class="d-flex">
+                                            <button class="btn btn-sm btn-outline-primary me-2">View</button>
+                                            <button class="btn btn-sm btn-outline-secondary me-2">Edit Tags</button>
+                                            <button class="btn btn-sm btn-outline-success">Add to Collection</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="card mb-3">
+                                    <div class="card-body">
+                                        <h5 class="card-title">"Vector Embeddings for Source Code"</h5>
+                                        <div class="d-flex mb-2">
+                                            <span class="me-3"><strong>Source:</strong> ArXiv - Paper456</span>
+                                            <span><strong>Added:</strong> 2025-05-01</span>
+                                        </div>
+                                        <div class="mb-2">
+                                            <span class="badge bg-info me-1">Embeddings</span>
+                                            <span class="badge bg-info me-1">Vector DB</span>
+                                            <span class="badge bg-info">Research</span>
+                                        </div>
+                                        <div class="d-flex">
+                                            <button class="btn btn-sm btn-outline-primary me-2">View</button>
+                                            <button class="btn btn-sm btn-outline-secondary me-2">Edit Tags</button>
+                                            <button class="btn btn-sm btn-outline-success">Add to Collection</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="card mb-3">
+                                    <div class="card-body">
+                                        <h5 class="card-title">"Building AI Agents for Code Analysis"</h5>
+                                        <div class="d-flex mb-2">
+                                            <span class="me-3"><strong>Source:</strong> YouTube - VideoURL789</span>
+                                            <span><strong>Added:</strong> 2025-04-30</span>
+                                        </div>
+                                        <div class="mb-2">
+                                            <span class="badge bg-info me-1">AI Agents</span>
+                                            <span class="badge bg-info me-1">Code Analysis</span>
+                                            <span class="badge bg-info">Tutorial</span>
+                                        </div>
+                                        <div class="d-flex">
+                                            <button class="btn btn-sm btn-outline-primary me-2">View</button>
+                                            <button class="btn btn-sm btn-outline-secondary me-2">Edit Tags</button>
+                                            <button class="btn btn-sm btn-outline-success">Add to Collection</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <nav aria-label="Findings pagination">
+                                    <ul class="pagination justify-content-center">
+                                        <li class="page-item disabled">
+                                            <a class="page-link" href="#" tabindex="-1">Previous</a>
+                                        </li>
+                                        <li class="page-item active"><a class="page-link" href="#">1</a></li>
+                                        <li class="page-item"><a class="page-link" href="#">2</a></li>
+                                        <li class="page-item"><a class="page-link" href="#">3</a></li>
+                                        <li class="page-item">
+                                            <a class="page-link" href="#">Next</a>
+                                        </li>
+                                    </ul>
+                                </nav>
+                                
+                                <div class="d-flex justify-content-center mt-3">
+                                    <button class="btn btn-outline-primary me-2">
+                                        <i class="bi bi-download"></i> Export
+                                    </button>
+                                    <button class="btn btn-outline-success me-2">
+                                        <i class="bi bi-file-earmark-text"></i> Create Report
+                                    </button>
+                                    <button class="btn btn-outline-info me-2">
+                                        <i class="bi bi-graph-up"></i> Visualize
+                                    </button>
+                                    <button class="btn btn-outline-secondary">
+                                        <i class="bi bi-cloud-arrow-up"></i> Backup
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/database_management.js"></script>
+</body>
+</html>
+

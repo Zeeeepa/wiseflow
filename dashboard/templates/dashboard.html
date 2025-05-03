@@ -32,6 +32,10 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/monitor">Monitor</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/templates">Templates</a>
+                        <a class="nav-link" href="/database">Database</a>
+                    </li>
                 </ul>
             </div>
         </div>
@@ -51,6 +55,11 @@
                 <a href="/search" class="sidebar-link">YouTube</a>
                 <a href="/search" class="sidebar-link">Code Search</a>
                 
+                <div class="sidebar-heading">Management</div>
+                <a href="/templates" class="sidebar-link">Templates</a>
+                <a href="#" class="sidebar-link">Database</a>
+                <a href="#" class="sidebar-link">Settings</a>
+                
                 <div class="sidebar-heading">Tools</div>
                 <a href="#" class="sidebar-link">Text Processor</a>
                 <a href="#" class="sidebar-link">Entity Analyzer</a>
@@ -59,6 +68,122 @@
             
             <div class="col-md-10 p-4">
                 <h2 class="mb-4">Data Mining Dashboard</h2>
+                
+                <div class="row mb-4">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <span>Active Data Mining</span>
+                                <button id="new-process-btn" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-plus-lg"></i> New
+                                </button>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Type</th>
+                                                <th>Status</th>
+                                                <th>Progress</th>
+                                                <th>Runtime</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="active-mining-list">
+                                            <tr>
+                                                <td>GitHub - Python Agentic RAG</td>
+                                                <td>GitHub</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>
+                                                    <div class="progress">
+                                                        <div class="progress-bar" role="progressbar" style="width: 85%;" aria-valuenow="85" aria-valuemin="0" aria-valuemax="100">85%</div>
+                                                    </div>
+                                                </td>
+                                                <td>2h 37min</td>
+                                            </tr>
+                                            <tr>
+                                                <td>GitHub - Database For Data Mining</td>
+                                                <td>GitHub</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>
+                                                    <div class="progress">
+                                                        <div class="progress-bar" role="progressbar" style="width: 92%;" aria-valuenow="92" aria-valuemin="0" aria-valuemax="100">92%</div>
+                                                    </div>
+                                                </td>
+                                                <td>14h 37min</td>
+                                            </tr>
+                                            <tr>
+                                                <td>WebResearch - Best Ways to create codebase RAG</td>
+                                                <td>WebSearch</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>
+                                                    <div class="progress">
+                                                        <div class="progress-bar" role="progressbar" style="width: 78%;" aria-valuenow="78" aria-valuemin="0" aria-valuemax="100">78%</div>
+                                                    </div>
+                                                </td>
+                                                <td>3h 15min</td>
+                                            </tr>
+                                            <tr>
+                                                <td>YouTube - AI Agent Frameworks</td>
+                                                <td>YouTube</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>
+                                                    <div class="progress">
+                                                        <div class="progress-bar" role="progressbar" style="width: 45%;" aria-valuenow="45" aria-valuemin="0" aria-valuemax="100">45%</div>
+                                                    </div>
+                                                </td>
+                                                <td>5h 12min</td>
+                                            </tr>
+                                            <tr>
+                                                <td>ArXiv - Vector Databases</td>
+                                                <td>ArXiv</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>
+                                                    <div class="progress">
+                                                        <div class="progress-bar" role="progressbar" style="width: 63%;" aria-valuenow="63" aria-valuemin="0" aria-valuemax="100">63%</div>
+                                                    </div>
+                                                </td>
+                                                <td>8h 03min</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="d-flex justify-content-between mt-3">
+                                    <button class="btn btn-outline-secondary btn-sm">
+                                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                                    </button>
+                                    <div>
+                                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="filterDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                            <i class="bi bi-funnel"></i> Filter
+                                        </button>
+                                        <ul class="dropdown-menu" aria-labelledby="filterDropdown">
+                                            <li><a class="dropdown-item" href="#">All</a></li>
+                                            <li><a class="dropdown-item" href="#">GitHub</a></li>
+                                            <li><a class="dropdown-item" href="#">WebSearch</a></li>
+                                            <li><a class="dropdown-item" href="#">YouTube</a></li>
+                                            <li><a class="dropdown-item" href="#">ArXiv</a></li>
+                                        </ul>
+                                        
+                                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="sortDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                            <i class="bi bi-sort-down"></i> Sort By: Runtime
+                                        </button>
+                                        <ul class="dropdown-menu" aria-labelledby="sortDropdown">
+                                            <li><a class="dropdown-item" href="#">Runtime</a></li>
+                                            <li><a class="dropdown-item" href="#">Progress</a></li>
+                                            <li><a class="dropdown-item" href="#">Name</a></li>
+                                            <li><a class="dropdown-item" href="#">Type</a></li>
+                                        </ul>
+                                        
+                                        <button class="btn btn-outline-secondary btn-sm">
+                                            <i class="bi bi-download"></i> Export
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 
                 <div class="row mb-4">
                     <div class="col-md-12">
@@ -133,5 +258,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/process_selection.js"></script>
 </body>
 </html>
