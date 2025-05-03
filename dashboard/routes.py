@@ -59,3 +59,11 @@ async def plugins_info(request: Request):
             "analyzers": analyzers
         }
     )
+
+@router.get("/templates", response_class=HTMLResponse)
+async def templates_management(request: Request):
+    """Serve the templates management page."""
+    return templates.TemplateResponse(
+        "templates_management.html", 
+        {"request": request}
+    )
