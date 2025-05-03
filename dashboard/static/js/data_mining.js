@@ -6,6 +6,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load active data mining tasks
     loadDataMiningTasks();
+    
+    // Add event listener for the "Add Arxiv Mining" button to open the ArXiv dialog
+    document.getElementById('add-arxiv-mining-btn').addEventListener('click', function() {
+        const arxivConfigModal = new bootstrap.Modal(document.getElementById('arxivConfigModal'));
+        arxivConfigModal.show();
+    });
 });
 
 // Initialize data mining functionality
