@@ -25,7 +25,7 @@ if %ERRORLEVEL% NEQ 0 (
 REM Check if repository exists, if not clone it
 if not exist wiseflow\ (
     echo Cloning WiseFlow repository...
-    git clone https://github.com/TeamWiseFlow/wiseflow.git
+    git clone https://github.com/Zeeeepa/wiseflow.git
     if %ERRORLEVEL% NEQ 0 (
         echo Failed to clone repository.
         echo Press any key to exit...
@@ -96,24 +96,26 @@ if not exist core\.env (
     pause >nul
 )
 
+REM Check for Python version
+for /f "tokens=2 delims=." %%i in ('python -c "import sys; print(sys.version.split(\".\")[0])"') do set PYTHON_MAJOR=%%i
+if %PYTHON_MAJOR% LSS 3 (
+    echo Python version must be 3.8 or higher.
+    echo Press any key to exit...
+    pause >nul
+    exit /b 1
+)
+
 REM Ask if user wants to create a Python virtual environment
 set /p CREATE_VENV=Do you want to create a Python virtual environment? (y/n): 
 if /i "!CREATE_VENV!"=="y" (
-    echo Creating Python virtual environment...
-:: Check Python version
-for /f "tokens=2 delims=." %%i in ('python -c "import sys; print(sys.version)"') do set PYTHON_VER=%%i
-if %PYTHON_VER% LSS 8 (
-    echo Python version must be 3.8 or higher
-    call :handleError "Python version check"
-)
-
-:: Create conda environment with configurable Python version
-set PYTHON_VERSION=3.12
-if defined WISEFLOW_PYTHON_VERSION set PYTHON_VERSION=%WISEFLOW_PYTHON_VERSION%
-conda create -n wiseflow python=%PYTHON_VERSION% -y
+    REM Check if conda is available
+    where conda >nul 2>nul
+    if %ERRORLEVEL% EQU 0 (
         echo Using Conda to create environment...
-        conda create -n wiseflow python=3.12 -y
-        conda activate wiseflow
+        set PYTHON_VERSION=3.12
+        if defined WISEFLOW_PYTHON_VERSION set PYTHON_VERSION=!WISEFLOW_PYTHON_VERSION!
+        conda create -n wiseflow python=!PYTHON_VERSION! -y
+        call conda activate wiseflow
     ) else (
         echo Conda not found. Using venv instead...
         python -m venv venv
@@ -151,6 +153,11 @@ python windows_run.py
 
 REM Return to original directory
 cd ..
+
+REM Keep the window open after completion
+echo.
+echo WiseFlow has been closed. Press any key to exit...
+pause >nul
 
 endlocal
 
