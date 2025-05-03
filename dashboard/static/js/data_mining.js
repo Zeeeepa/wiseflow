@@ -14,12 +14,89 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('add-youtube-mining-btn').addEventListener('click', function() {
         // Show YouTube configuration dialog
         showYouTubeConfigDialog();
+        // Publish event for YouTube dialog opened
+        EventBus.publish(EVENTS.DIALOG_OPENED, { dialogType: 'youtube' });
+    });
+    
     // Add event listener for the "Add Arxiv Mining" button to open the ArXiv dialog
     document.getElementById('add-arxiv-mining-btn').addEventListener('click', function() {
         const arxivConfigModal = new bootstrap.Modal(document.getElementById('arxivConfigModal'));
         arxivConfigModal.show();
+        // Publish event for ArXiv dialog opened
+        EventBus.publish(EVENTS.DIALOG_OPENED, { dialogType: 'arxiv' });
     });
+
+    // Subscribe to template events
+    EventBus.subscribe(EVENTS.DATA_LOADED, handleTemplateLoaded);
+    
+    // Subscribe to task events
+    EventBus.subscribe(EVENTS.DATA_SAVED, handleTaskCreated);
+    EventBus.subscribe(EVENTS.DATA_SAVED, handleTaskUpdated);
+    EventBus.subscribe(EVENTS.DATA_DELETED, handleTaskDeleted);
 });
+
+// Handle template loaded event
+function handleTemplateLoaded(data) {
+    console.log('Template loaded:', data);
+    
+    // Load template data into the appropriate form based on template type
+    if (data.type === 'github') {
+        loadGitHubTemplate(data);
+    } else if (data.type === 'youtube') {
+        // Call the YouTube config loader from youtube_config.js
+        if (typeof loadYouTubeConfigFromTemplate === 'function') {
+            loadYouTubeConfigFromTemplate(data.config);
+            
+            // Show the YouTube config dialog
+            showYouTubeConfigDialog();
+        }
+    } else if (data.type === 'arxiv') {
+        // Handle ArXiv template loading
+        loadArxivTemplate(data);
+    } else if (data.type === 'web') {
+        // Handle Web template loading
+        loadWebTemplate(data);
+    }
+    
+    // Show success notification
+    WiseFlowUtils.showToast(`Template "${data.name}" loaded successfully`, 'success');
+}
+
+// Handle task created event
+function handleTaskCreated(data) {
+    console.log('Task created:', data);
+    
+    // Refresh the task list
+    loadDataMiningTasks();
+    
+    // Show success notification
+    WiseFlowUtils.showToast(`Task "${data.name}" created successfully`, 'success');
+    
+    // Navigate to listings tab
+    document.getElementById('listings-tab').click();
+}
+
+// Handle task updated event
+function handleTaskUpdated(data) {
+    console.log('Task updated:', data);
+    
+    // Refresh the task list
+    loadDataMiningTasks();
+    
+    // Show success notification
+    WiseFlowUtils.showToast(`Task "${data.name}" updated successfully`, 'success');
+}
+
+// Handle task deleted event
+function handleTaskDeleted(data) {
+    console.log('Task deleted:', data);
+    
+    // Refresh the task list
+    loadDataMiningTasks();
+    
+    // Show success notification
+    WiseFlowUtils.showToast(`Task deleted successfully`, 'success');
+}
 
 // Initialize data mining functionality
 function initDataMining() {
@@ -307,9 +384,8 @@ function loadDataMiningTasks() {
         miningListings.innerHTML = '<tr><td colspan="5" class="text-center"><i class="bi bi-arrow-repeat spin me-2"></i> Loading tasks...</td></tr>';
     }
     
-    // Fetch tasks from API
-    fetch('/data-mining/api/data-mining/tasks')
-        .then(response => response.json())
+    // Fetch tasks from API using ApiService
+    ApiService.dataMining.getTasks()
         .then(data => {
             if (data.status === 'success' && data.tasks) {
                 displayDataMiningTasks(data.tasks);
@@ -1027,8 +1103,6 @@ function saveTaskInterconnection() {
     });
 }
 
-
-
 // Show YouTube configuration dialog
 function showYouTubeConfigDialog() {
     // Create modal if it doesn't exist
@@ -1134,4 +1208,3 @@ function saveYouTubeConfig() {
         alert('Error saving YouTube configuration');
     });
 }
-
