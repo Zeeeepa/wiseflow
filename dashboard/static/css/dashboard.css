@@ -261,7 +261,33 @@ body {
 
 .spin {
     animation: spin 1s linear infinite;
-    display: inline-block;
+}
+
+/* Add styles for expanded findings view */
+.findings-container {
+    padding: 10px;
+}
+
+.findings-header {
+    margin-bottom: 20px;
+}
+
+.findings-item {
+    transition: all 0.3s ease;
+}
+
+.findings-item:hover {
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+}
+
+.findings-pagination {
+    margin-top: 20px;
+    padding: 10px 0;
+}
+
+.article-url {
+    word-break: break-all;
 }
 
 /* Data Mining Dashboard Styles */
