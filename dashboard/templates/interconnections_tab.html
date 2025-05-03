@@ -1,0 +1,91 @@
+<!-- Interconnections Tab Content -->
+<div class="tab-pane fade" id="interconnections" role="tabpanel" aria-labelledby="interconnections-tab">
+    <h2 class="mb-4">Data Mining Interconnections</h2>
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Active Interconnections</span>
+            <button class="btn btn-primary btn-sm" id="create-interconnection-btn" data-bs-toggle="modal" data-bs-target="#createInterconnectionModal">
+                <i class="bi bi-plus-lg"></i> Create New Interconnection
+            </button>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Source Task</th>
+                            <th>Target Task</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="interconnections-list">
+                        <tr>
+                            <td colspan="5" class="text-center">Loading interconnections...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <span>Interconnection Visualization</span>
+        </div>
+        <div class="card-body">
+            <div id="interconnection-graph" style="height: 500px; background-color: #f8f9fa; border-radius: 5px;">
+                <div class="d-flex justify-content-center align-items-center h-100">
+                    <p class="text-muted">Interconnection visualization will appear here</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Interconnection Modal -->
+<div class="modal fade" id="createInterconnectionModal" tabindex="-1" aria-labelledby="createInterconnectionModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="createInterconnectionModalLabel">Create New Interconnection</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="createInterconnectionForm">
+                    <div class="mb-3">
+                        <label for="source-task-select" class="form-label">Source Task</label>
+                        <select class="form-select" id="source-task-select" required>
+                            <option value="">Select a source task</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="target-task-select-modal" class="form-label">Target Task</label>
+                        <select class="form-select" id="target-task-select-modal" required>
+                            <option value="">Select a target task</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="interconnection-type-modal" class="form-label">Connection Type</label>
+                        <select class="form-select" id="interconnection-type-modal" required>
+                            <option value="feed">Feed results as input</option>
+                            <option value="filter">Use as filter</option>
+                            <option value="combine">Combine results</option>
+                            <option value="sequence">Run in sequence</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="interconnection-description-modal" class="form-label">Description</label>
+                        <textarea class="form-control" id="interconnection-description-modal" rows="3" placeholder="Describe how these tasks should work together..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="createInterconnectionBtn">Create Interconnection</button>
+            </div>
+        </div>
+    </div>
+</div>
+
