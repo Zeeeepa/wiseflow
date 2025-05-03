@@ -1,28 +1,21 @@
 """
-Research connector plugin for performing deep research on topics using open_deep_research.
+Research connector plugin for performing deep research on topics.
 """
 
 import os
 import logging
-from typing import Any, Dict, List, Optional, Union
 import asyncio
-import json
+from typing import Any, Dict, List, Optional, Union
 
 from core.plugins.base import ConnectorPlugin
-
-# Import open_deep_research components
-try:
-    from open_deep_research import get_research_graph
-    from open_deep_research.configuration import Configuration, ResearchMode, SearchAPI
-    from open_deep_research.state import ReportState
-except ImportError:
-    logging.error("open_deep_research package not found. Please install it with: pip install open-deep-research")
+from core.plugins.connectors.research.configuration import Configuration, ResearchMode, SearchAPI
+from core.plugins.connectors.research.graph import run_linear_research
 
 logger = logging.getLogger(__name__)
 
 
 class ResearchConnector(ConnectorPlugin):
-    """Connector for performing deep research on topics using open_deep_research."""
+    """Connector for performing deep research on topics."""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize the Research connector.
@@ -80,7 +73,7 @@ class ResearchConnector(ConnectorPlugin):
             )
             
             return True
-        except (ImportError, ValueError) as e:
+        except ValueError as e:
             logger.error(f"Error initializing Research connector: {str(e)}")
             return False
     
@@ -90,12 +83,13 @@ class ResearchConnector(ConnectorPlugin):
         Returns:
             bool: True if configuration is valid, False otherwise
         """
-        # Check if open_deep_research is installed
+        # Check if required dependencies are available
         try:
-            import open_deep_research
+            import aiohttp
+            import requests
             return True
-        except ImportError:
-            logger.error("open_deep_research package not found. Please install it with: pip install open-deep-research")
+        except ImportError as e:
+            logger.error(f"Missing required dependency: {str(e)}")
             return False
     
     def connect(self) -> bool:
@@ -153,15 +147,10 @@ class ResearchConnector(ConnectorPlugin):
             logger.error(f"Error updating research configuration: {str(e)}")
             return {"error": str(e)}
         
-        # Get the appropriate research graph
+        # Perform research based on the mode
         try:
-            graph = get_research_graph(self.research_config)
-            
-            # Create initial state
-            state = {"topic": topic}
-            
-            # Run the research graph
-            result = asyncio.run(graph.ainvoke(state))
+            # Run the research
+            result = asyncio.run(run_linear_research(topic, self.research_config, self.api_keys))
             
             # Process and return the results
             return self._process_research_results(result)

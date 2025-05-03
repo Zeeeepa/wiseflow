@@ -1,6 +1,6 @@
 # Research Connector
 
-The Research Connector is a plugin for Wiseflow that enables deep, continuous research on topics using the open_deep_research library. It provides a flexible way to perform comprehensive research with different modes and search APIs.
+The Research Connector is a plugin for Wiseflow that enables deep, continuous research on topics. It provides a flexible way to perform comprehensive research with different modes and search APIs.
 
 ## Features
 
@@ -99,8 +99,13 @@ The multi-agent mode employs multiple specialized agents working together to per
 
 ## Requirements
 
-- The open_deep_research package must be installed: `pip install open-deep-research`
 - API keys for the search services you want to use (Tavily, Perplexity, Exa, etc.)
+- Required Python packages:
+  - `aiohttp`: For asynchronous HTTP requests
+  - `requests`: For synchronous HTTP requests
+  - `langchain`: For LLM interactions
+  - `langchain_core`: Core components of LangChain
+  - `bs4` (BeautifulSoup): For HTML parsing
 
 ## Example
 
