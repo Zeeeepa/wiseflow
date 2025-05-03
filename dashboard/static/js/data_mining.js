@@ -761,6 +761,7 @@ function saveTaskInterconnection() {
     });
 }
 
+
 // Show YouTube configuration dialog
 function showYouTubeConfigDialog() {
     // Create modal if it doesn't exist

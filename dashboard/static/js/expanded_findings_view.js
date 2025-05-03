@@ -239,6 +239,65 @@ function showExpandedFindings(taskId) {
  */
 function fetchTaskFindings(taskId) {
     // This would be replaced with an actual API call
+    return new Promise((resolve, reject) => {
+        // Mock data for demonstration
+        setTimeout(() => {
+            // Simulate successful response
+            if (taskId) {
+                resolve({
+                    task: {
+                        task_id: taskId,
+                        name: 'Best Ways to create codebase RAG',
+                        task_type: 'WebSearch',
+                        status: 'active'
+                    },
+                    items: [
+                        {
+                            id: '1',
+                            title: 'Building Effective RAG Systems for Codebases',
+                            url: 'ArticleURL1',
+                            relevance: 95,
+                            summary: 'This article discusses techniques for implementing RAG systems specifically for code repositories, focusing on embedding methods and retrieval strategies optimized for source code.'
+                        },
+                        {
+                            id: '2',
+                            title: 'Vector Databases for Code Search',
+                            url: 'ArticleURL2',
+                            relevance: 92,
+                            summary: 'Comprehensive comparison of vector databases for code search applications, with benchmarks on different programming languages and repository sizes.'
+                        },
+                        {
+                            id: '3',
+                            title: 'Hybrid Retrieval Methods for Source Code',
+                            url: 'ArticleURL3',
+                            relevance: 88,
+                            summary: 'Analysis of hybrid retrieval methods combining semantic search with traditional code search techniques like AST parsing and symbol analysis.'
+                        },
+                        {
+                            id: '4',
+                            title: 'Optimizing RAG for Large Codebases',
+                            url: 'ArticleURL4',
+                            relevance: 85,
+                            summary: 'Strategies for scaling RAG systems to handle very large codebases with millions of lines of code, including chunking strategies and hierarchical retrieval approaches.'
+                        },
+                        {
+                            id: '5',
+                            title: 'Code-Specific Embedding Models',
+                            url: 'ArticleURL5',
+                            relevance: 82,
+                            summary: 'Overview of embedding models trained specifically for code, comparing their performance against general-purpose text embeddings when used in RAG systems.'
+                        }
+                    ],
+                    pagination: {
+                        current_page: 1,
+                        total_pages: 4,
+                        total_items: 20
+                    }
+                });
+            } else {
+                // Simulate error response
+                reject(new Error('Invalid task ID'));
+            }
     return new Promise((resolve) => {
         // Mock data for demonstration
         setTimeout(() => {
@@ -397,8 +456,8 @@ function sortFindings(sortBy) {
     
     findingItems.sort((a, b) => {
         if (sortBy === 'relevance') {
-            const relevanceA = parseInt(a.querySelector('.badge').textContent.match(/\d+/)[0]);
-            const relevanceB = parseInt(b.querySelector('.badge').textContent.match(/\d+/)[0]);
+            const relevanceA = parseInt(a.querySelector('.badge').textContent.match(/\d+/)[0] || '0');
+            const relevanceB = parseInt(b.querySelector('.badge').textContent.match(/\d+/)[0] || '0');
             return relevanceB - relevanceA; // Higher relevance first
         } else if (sortBy === 'title') {
             const titleA = a.querySelector('.card-title').textContent;
@@ -569,6 +628,7 @@ function visualizeFindings() {
 document.addEventListener('DOMContentLoaded', function() {
     initExpandedFindingsView();
     
+
     // Add event listener to "View Findings" buttons
     document.querySelectorAll('.view-findings-btn').forEach(button => {
         button.addEventListener('click', function() {
