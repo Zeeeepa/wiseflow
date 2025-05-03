@@ -1,0 +1,166 @@
+<!-- ArXiv Configuration Dialog -->
+<div class="modal fade" id="arxivConfigModal" tabindex="-1" aria-labelledby="arxivConfigModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="arxivConfigModalLabel">ArXiv Data Mining Configuration</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="arxiv-config-form">
+          <!-- Focus -->
+          <div class="mb-3">
+            <label for="arxiv-focus" class="form-label">Focus:</label>
+            <input type="text" class="form-control" id="arxiv-focus" placeholder="Enter your research focus">
+            <div id="arxiv-focus-error" class="text-danger"></div>
+          </div>
+          
+          <!-- Description -->
+          <div class="mb-3">
+            <label for="arxiv-description" class="form-label">Description:</label>
+            <textarea class="form-control" id="arxiv-description" rows="2" placeholder="Describe what you're looking for in detail"></textarea>
+          </div>
+          
+          <!-- Reference Context Files/URLs -->
+          <div class="mb-3">
+            <label class="form-label">Add Reference Context Files/URLs:</label>
+            <div class="input-group mb-2">
+              <input type="text" class="form-control reference-context-input" placeholder="Enter file path or URL">
+              <button class="btn btn-outline-secondary add-more-context-btn" type="button">+ Add More</button>
+            </div>
+            <div id="reference-context-container"></div>
+          </div>
+          
+          <!-- Categories -->
+          <div class="mb-3">
+            <label class="form-label">Categories:</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="cs" id="category-cs" checked>
+              <label class="form-check-label" for="category-cs">Computer Science</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="math" id="category-math">
+              <label class="form-check-label" for="category-math">Mathematics</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="physics" id="category-physics">
+              <label class="form-check-label" for="category-physics">Physics</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="q-bio" id="category-q-bio">
+              <label class="form-check-label" for="category-q-bio">Quantitative Biology</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="q-fin" id="category-q-fin">
+              <label class="form-check-label" for="category-q-fin">Quantitative Finance</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="stat" id="category-stat">
+              <label class="form-check-label" for="category-stat">Statistics</label>
+            </div>
+          </div>
+          
+          <!-- Sub-categories -->
+          <div class="mb-3">
+            <label class="form-label">Sub-categories:</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="cs.AI" id="subcategory-cs-ai" checked>
+              <label class="form-check-label" for="subcategory-cs-ai">cs.AI - Artificial Intelligence</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="cs.CL" id="subcategory-cs-cl" checked>
+              <label class="form-check-label" for="subcategory-cs-cl">cs.CL - Computation and Language</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="cs.LG" id="subcategory-cs-lg" checked>
+              <label class="form-check-label" for="subcategory-cs-lg">cs.LG - Machine Learning</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="cs.CV" id="subcategory-cs-cv">
+              <label class="form-check-label" for="subcategory-cs-cv">cs.CV - Computer Vision</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="cs.NE" id="subcategory-cs-ne">
+              <label class="form-check-label" for="subcategory-cs-ne">cs.NE - Neural and Evolutionary Computing</label>
+            </div>
+            <div class="mb-2">
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="more-subcategories-btn">+ More</button>
+            </div>
+          </div>
+          
+          <!-- Time Range -->
+          <div class="mb-3">
+            <label for="arxiv-time-range" class="form-label">Time Range:</label>
+            <select class="form-select" id="arxiv-time-range">
+              <option value="last-2-years" selected>Last 2 Years</option>
+              <option value="last-year">Last Year</option>
+              <option value="last-6-months">Last 6 Months</option>
+              <option value="last-3-months">Last 3 Months</option>
+              <option value="last-month">Last Month</option>
+              <option value="all-time">All Time</option>
+            </select>
+          </div>
+          
+          <!-- Max Papers -->
+          <div class="mb-3">
+            <label for="arxiv-max-papers" class="form-label">Max Papers: (10-500)</label>
+            <input type="number" class="form-control" id="arxiv-max-papers" min="10" max="500" value="100">
+          </div>
+          
+          <!-- Processing Options -->
+          <div class="mb-3">
+            <label class="form-label">Processing Options:</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="download_pdfs" id="process-download-pdfs" checked>
+              <label class="form-check-label" for="process-download-pdfs">Download PDFs</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="extract_abstracts" id="process-extract-abstracts" checked>
+              <label class="form-check-label" for="process-extract-abstracts">Extract abstracts</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="extract_figures" id="process-extract-figures" checked>
+              <label class="form-check-label" for="process-extract-figures">Extract figures</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="extract_code" id="process-extract-code" checked>
+              <label class="form-check-label" for="process-extract-code">Extract code references</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="extract_citations" id="process-extract-citations">
+              <label class="form-check-label" for="process-extract-citations">Extract citations</label>
+            </div>
+          </div>
+          
+          <!-- Parallel workers -->
+          <div class="mb-3">
+            <label for="arxiv-parallel-workers" class="form-label">Parallel workers: (1-8)</label>
+            <input type="number" class="form-control" id="arxiv-parallel-workers" min="1" max="8" value="3">
+          </div>
+          
+          <!-- Advanced Options -->
+          <div class="mb-3">
+            <label class="form-label">Advanced Options:</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="follow_citations" id="advanced-follow-citations" checked>
+              <label class="form-check-label" for="advanced-follow-citations">Follow citations</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="save_to_db" id="advanced-save-to-db" checked>
+              <label class="form-check-label" for="advanced-save-to-db">Save findings to database</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="use_proxy" id="advanced-use-proxy">
+              <label class="form-check-label" for="advanced-use-proxy">Use proxy</label>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-info" id="save-template-btn">Save as Template</button>
+        <button type="button" class="btn btn-primary" id="start-arxiv-mining-btn">Start</button>
+      </div>
+    </div>
+  </div>
+</div>
