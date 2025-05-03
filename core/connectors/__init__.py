@@ -4,10 +4,11 @@ Data source connectors for Wiseflow.
 This module provides base classes for data source connectors.
 """
 
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Awaitable
 from abc import abstractmethod
 import logging
 from datetime import datetime
+import asyncio
 
 from core.plugins import PluginBase
 
@@ -81,11 +82,62 @@ class ConnectorBase(PluginBase):
         """Initialize the connector with optional configuration."""
         super().__init__(config)
         self.last_run: Optional[datetime] = None
+        self.error_count: int = 0
+        self.max_retries: int = config.get("max_retries", 3) if config else 3
+        self.retry_delay: float = config.get("retry_delay", 1.0) if config else 1.0
         
     @abstractmethod
     def collect(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
         """Collect data from the source."""
         pass
+    
+    async def collect_async(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
+        """
+        Asynchronous version of collect method.
+        
+        By default, this creates a wrapper around the synchronous collect method.
+        Connectors that support native async operations should override this method.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.collect, params)
+    
+    async def collect_with_retry(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
+        """
+        Collect data with automatic retry on failure.
+        
+        Args:
+            params: Parameters for the collection operation
+            
+        Returns:
+            List of collected data items
+            
+        Raises:
+            Exception: If collection fails after all retries
+        """
+        attempt = 0
+        last_error = None
+        
+        while attempt < self.max_retries:
+            try:
+                # Use the async version for better integration
+                result = await self.collect_async(params)
+                self.update_last_run()
+                return result
+            except Exception as e:
+                attempt += 1
+                self.error_count += 1
+                last_error = e
+                logger.warning(f"Collection attempt {attempt} failed for {self.name}: {e}")
+                
+                if attempt < self.max_retries:
+                    # Exponential backoff
+                    delay = self.retry_delay * (2 ** (attempt - 1))
+                    logger.info(f"Retrying in {delay:.2f} seconds...")
+                    await asyncio.sleep(delay)
+        
+        # If we get here, all retries failed
+        logger.error(f"Collection failed after {self.max_retries} attempts for {self.name}: {last_error}")
+        raise last_error
     
     def initialize(self) -> bool:
         """Initialize the connector. Return True if successful, False otherwise."""
@@ -97,6 +149,16 @@ class ConnectorBase(PluginBase):
             logger.error(f"Failed to initialize connector {self.name}: {e}")
             return False
     
+    async def initialize_async(self) -> bool:
+        """
+        Asynchronous initialization for connectors that require async setup.
+        
+        By default, this creates a wrapper around the synchronous initialize method.
+        Connectors that require async initialization should override this method.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.initialize)
+    
     def update_last_run(self) -> None:
         """Update the last run timestamp."""
         self.last_run = datetime.now()
@@ -104,6 +166,22 @@ class ConnectorBase(PluginBase):
     def get_last_run(self) -> Optional[datetime]:
         """Get the last run timestamp."""
         return self.last_run
+    
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get the current status of the connector.
+        
+        Returns:
+            Dictionary with status information
+        """
+        return {
+            "name": self.name,
+            "type": self.source_type,
+            "last_run": self.last_run.isoformat() if self.last_run else None,
+            "error_count": self.error_count,
+            "is_enabled": self.is_enabled,
+            "config": {k: v for k, v in self.config.items() if k not in ["api_key", "password", "secret"]}
+        }
 
 # Import connectors
 from core.connectors.web import WebConnector
@@ -130,3 +208,47 @@ def get_connector(connector_type: str, config: Optional[Dict[str, Any]] = None) 
     connector_class = AVAILABLE_CONNECTORS[connector_type]
     connector = connector_class(config)
     return connector
+
+async def initialize_all_connectors(connectors: Dict[str, ConnectorBase]) -> Dict[str, bool]:
+    """
+    Initialize all connectors asynchronously.
+    
+    Args:
+        connectors: Dictionary of connector instances
+        
+    Returns:
+        Dictionary mapping connector names to initialization success status
+    """
+    results = {}
+    initialization_tasks = []
+    
+    for name, connector in connectors.items():
+        initialization_tasks.append(initialize_connector(name, connector))
+    
+    results_list = await asyncio.gather(*initialization_tasks, return_exceptions=True)
+    
+    for name, result in results_list:
+        if isinstance(result, Exception):
+            logger.error(f"Error initializing connector {name}: {result}")
+            results[name] = False
+        else:
+            results[name] = result
+    
+    return results
+
+async def initialize_connector(name: str, connector: ConnectorBase) -> tuple[str, bool]:
+    """
+    Initialize a single connector asynchronously.
+    
+    Args:
+        name: Name of the connector
+        connector: Connector instance
+        
+    Returns:
+        Tuple of (name, success)
+    """
+    try:
+        success = await connector.initialize_async()
+        return name, success
+    except Exception as e:
+        return name, e

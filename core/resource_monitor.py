@@ -12,6 +12,10 @@ import json
 import datetime
 
 from core.thread_pool_manager import thread_pool_manager, TaskPriority
+from core.event_system import (
+    EventType, Event, publish_sync, 
+    create_resource_event, create_system_error_event
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +57,11 @@ class ResourceMonitor:
             return
             
         self.check_interval = check_interval
-        self.cpu_threshold = cpu_threshold
-        self.memory_threshold = memory_threshold
-        self.disk_threshold = disk_threshold
+        self.thresholds = {
+            'cpu': cpu_threshold,
+            'memory': memory_threshold,
+            'disk': disk_threshold
+        }
         self.auto_shutdown_enabled = auto_shutdown_enabled
         self.auto_shutdown_idle_time = auto_shutdown_idle_time
         self.auto_shutdown_callback = auto_shutdown_callback
@@ -72,6 +78,9 @@ class ResourceMonitor:
             'timestamp': []
         }
         self.history_max_size = 1000  # Maximum number of history entries
+        
+        # Callbacks for resource alerts
+        self.callbacks = []
         
         self._initialized = True
         logger.info("ResourceMonitor initialized")
@@ -96,6 +105,27 @@ class ResourceMonitor:
         self.stop_event.set()
         self.monitor_thread.join(timeout=10.0)
         logger.info("ResourceMonitor stopped")
+    
+    def add_callback(self, callback: Callable[[str, float, float], None]):
+        """
+        Add a callback for resource alerts.
+        
+        The callback will be called with the resource type, current value, and threshold.
+        
+        Args:
+            callback: Callback function
+        """
+        self.callbacks.append(callback)
+        
+    def remove_callback(self, callback: Callable[[str, float, float], None]):
+        """
+        Remove a callback for resource alerts.
+        
+        Args:
+            callback: Callback function to remove
+        """
+        if callback in self.callbacks:
+            self.callbacks.remove(callback)
         
     def _monitor_loop(self):
         """Main monitoring loop."""
@@ -113,6 +143,9 @@ class ResourceMonitor:
                 
             except Exception as e:
                 logger.error(f"Error in resource monitor: {str(e)}")
+                # Publish error event
+                error_event = create_system_error_event(e, {"component": "resource_monitor"})
+                publish_sync(error_event)
                 time.sleep(self.check_interval)
                 
     def _check_resources(self):
@@ -147,17 +180,47 @@ class ResourceMonitor:
             logger.debug(f"Resource usage: CPU={cpu_percent:.1f}%, Memory={memory_percent:.1f}%, Disk={disk_percent:.1f}%")
             
             # Check thresholds and log warnings
-            if cpu_percent > self.cpu_threshold:
-                logger.warning(f"CPU usage above threshold: {cpu_percent:.1f}% > {self.cpu_threshold:.1f}%")
+            if cpu_percent > self.thresholds['cpu']:
+                logger.warning(f"CPU usage above threshold: {cpu_percent:.1f}% > {self.thresholds['cpu']:.1f}%")
+                # Publish resource warning event
+                event = create_resource_event(EventType.RESOURCE_WARNING, "cpu", cpu_percent, self.thresholds['cpu'])
+                publish_sync(event)
+                # Call callbacks
+                for callback in self.callbacks:
+                    try:
+                        callback("cpu", cpu_percent, self.thresholds['cpu'])
+                    except Exception as e:
+                        logger.error(f"Error in resource callback: {str(e)}")
                 
-            if memory_percent > self.memory_threshold:
-                logger.warning(f"Memory usage above threshold: {memory_percent:.1f}% > {self.memory_threshold:.1f}%")
+            if memory_percent > self.thresholds['memory']:
+                logger.warning(f"Memory usage above threshold: {memory_percent:.1f}% > {self.thresholds['memory']:.1f}%")
+                # Publish resource warning event
+                event = create_resource_event(EventType.RESOURCE_WARNING, "memory", memory_percent, self.thresholds['memory'])
+                publish_sync(event)
+                # Call callbacks
+                for callback in self.callbacks:
+                    try:
+                        callback("memory", memory_percent, self.thresholds['memory'])
+                    except Exception as e:
+                        logger.error(f"Error in resource callback: {str(e)}")
                 
-            if disk_percent > self.disk_threshold:
-                logger.warning(f"Disk usage above threshold: {disk_percent:.1f}% > {self.disk_threshold:.1f}%")
+            if disk_percent > self.thresholds['disk']:
+                logger.warning(f"Disk usage above threshold: {disk_percent:.1f}% > {self.thresholds['disk']:.1f}%")
+                # Publish resource warning event
+                event = create_resource_event(EventType.RESOURCE_WARNING, "disk", disk_percent, self.thresholds['disk'])
+                publish_sync(event)
+                # Call callbacks
+                for callback in self.callbacks:
+                    try:
+                        callback("disk", disk_percent, self.thresholds['disk'])
+                    except Exception as e:
+                        logger.error(f"Error in resource callback: {str(e)}")
                 
         except Exception as e:
             logger.error(f"Error checking resources: {str(e)}")
+            # Publish error event
+            error_event = create_system_error_event(e, {"component": "resource_monitor", "function": "_check_resources"})
+            publish_sync(error_event)
             
     def _check_auto_shutdown(self):
         """Check if auto-shutdown should be triggered."""
@@ -173,12 +236,23 @@ class ResourceMonitor:
             logger.info(f"System idle for {idle_time:.1f} seconds, initiating auto-shutdown")
             self.shutdown_requested = True
             
+            # Publish shutdown event
+            event = Event(EventType.SYSTEM_SHUTDOWN, {
+                "reason": "auto_shutdown",
+                "idle_time": idle_time,
+                "auto_shutdown_idle_time": self.auto_shutdown_idle_time
+            }, "resource_monitor")
+            publish_sync(event)
+            
             # Call shutdown callback if provided
             if self.auto_shutdown_callback:
                 try:
                     self.auto_shutdown_callback()
                 except Exception as e:
                     logger.error(f"Error in auto-shutdown callback: {str(e)}")
+                    # Publish error event
+                    error_event = create_system_error_event(e, {"component": "resource_monitor", "function": "auto_shutdown_callback"})
+                    publish_sync(error_event)
                     
     def record_activity(self):
         """Record user activity to reset idle timer."""
@@ -204,6 +278,9 @@ class ResourceMonitor:
             }
         except Exception as e:
             logger.error(f"Error getting resource usage: {str(e)}")
+            # Publish error event
+            error_event = create_system_error_event(e, {"component": "resource_monitor", "function": "get_resource_usage"})
+            publish_sync(error_event)
             return {
                 'cpu': 0.0,
                 'memory': 0.0,
@@ -230,6 +307,36 @@ class ResourceMonitor:
             'disk': self.resource_history['disk'][-limit:],
             'timestamp': self.resource_history['timestamp'][-limit:]
         }
+    
+    def calculate_optimal_thread_count(self) -> int:
+        """
+        Calculate the optimal thread count based on current resource usage.
+        
+        Returns:
+            int: Optimal thread count
+        """
+        try:
+            # Get current resource usage
+            usage = self.get_resource_usage()
+            
+            # Get CPU count
+            cpu_count = psutil.cpu_count(logical=True)
+            
+            # Base thread count on CPU count and usage
+            if usage['cpu'] > self.thresholds['cpu'] or usage['memory'] > self.thresholds['memory']:
+                # High resource usage, reduce thread count
+                optimal_count = max(2, int(cpu_count * 0.5))
+            else:
+                # Normal resource usage, use more threads
+                optimal_count = max(2, int(cpu_count * 0.75))
+            
+            return optimal_count
+        except Exception as e:
+            logger.error(f"Error calculating optimal thread count: {str(e)}")
+            # Publish error event
+            error_event = create_system_error_event(e, {"component": "resource_monitor", "function": "calculate_optimal_thread_count"})
+            publish_sync(error_event)
+            return 2  # Default to 2 threads on error
         
     def get_system_info(self) -> Dict[str, Any]:
         """Get detailed system information.
@@ -302,10 +409,14 @@ class ResourceMonitor:
                     'idle_time': self.auto_shutdown_idle_time,
                     'last_activity': datetime.datetime.fromtimestamp(self.last_activity_time).strftime('%Y-%m-%d %H:%M:%S'),
                     'idle_seconds': time.time() - self.last_activity_time
-                }
+                },
+                'thresholds': self.thresholds
             }
         except Exception as e:
             logger.error(f"Error getting system info: {str(e)}")
+            # Publish error event
+            error_event = create_system_error_event(e, {"component": "resource_monitor", "function": "get_system_info"})
+            publish_sync(error_event)
             return {'error': str(e)}
             
     def save_resource_history(self, filepath: str) -> bool:
@@ -323,6 +434,9 @@ class ResourceMonitor:
             return True
         except Exception as e:
             logger.error(f"Error saving resource history: {str(e)}")
+            # Publish error event
+            error_event = create_system_error_event(e, {"component": "resource_monitor", "function": "save_resource_history"})
+            publish_sync(error_event)
             return False
             
     def load_resource_history(self, filepath: str) -> bool:
@@ -340,6 +454,9 @@ class ResourceMonitor:
             return True
         except Exception as e:
             logger.error(f"Error loading resource history: {str(e)}")
+            # Publish error event
+            error_event = create_system_error_event(e, {"component": "resource_monitor", "function": "load_resource_history"})
+            publish_sync(error_event)
             return False
             
     def set_auto_shutdown(self, enabled: bool, idle_time: Optional[float] = None):
@@ -365,17 +482,16 @@ class ResourceMonitor:
             disk: Disk usage threshold percentage
         """
         if cpu is not None:
-            self.cpu_threshold = cpu
+            self.thresholds['cpu'] = cpu
             
         if memory is not None:
-            self.memory_threshold = memory
+            self.thresholds['memory'] = memory
             
         if disk is not None:
-            self.disk_threshold = disk
+            self.thresholds['disk'] = disk
             
-        logger.info(f"Resource thresholds set: CPU={self.cpu_threshold}%, Memory={self.memory_threshold}%, Disk={self.disk_threshold}%")
+        logger.info(f"Resource thresholds set: CPU={self.thresholds['cpu']}%, Memory={self.thresholds['memory']}%, Disk={self.thresholds['disk']}%")
 
 
 # Global instance
 resource_monitor = ResourceMonitor()
-
