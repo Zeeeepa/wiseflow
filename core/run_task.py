@@ -17,6 +17,21 @@ import sys
 import psutil
 from datetime import datetime, timedelta
 
+# Import from centralized imports and configuration modules
+from core.imports import get_logger, get_pb_client
+from core.config import load_config, get_config, get
+from core.initialize import (
+    initialize_environment,
+    initialize_resource_monitor,
+    initialize_thread_pool,
+    initialize_task_manager,
+    initialize_plugin_system,
+    initialize_connectors,
+    initialize_reference_manager,
+    initialize_insight_extractor,
+    shutdown_all
+)
+
 from core.general_process import main_process, wiseflow_logger, pb
 from core.task import AsyncTaskManager, Task, create_task_id
 from core.analysis import CrossSourceAnalyzer, KnowledgeGraph
@@ -25,37 +40,38 @@ from core.resource_monitor import ResourceMonitor
 from core.thread_pool_manager import ThreadPoolManager, TaskPriority, TaskStatus
 from core.task_manager import TaskManager, TaskDependencyError
 
+# Initialize environment and load configuration
+initialize_environment()
+config = load_config()
+
 # Configure the maximum number of concurrent tasks
-MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
+MAX_CONCURRENT_TASKS = get("resources.max_concurrent_tasks", 4)
 
 # Configure auto-shutdown settings
-AUTO_SHUTDOWN_ENABLED = os.environ.get("AUTO_SHUTDOWN_ENABLED", "false").lower() == "true"
-AUTO_SHUTDOWN_IDLE_TIME = int(os.environ.get("AUTO_SHUTDOWN_IDLE_TIME", "3600"))  # Default: 1 hour
-AUTO_SHUTDOWN_CHECK_INTERVAL = int(os.environ.get("AUTO_SHUTDOWN_CHECK_INTERVAL", "300"))  # Default: 5 minutes
+AUTO_SHUTDOWN_ENABLED = get("auto_shutdown.enabled", False)
+AUTO_SHUTDOWN_IDLE_TIME = get("auto_shutdown.idle_time", 3600)  # Default: 1 hour
+AUTO_SHUTDOWN_CHECK_INTERVAL = get("auto_shutdown.check_interval", 300)  # Default: 5 minutes
 
-resource_monitor = ResourceMonitor(
-    check_interval=10.0,
-    cpu_threshold=80.0,
-    memory_threshold=80.0,
-    disk_threshold=90.0
+# Initialize components
+resource_monitor = initialize_resource_monitor(
+    check_interval=get("resources.resource_check_interval", 10.0),
+    cpu_threshold=get("resources.cpu_threshold", 80.0),
+    memory_threshold=get("resources.memory_threshold", 80.0),
+    disk_threshold=get("resources.disk_threshold", 90.0)
 )
-resource_monitor.start()
 
-# Initialize the thread pool manager
-thread_pool = ThreadPoolManager(
-    min_workers=2,
-    max_workers=MAX_CONCURRENT_TASKS,
+thread_pool = initialize_thread_pool(
     resource_monitor=resource_monitor,
-    adjust_interval=30.0
+    min_workers=get("resources.min_workers", 2),
+    max_workers=MAX_CONCURRENT_TASKS,
+    adjust_interval=get("resources.adjust_interval", 30.0)
 )
-thread_pool.start()
 
-task_manager = TaskManager(
+task_manager = initialize_task_manager(
     thread_pool=thread_pool,
     resource_monitor=resource_monitor,
     history_limit=1000
 )
-task_manager.start()
 
 # Initialize the legacy task manager (for backward compatibility)
 legacy_task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
@@ -520,4 +536,3 @@ async def main():
         
 if __name__ == "__main__":
     asyncio.run(main())
-
