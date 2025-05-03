@@ -430,23 +430,23 @@ async def migrate_existing_data(pb_client: PbTalker) -> bool:
         logger.error(f"Error migrating existing data: {e}")
         return False
 
-def create_migration_script() -> str:
+def generate_migration_script(schema_changes=None, data_migrations=None):
     """
-    Create a migration script for existing databases.
+    Generate a standalone migration script.
     
+    Args:
+        schema_changes: Schema changes to apply
+        data_migrations: Data migrations to apply
+        
     Returns:
-        Path to the migration script
+        Path to the generated script
     """
-    script_content = """#!/usr/bin/env python3
+    # Create the script content
+    script_content = """#!/usr/bin/env python
 import os
-import asyncio
-import argparse
-import logging
-from pathlib import Path
 import sys
-
-# Add the project root to the Python path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import logging
+import asyncio
 
 from core.utils.pb_api import PbTalker
 from core.utils.schema_update import update_schema, migrate_existing_data
@@ -459,7 +459,6 @@ logging.basicConfig(
 logger = logging.getLogger("migration")
 
 async def run_migration(pb_url=None, auth=None):
-    """Run the database schema migration"""
     # Set environment variables if provided
     if pb_url:
         os.environ['PB_API_BASE'] = pb_url
@@ -469,33 +468,31 @@ async def run_migration(pb_url=None, auth=None):
     # Initialize PocketBase client
     pb_client = PbTalker(logger)
     
-    # Update schema
-    logger.info("Updating database schema...")
-    schema_success = await update_schema(pb_client)
-    if not schema_success:
+    # Run the schema update
+    schema_result = await update_schema(pb_client)
+    if not schema_result:
         logger.error("Schema update failed")
         return False
     
-    # Migrate existing data
-    logger.info("Migrating existing data...")
-    migration_success = await migrate_existing_data(pb_client)
-    if not migration_success:
-        logger.error("Data migration failed")
-        return False
+    # Run data migrations if needed
+    data_result = await migrate_existing_data(pb_client)
+    if not data_result:
+        logger.warning("Data migration had some issues")
     
-    logger.info("Migration completed successfully")
     return True
 
 def main():
-    parser = argparse.ArgumentParser(description="Migrate WiseFlow database schema")
-    parser.add_argument("--pb-url", help="PocketBase API URL (default: from environment)")
-    parser.add_argument("--auth", help="PocketBase auth in format 'email|password' (default: from environment)")
-    
+    # Parse command line arguments
+    import argparse
+    parser = argparse.ArgumentParser(description="Run database schema migration")
+    parser.add_argument("--pb-url", help="PocketBase API URL")
+    parser.add_argument("--auth", help="PocketBase authentication token")
     args = parser.parse_args()
     
-    success = asyncio.run(run_migration(args.pb_url, args.auth))
+    # Run the migration
+    result = asyncio.run(run_migration(args.pb_url, args.auth))
     
-    if success:
+    if result:
         print("Migration completed successfully")
         sys.exit(0)
     else:
@@ -517,3 +514,4 @@ if __name__ == "__main__":
     os.chmod(script_path, 0o755)
     
     return script_path
+

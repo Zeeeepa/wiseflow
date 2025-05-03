@@ -16,10 +16,10 @@ import uuid
 from collections import Counter, defaultdict
 
 # Import necessary modules
-from ..llms.openai_wrapper import openai_llm as llm
-from ..utils.general_utils import get_logger, normalize_url
-from ..analysis import Entity, Relationship, KnowledgeGraph
-from ..utils.pb_api import PbTalker
+from core.llms.openai_wrapper import openai_llm as llm
+from core.utils.general_utils import get_logger, normalize_url
+from core.analysis import Entity, Relationship, KnowledgeGraph
+from core.utils.pb_api import PbTalker
 
 # Setup logging
 project_dir = os.environ.get("PROJECT_DIR", "")
@@ -31,8 +31,6 @@ pb = PbTalker(insights_logger)
 model = os.environ.get("PRIMARY_MODEL", "")
 if not model:
     raise ValueError("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
-
-# ... keep existing InsightExtractor class and other functions ...
 
 # Prompts for insights generation
 TREND_ANALYSIS_PROMPT = """You are an expert data analyst specializing in trend identification and pattern recognition. 

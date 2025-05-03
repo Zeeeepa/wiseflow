@@ -24,14 +24,16 @@ from core.llms.advanced import AdvancedLLMProcessor
 from core.resource_monitor import ResourceMonitor
 from core.thread_pool_manager import ThreadPoolManager, TaskPriority, TaskStatus
 from core.task_manager import TaskManager, TaskDependencyError
+from core.config import config
+from core.utils.error_handling import handle_exceptions, WiseflowError, log_error, save_error_to_file
 
 # Configure the maximum number of concurrent tasks
-MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
+MAX_CONCURRENT_TASKS = config.get("MAX_CONCURRENT_TASKS", 4)
 
 # Configure auto-shutdown settings
-AUTO_SHUTDOWN_ENABLED = os.environ.get("AUTO_SHUTDOWN_ENABLED", "false").lower() == "true"
-AUTO_SHUTDOWN_IDLE_TIME = int(os.environ.get("AUTO_SHUTDOWN_IDLE_TIME", "3600"))  # Default: 1 hour
-AUTO_SHUTDOWN_CHECK_INTERVAL = int(os.environ.get("AUTO_SHUTDOWN_CHECK_INTERVAL", "300"))  # Default: 5 minutes
+AUTO_SHUTDOWN_ENABLED = config.get("AUTO_SHUTDOWN_ENABLED", False)
+AUTO_SHUTDOWN_IDLE_TIME = config.get("AUTO_SHUTDOWN_IDLE_TIME", 3600)  # Default: 1 hour
+AUTO_SHUTDOWN_CHECK_INTERVAL = config.get("AUTO_SHUTDOWN_CHECK_INTERVAL", 300)  # Default: 5 minutes
 
 resource_monitor = ResourceMonitor(
     check_interval=10.0,
@@ -315,8 +317,7 @@ async def schedule_task():
                     main_task_id = task_manager.register_task(
                         name=f"Focus: {focus.get('focuspoint', '')}",
                         func=process_focus_task_wrapper,
-                        focus,
-                        sites,
+                        args=(focus, sites),
                         priority=TaskPriority.HIGH,
                         max_retries=2,
                         retry_delay=60.0,
@@ -351,8 +352,7 @@ async def schedule_task():
                         insight_task_id = task_manager.register_task(
                             name=f"Insights: {focus.get('focuspoint', '')}",
                             func=generate_insights_wrapper,
-                            focus,
-                            dependencies=[main_task_id],
+                            args=(focus,),
                             priority=TaskPriority.NORMAL,
                             max_retries=1,
                             retry_delay=120.0,
@@ -520,4 +520,3 @@ async def main():
         
 if __name__ == "__main__":
     asyncio.run(main())
-
