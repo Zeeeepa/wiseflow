@@ -23,12 +23,12 @@ body {
 
 /* Improved focus styles */
 a:focus, button:focus, input:focus, select:focus, textarea:focus {
-    outline: 3px solid #007bff;
+    outline: 3px solid var(--focus-outline, #007bff);
     outline-offset: 2px;
 }
 
 .btn:focus {
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.5);
+    box-shadow: 0 0 0 3px rgba(var(--focus-outline-rgb, 0, 123, 255), 0.5);
 }
 
 /* High contrast mode support */

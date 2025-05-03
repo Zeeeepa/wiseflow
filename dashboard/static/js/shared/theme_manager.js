@@ -38,7 +38,8 @@ const ThemeManager = (function() {
             '--table-row-hover': 'rgba(0, 123, 255, 0.05)',
             '--modal-bg': '#ffffff',
             '--toast-bg': '#ffffff',
-            '--focus-outline': '#007bff'
+            '--focus-outline': '#007bff',
+            '--focus-outline-rgb': '0, 123, 255'
         },
         dark: {
             '--bg-primary': '#212529',
@@ -60,7 +61,8 @@ const ThemeManager = (function() {
             '--table-row-hover': 'rgba(13, 110, 253, 0.1)', // Brighter blue for better contrast
             '--modal-bg': '#343a40',
             '--toast-bg': '#343a40',
-            '--focus-outline': '#0d6efd'
+            '--focus-outline': '#0d6efd',
+            '--focus-outline-rgb': '13, 110, 253'
         },
         highContrastLight: {
             '--bg-primary': '#ffffff',
@@ -82,7 +84,8 @@ const ThemeManager = (function() {
             '--table-row-hover': 'rgba(0, 0, 204, 0.1)',
             '--modal-bg': '#ffffff',
             '--toast-bg': '#ffffff',
-            '--focus-outline': '#0000cc'
+            '--focus-outline': '#0000cc',
+            '--focus-outline-rgb': '0, 0, 204'
         },
         highContrastDark: {
             '--bg-primary': '#000000',
@@ -104,7 +107,8 @@ const ThemeManager = (function() {
             '--table-row-hover': 'rgba(77, 148, 255, 0.2)',
             '--modal-bg': '#121212',
             '--toast-bg': '#121212',
-            '--focus-outline': '#4d94ff'
+            '--focus-outline': '#4d94ff',
+            '--focus-outline-rgb': '77, 148, 255'
         }
     };
     
@@ -315,9 +319,11 @@ const ThemeManager = (function() {
         liveRegion.textContent = announcement;
         
         // Clear the announcement after a delay
+        // Calculate timeout based on announcement length (approx. 15ms per character, minimum 3000ms)
+        const announcementTimeout = Math.max(3000, announcement.length * 15);
         setTimeout(() => {
             liveRegion.textContent = '';
-        }, 3000);
+        }, announcementTimeout);
     }
     
     // Save settings to localStorage
