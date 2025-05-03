@@ -12,6 +12,11 @@ We've created a wrapper script that will help keep the deployment window open:
 2. Run `run_deploy.bat` instead of directly running `deploy_and_launch.bat`
 3. The deployment will start in a new window that will stay open
 
+The wrapper script includes the following improvements:
+- Checks if `deploy_and_launch.bat` exists before attempting to run it
+- Uses absolute paths to handle spaces in directory names
+- Provides clear error messages if something goes wrong
+
 ### Solution 2: Run from Command Prompt
 
 1. Open Command Prompt (Start menu > type "cmd" > press Enter)
@@ -46,6 +51,7 @@ We've created a wrapper script that will help keep the deployment window open:
 2. **Permission Issues**: The script might not have the necessary permissions
 3. **Missing Dependencies**: Required tools like Git or Python might be missing
 4. **Antivirus Interference**: Security software might be blocking script execution
+5. **Path Issues**: Spaces or special characters in the file path can cause problems
 
 ## Logging for Troubleshooting
 
@@ -66,4 +72,3 @@ If you continue to experience problems, please:
 1. Create an issue on the GitHub repository with details about your system
 2. Include any error messages from the log file
 3. Describe the exact steps you're taking to run the script
-
