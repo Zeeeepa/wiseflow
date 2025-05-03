@@ -100,10 +100,17 @@ REM Ask if user wants to create a Python virtual environment
 set /p CREATE_VENV=Do you want to create a Python virtual environment? (y/n): 
 if /i "!CREATE_VENV!"=="y" (
     echo Creating Python virtual environment...
-    
-    REM Check if conda is installed
-    where conda >nul 2>nul
-    if %ERRORLEVEL% EQU 0 (
+:: Check Python version
+for /f "tokens=2 delims=." %%i in ('python -c "import sys; print(sys.version)"') do set PYTHON_VER=%%i
+if %PYTHON_VER% LSS 8 (
+    echo Python version must be 3.8 or higher
+    call :handleError "Python version check"
+)
+
+:: Create conda environment with configurable Python version
+set PYTHON_VERSION=3.12
+if defined WISEFLOW_PYTHON_VERSION set PYTHON_VERSION=%WISEFLOW_PYTHON_VERSION%
+conda create -n wiseflow python=%PYTHON_VERSION% -y
         echo Using Conda to create environment...
         conda create -n wiseflow python=3.12 -y
         conda activate wiseflow
