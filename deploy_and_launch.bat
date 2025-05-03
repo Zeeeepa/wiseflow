@@ -126,7 +126,7 @@ if not exist "%SCRIPT_DIR%wiseflow\pb\pocketbase.exe" (
     echo Installing PocketBase...
     echo Installing PocketBase >> "%SCRIPT_DIR%deploy_log.txt"
     
-    :: Check if PowerShell script exists - FIXED: Look in the correct location
+    :: Check if PowerShell script exists in primary or fallback location
     if exist "%SCRIPT_DIR%wiseflow\install_pocketbase.ps1" (
         powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%wiseflow\install_pocketbase.ps1"
         if %ERRORLEVEL% NEQ 0 (
@@ -143,7 +143,8 @@ if not exist "%SCRIPT_DIR%wiseflow\pb\pocketbase.exe" (
             goto :error
         )
     ) else (
-        echo PocketBase installation script not found in wiseflow directory or root directory.
+        echo PocketBase installation script not found at: "%SCRIPT_DIR%wiseflow\install_pocketbase.ps1"
+        echo PocketBase installation script not found at: "%SCRIPT_DIR%install_pocketbase.ps1"
         echo PocketBase script missing >> "%SCRIPT_DIR%deploy_log.txt"
         goto :error
     )

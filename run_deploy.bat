@@ -22,7 +22,15 @@ set DEPLOY_RESULT=%errorlevel%
 if %DEPLOY_RESULT% NEQ 0 (
     echo.
     echo Deployment encountered an error (code: %DEPLOY_RESULT%).
-    echo Please check the deploy_log.txt file for more details.
+    echo.
+    echo Troubleshooting tips:
+    echo 1. Check deploy_log.txt for detailed error information
+    echo 2. Make sure Git and Python 3.8+ are installed
+    echo 3. Verify you have internet connection to clone the repository
+    echo 4. Ensure the PocketBase installation script exists at:
+    echo    "%SCRIPT_DIR%wiseflow\install_pocketbase.ps1" or
+    echo    "%SCRIPT_DIR%install_pocketbase.ps1"
+    echo 5. Run as administrator if you encounter permission issues
     echo.
     echo Press any key to exit...
     pause >nul
