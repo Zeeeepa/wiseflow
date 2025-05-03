@@ -1,76 +1,96 @@
 """
-Data source connectors for Wiseflow.
+Connectors for WiseFlow.
 
-This module provides base classes for data source connectors.
+This module provides connectors for different data sources.
 """
 
 from typing import Dict, List, Any, Optional, Union
-from abc import abstractmethod
-import logging
 from datetime import datetime
-
-from core.plugins import PluginBase
-
-logger = logging.getLogger(__name__)
+import abc
+import uuid
 
 class DataItem:
-    """Represents a single item of data collected from a source."""
+    """
+    Data item representing content from a data source.
+    
+    This class provides a standardized way to represent content from different sources,
+    with metadata and type information.
+    """
     
     def __init__(
         self,
-        source_id: str,
-        content: str,
+        source_id: Optional[str] = None,
+        content: str = "",
         metadata: Optional[Dict[str, Any]] = None,
         url: Optional[str] = None,
         timestamp: Optional[datetime] = None,
-        content_type: str = "text",
-        language: Optional[str] = None,
-        raw_data: Optional[Any] = None
+        content_type: str = "text/plain",
+        raw_data: Any = None
     ):
-        """Initialize a data item."""
-        self.source_id = source_id
+        """
+        Initialize a data item.
+        
+        Args:
+            source_id: Identifier for the source
+            content: Content of the item
+            metadata: Additional metadata
+            url: URL of the content
+            timestamp: Timestamp of the content
+            content_type: MIME type of the content
+            raw_data: Raw data from the source
+        """
+        self.source_id = source_id or str(uuid.uuid4())
         self.content = content
         self.metadata = metadata or {}
         self.url = url
         self.timestamp = timestamp or datetime.now()
         self.content_type = content_type
-        self.language = language
         self.raw_data = raw_data
-        
+    
     def to_dict(self) -> Dict[str, Any]:
-        """Convert the data item to a dictionary."""
+        """
+        Convert the data item to a dictionary.
+        
+        Returns:
+            Dict[str, Any]: Dictionary representation of the data item
+        """
         return {
             "source_id": self.source_id,
             "content": self.content,
             "metadata": self.metadata,
             "url": self.url,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "content_type": self.content_type,
-            "language": self.language
+            "content_type": self.content_type
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'DataItem':
-        """Create a data item from a dictionary."""
+    def from_dict(cls, data: Dict[str, Any]) -> "DataItem":
+        """
+        Create a data item from a dictionary.
+        
+        Args:
+            data: Dictionary representation of a data item
+            
+        Returns:
+            DataItem: Data item created from the dictionary
+        """
         timestamp = None
         if data.get("timestamp"):
             try:
                 timestamp = datetime.fromisoformat(data["timestamp"])
             except (ValueError, TypeError):
                 pass
-                
+        
         return cls(
-            source_id=data["source_id"],
-            content=data["content"],
+            source_id=data.get("source_id"),
+            content=data.get("content", ""),
             metadata=data.get("metadata", {}),
             url=data.get("url"),
             timestamp=timestamp,
-            content_type=data.get("content_type", "text"),
-            language=data.get("language")
+            content_type=data.get("content_type", "text/plain")
         )
 
-
-class ConnectorBase(PluginBase):
+class ConnectorBase(abc.ABC):
     """Base class for data source connectors."""
     
     name: str = "base_connector"
@@ -79,54 +99,27 @@ class ConnectorBase(PluginBase):
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize the connector with optional configuration."""
-        super().__init__(config)
-        self.last_run: Optional[datetime] = None
-        
-    @abstractmethod
-    def collect(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
-        """Collect data from the source."""
-        pass
+        self.config = config or {}
     
+    @abc.abstractmethod
     def initialize(self) -> bool:
         """Initialize the connector. Return True if successful, False otherwise."""
-        try:
-            # Perform any necessary initialization
-            logger.info(f"Initialized connector: {self.name}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to initialize connector {self.name}: {e}")
-            return False
+        pass
     
-    def update_last_run(self) -> None:
-        """Update the last run timestamp."""
-        self.last_run = datetime.now()
+    @abc.abstractmethod
+    def collect(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
+        """
+        Collect data from the source.
         
-    def get_last_run(self) -> Optional[datetime]:
-        """Get the last run timestamp."""
-        return self.last_run
-
-# Import connectors
-from core.connectors.web import WebConnector
-from core.connectors.academic import AcademicConnector
-from core.connectors.github import GitHubConnector
-from core.connectors.youtube import YouTubeConnector
-from core.connectors.code_search import CodeSearchConnector
-
-# Register available connectors
-AVAILABLE_CONNECTORS = {
-    "web": WebConnector,
-    "academic": AcademicConnector,
-    "github": GitHubConnector,
-    "youtube": YouTubeConnector,
-    "code_search": CodeSearchConnector
-}
-
-def get_connector(connector_type: str, config: Optional[Dict[str, Any]] = None) -> Optional[ConnectorBase]:
-    """Get a connector instance by type."""
-    if connector_type not in AVAILABLE_CONNECTORS:
-        logger.error(f"Unknown connector type: {connector_type}")
-        return None
+        Args:
+            params: Optional parameters for the collection
+            
+        Returns:
+            List[DataItem]: List of collected data items
+        """
+        pass
     
-    connector_class = AVAILABLE_CONNECTORS[connector_type]
-    connector = connector_class(config)
-    return connector
+    def shutdown(self) -> bool:
+        """Shutdown the connector. Return True if successful, False otherwise."""
+        return True
+

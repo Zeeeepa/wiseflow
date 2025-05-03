@@ -17,24 +17,19 @@ from connectors import ConnectorBase, DataItem
 from references import ReferenceManager
 from analysis.multimodal_analysis import process_item_with_images
 from analysis.multimodal_knowledge_integration import integrate_multimodal_analysis_with_knowledge_graph
+from config import (
+    PROJECT_DIR, PRIMARY_MODEL, SECONDARY_MODEL, ENABLE_MULTIMODAL
+)
 
-project_dir = os.environ.get("PROJECT_DIR", "")
-if project_dir:
-    os.makedirs(project_dir, exist_ok=True)
-
-wiseflow_logger = get_logger('wiseflow', project_dir)
+# Initialize logger and PocketBase client
+wiseflow_logger = get_logger('wiseflow', PROJECT_DIR)
 pb = PbTalker(wiseflow_logger)
-
-model = os.environ.get("PRIMARY_MODEL", "")
-if not model:
-    raise ValueError("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
-secondary_model = os.environ.get("SECONDARY_MODEL", model)
 
 # Initialize plugin manager
 plugin_manager = PluginManager(plugins_dir="core")
 
 # Initialize reference manager
-reference_manager = ReferenceManager(storage_path=os.path.join(project_dir, "references"))
+reference_manager = ReferenceManager(storage_path=os.path.join(PROJECT_DIR, "references"))
 
 # Initialize insight extractor
 insight_extractor = InsightExtractor(pb_client=pb)
@@ -82,7 +77,7 @@ async def info_process(url: str,
         info_id = await pb.create('infos', info)
         
         # Process multimodal analysis if enabled
-        if os.environ.get("ENABLE_MULTIMODAL", "false").lower() == "true":
+        if ENABLE_MULTIMODAL == "true":
             try:
                 # Get the saved item with retry logic
                 saved_item = None
@@ -152,7 +147,7 @@ async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_p
                     if not _:
                         wiseflow_logger.error('add info failed, writing to cache_file')
                         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-                        with open(os.path.join(project_dir, f'{timestamp}_cache_infos.json'), 'w', encoding='utf-8') as f:
+                        with open(os.path.join(PROJECT_DIR, f'{timestamp}_cache_infos.json'), 'w', encoding='utf-8') as f:
                             json.dump(info, f, ensure_ascii=False, indent=4)
     except Exception as e:
         wiseflow_logger.error(f"Error processing data item: {e}")
@@ -489,7 +484,7 @@ async def process_focus_point(focus_id: str, focus_point: str, explanation: str,
         wiseflow_logger.info(f'Collective insights generated and saved for focus point {focus_id}')
         
         # Process multimodal knowledge integration if enabled
-        if os.environ.get("ENABLE_MULTIMODAL", "false").lower() == "true":
+        if ENABLE_MULTIMODAL == "true":
             try:
                 wiseflow_logger.info(f'Integrating multimodal analysis into knowledge graph for focus point {focus_id}')
                 

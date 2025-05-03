@@ -16,6 +16,8 @@ try:
 except ImportError:
     raise ImportError("LiteLLM is not installed. Please install it with 'pip install litellm'.")
 
+from ..config import PRIMARY_MODEL, LLM_API_KEY, LLM_API_BASE
+
 logger = logging.getLogger(__name__)
 
 class LiteLLMWrapper:
@@ -23,9 +25,15 @@ class LiteLLMWrapper:
     
     def __init__(self, default_model: Optional[str] = None):
         """Initialize the LiteLLM wrapper."""
-        self.default_model = default_model or os.environ.get("PRIMARY_MODEL", "")
+        self.default_model = default_model or PRIMARY_MODEL
         if not self.default_model:
             logger.warning("No default model specified for LiteLLM wrapper")
+        
+        # Configure LiteLLM with API key and base URL if provided
+        if LLM_API_KEY:
+            litellm.api_key = LLM_API_KEY
+        if LLM_API_BASE:
+            litellm.api_base = LLM_API_BASE
     
     def generate(self, prompt: str, model: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 1000) -> str:
         """Generate text using LiteLLM."""
@@ -49,6 +57,19 @@ class LiteLLMWrapper:
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Error generating text with LiteLLM: {e}")
+            raise
+    
+    async def agenerate(self, prompt: str, model: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 1000) -> str:
+        """Generate text using LiteLLM asynchronously."""
+        try:
+            # Run in a thread to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, 
+                lambda: self.generate(prompt, model, temperature, max_tokens)
+            )
+        except Exception as e:
+            logger.error(f"Error generating text with LiteLLM async: {e}")
             raise
 
 def litellm_llm(messages: List[Dict[str, str]], model: str, temperature: float = 0.7, max_tokens: int = 1000, logger=None) -> str:
