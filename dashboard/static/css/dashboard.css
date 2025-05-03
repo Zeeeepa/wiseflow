@@ -5,6 +5,39 @@ body {
     color: #333;
 }
 
+/* Accessibility improvements */
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: #007bff;
+    color: white;
+    padding: 8px;
+    z-index: 100;
+    transition: top 0.3s;
+}
+
+.skip-link:focus {
+    top: 0;
+}
+
+/* Improved focus styles */
+a:focus, button:focus, input:focus, select:focus, textarea:focus {
+    outline: 3px solid var(--focus-outline, #007bff);
+    outline-offset: 2px;
+}
+
+.btn:focus {
+    box-shadow: 0 0 0 3px rgba(var(--focus-outline-rgb, 0, 123, 255), 0.5);
+}
+
+/* High contrast mode support */
+@media (forced-colors: active) {
+    .card, .btn, .form-control {
+        border: 1px solid;
+    }
+}
+
 /* Process Selection Dialog styles */
 .data-source-selection {
     padding: 20px 0;
@@ -380,4 +413,96 @@ body {
 
 .filter-badge:hover {
     background-color: #dee2e6;
+}
+
+/* Dark mode accessibility improvements */
+.dark-mode {
+    background-color: #212529;
+    color: #f8f9fa;
+}
+
+.dark-mode .card {
+    background-color: #343a40;
+    border-color: #495057;
+}
+
+.dark-mode .card-header {
+    background-color: #2c3136;
+    color: #f8f9fa;
+}
+
+.dark-mode .form-control,
+.dark-mode .form-select {
+    background-color: #343a40;
+    border-color: #495057;
+    color: #e9ecef;
+}
+
+.dark-mode .form-text {
+    color: #adb5bd;
+}
+
+.dark-mode .btn-outline-secondary {
+    color: #adb5bd;
+    border-color: #495057;
+}
+
+.dark-mode .btn-outline-secondary:hover {
+    background-color: #495057;
+    color: #f8f9fa;
+}
+
+.dark-mode .text-muted {
+    color: #adb5bd !important;
+}
+
+.dark-mode .table {
+    color: #e9ecef;
+}
+
+.dark-mode .table-hover tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.075);
+}
+
+.dark-mode .modal-content {
+    background-color: #343a40;
+    border-color: #495057;
+}
+
+.dark-mode .modal-header,
+.dark-mode .modal-footer {
+    border-color: #495057;
+}
+
+.dark-mode .close {
+    color: #f8f9fa;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+    
+    .card:hover,
+    .findings-item:hover,
+    .data-source-card:hover {
+        transform: none !important;
+    }
+}
+
+/* Screen reader only content */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
 }

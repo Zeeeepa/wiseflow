@@ -11,7 +11,9 @@ const ThemeManager = (function() {
         darkMode: false,
         fontSize: 'medium', // small, medium, large
         colorAccent: 'blue', // blue, green, purple, orange
-        density: 'normal' // compact, normal, comfortable
+        density: 'normal', // compact, normal, comfortable
+        highContrast: false, // high contrast mode
+        reducedMotion: false // reduced motion mode
     };
     
     // CSS variables for themes
@@ -35,7 +37,9 @@ const ThemeManager = (function() {
             '--table-header-bg': '#f8f9fa',
             '--table-row-hover': 'rgba(0, 123, 255, 0.05)',
             '--modal-bg': '#ffffff',
-            '--toast-bg': '#ffffff'
+            '--toast-bg': '#ffffff',
+            '--focus-outline': '#007bff',
+            '--focus-outline-rgb': '0, 123, 255'
         },
         dark: {
             '--bg-primary': '#212529',
@@ -44,8 +48,8 @@ const ThemeManager = (function() {
             '--text-primary': '#f8f9fa',
             '--text-secondary': '#adb5bd',
             '--border-color': '#495057',
-            '--accent-color': '#007bff',
-            '--accent-hover': '#0069d9',
+            '--accent-color': '#0d6efd', // Brighter blue for better contrast in dark mode
+            '--accent-hover': '#0b5ed7',
             '--sidebar-bg': '#121416',
             '--sidebar-text': '#f8f9fa',
             '--card-bg': '#343a40',
@@ -54,9 +58,57 @@ const ThemeManager = (function() {
             '--input-border': '#495057',
             '--input-text': '#e9ecef',
             '--table-header-bg': '#343a40',
-            '--table-row-hover': 'rgba(0, 123, 255, 0.1)',
+            '--table-row-hover': 'rgba(13, 110, 253, 0.1)', // Brighter blue for better contrast
             '--modal-bg': '#343a40',
-            '--toast-bg': '#343a40'
+            '--toast-bg': '#343a40',
+            '--focus-outline': '#0d6efd',
+            '--focus-outline-rgb': '13, 110, 253'
+        },
+        highContrastLight: {
+            '--bg-primary': '#ffffff',
+            '--bg-secondary': '#f8f9fa',
+            '--bg-tertiary': '#e9ecef',
+            '--text-primary': '#000000',
+            '--text-secondary': '#333333',
+            '--border-color': '#000000',
+            '--accent-color': '#0000cc', // Darker blue for higher contrast
+            '--accent-hover': '#000099',
+            '--sidebar-bg': '#000000',
+            '--sidebar-text': '#ffffff',
+            '--card-bg': '#ffffff',
+            '--card-border': '#000000',
+            '--input-bg': '#ffffff',
+            '--input-border': '#000000',
+            '--input-text': '#000000',
+            '--table-header-bg': '#f8f9fa',
+            '--table-row-hover': 'rgba(0, 0, 204, 0.1)',
+            '--modal-bg': '#ffffff',
+            '--toast-bg': '#ffffff',
+            '--focus-outline': '#0000cc',
+            '--focus-outline-rgb': '0, 0, 204'
+        },
+        highContrastDark: {
+            '--bg-primary': '#000000',
+            '--bg-secondary': '#121212',
+            '--bg-tertiary': '#1e1e1e',
+            '--text-primary': '#ffffff',
+            '--text-secondary': '#cccccc',
+            '--border-color': '#ffffff',
+            '--accent-color': '#4d94ff', // Brighter blue for higher contrast in dark mode
+            '--accent-hover': '#3385ff',
+            '--sidebar-bg': '#000000',
+            '--sidebar-text': '#ffffff',
+            '--card-bg': '#121212',
+            '--card-border': '#ffffff',
+            '--input-bg': '#121212',
+            '--input-border': '#ffffff',
+            '--input-text': '#ffffff',
+            '--table-header-bg': '#121212',
+            '--table-row-hover': 'rgba(77, 148, 255, 0.2)',
+            '--modal-bg': '#121212',
+            '--toast-bg': '#121212',
+            '--focus-outline': '#4d94ff',
+            '--focus-outline-rgb': '77, 148, 255'
         }
     };
     
@@ -77,6 +129,26 @@ const ThemeManager = (function() {
         orange: {
             '--accent-color': '#fd7e14',
             '--accent-hover': '#e96b02'
+        }
+    };
+    
+    // High contrast accent colors
+    const highContrastAccentColors = {
+        blue: {
+            '--accent-color': '#0000cc',
+            '--accent-hover': '#000099'
+        },
+        green: {
+            '--accent-color': '#006600',
+            '--accent-hover': '#004d00'
+        },
+        purple: {
+            '--accent-color': '#5c00a3',
+            '--accent-hover': '#4b0082'
+        },
+        orange: {
+            '--accent-color': '#cc5500',
+            '--accent-hover': '#b34700'
         }
     };
     
@@ -158,14 +230,24 @@ const ThemeManager = (function() {
     function applyTheme() {
         const root = document.documentElement;
         
-        // Apply theme variables (light or dark)
-        const themeVars = settings.darkMode ? themeVariables.dark : themeVariables.light;
+        // Determine which theme variables to use
+        let themeVars;
+        if (settings.highContrast) {
+            themeVars = settings.darkMode ? themeVariables.highContrastDark : themeVariables.highContrastLight;
+        } else {
+            themeVars = settings.darkMode ? themeVariables.dark : themeVariables.light;
+        }
+        
+        // Apply theme variables
         Object.entries(themeVars).forEach(([key, value]) => {
             root.style.setProperty(key, value);
         });
         
         // Apply accent color
-        const accentVars = accentColors[settings.colorAccent] || accentColors.blue;
+        const accentVars = settings.highContrast 
+            ? (highContrastAccentColors[settings.colorAccent] || highContrastAccentColors.blue)
+            : (accentColors[settings.colorAccent] || accentColors.blue);
+            
         Object.entries(accentVars).forEach(([key, value]) => {
             root.style.setProperty(key, value);
         });
@@ -189,10 +271,59 @@ const ThemeManager = (function() {
             document.body.classList.remove('dark-mode');
         }
         
+        // Add or remove high contrast class
+        if (settings.highContrast) {
+            document.body.classList.add('high-contrast');
+        } else {
+            document.body.classList.remove('high-contrast');
+        }
+        
+        // Add or remove reduced motion class
+        if (settings.reducedMotion) {
+            document.body.classList.add('reduced-motion');
+        } else {
+            document.body.classList.remove('reduced-motion');
+        }
+        
         // Dispatch theme change event
         if (window.EventBus) {
             window.EventBus.emit(window.EVENTS.UI_THEME_CHANGED, { ...settings });
         }
+        
+        // Announce theme change to screen readers
+        announceThemeChange();
+    }
+    
+    // Announce theme change to screen readers
+    function announceThemeChange() {
+        let announcement = `Theme changed to ${settings.darkMode ? 'dark' : 'light'} mode`;
+        
+        if (settings.highContrast) {
+            announcement += ' with high contrast';
+        }
+        
+        if (settings.reducedMotion) {
+            announcement += ' and reduced motion';
+        }
+        
+        // Create or update the live region
+        let liveRegion = document.getElementById('theme-change-announcement');
+        if (!liveRegion) {
+            liveRegion = document.createElement('div');
+            liveRegion.id = 'theme-change-announcement';
+            liveRegion.setAttribute('aria-live', 'polite');
+            liveRegion.setAttribute('class', 'sr-only');
+            document.body.appendChild(liveRegion);
+        }
+        
+        liveRegion.textContent = announcement;
+        
+        // Clear the announcement after a delay
+        // Calculate timeout based on announcement length (approx. 15ms per character, minimum 3000ms)
+        const announcementTimeout = Math.max(3000, announcement.length * 15);
+        setTimeout(() => {
+            liveRegion.textContent = '';
+        }, announcementTimeout);
     }
     
     // Save settings to localStorage
@@ -211,11 +342,91 @@ const ThemeManager = (function() {
                 console.error('Error parsing theme settings:', error);
             }
         } else {
-            // Check for system preference
+            // Check for system preferences
             if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
                 settings.darkMode = true;
             }
+            
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                settings.reducedMotion = true;
+            }
+            
+            if (window.matchMedia && window.matchMedia('(prefers-contrast: more)').matches) {
+                settings.highContrast = true;
+            }
         }
+    }
+    
+    // Create accessibility controls
+    function createAccessibilityControls() {
+        const navbar = document.querySelector('.navbar-nav');
+        if (!navbar) return;
+        
+        // Create accessibility dropdown
+        const accessibilityDropdown = document.createElement('li');
+        accessibilityDropdown.className = 'nav-item dropdown ms-2';
+        accessibilityDropdown.innerHTML = `
+            <a class="nav-link dropdown-toggle" href="#" id="accessibilityDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-universal-access" aria-hidden="true"></i>
+                <span class="visually-hidden">Accessibility options</span>
+            </a>
+            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="accessibilityDropdown">
+                <li>
+                    <div class="dropdown-item">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="darkModeToggle" ${settings.darkMode ? 'checked' : ''}>
+                            <label class="form-check-label" for="darkModeToggle">Dark Mode</label>
+                        </div>
+                    </div>
+                </li>
+                <li>
+                    <div class="dropdown-item">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="highContrastToggle" ${settings.highContrast ? 'checked' : ''}>
+                            <label class="form-check-label" for="highContrastToggle">High Contrast</label>
+                        </div>
+                    </div>
+                </li>
+                <li>
+                    <div class="dropdown-item">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="reducedMotionToggle" ${settings.reducedMotion ? 'checked' : ''}>
+                            <label class="form-check-label" for="reducedMotionToggle">Reduced Motion</label>
+                        </div>
+                    </div>
+                </li>
+                <li><hr class="dropdown-divider"></li>
+                <li>
+                    <div class="dropdown-item">
+                        <label for="fontSizeSelect" class="form-label">Font Size</label>
+                        <select class="form-select form-select-sm" id="fontSizeSelect">
+                            <option value="small" ${settings.fontSize === 'small' ? 'selected' : ''}>Small</option>
+                            <option value="medium" ${settings.fontSize === 'medium' ? 'selected' : ''}>Medium</option>
+                            <option value="large" ${settings.fontSize === 'large' ? 'selected' : ''}>Large</option>
+                        </select>
+                    </div>
+                </li>
+            </ul>
+        `;
+        
+        navbar.appendChild(accessibilityDropdown);
+        
+        // Add event listeners
+        document.getElementById('darkModeToggle').addEventListener('change', function(e) {
+            ThemeManager.setDarkMode(e.target.checked);
+        });
+        
+        document.getElementById('highContrastToggle').addEventListener('change', function(e) {
+            ThemeManager.setHighContrast(e.target.checked);
+        });
+        
+        document.getElementById('reducedMotionToggle').addEventListener('change', function(e) {
+            ThemeManager.setReducedMotion(e.target.checked);
+        });
+        
+        document.getElementById('fontSizeSelect').addEventListener('change', function(e) {
+            ThemeManager.setFontSize(e.target.value);
+        });
     }
     
     return {
@@ -235,26 +446,18 @@ const ThemeManager = (function() {
                         this.setDarkMode(false);
                     }
                 });
+                
+                window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', event => {
+                    this.setReducedMotion(event.matches);
+                });
+                
+                window.matchMedia('(prefers-contrast: more)').addEventListener('change', event => {
+                    this.setHighContrast(event.matches);
+                });
             }
             
-            // Add theme toggle button if it doesn't exist
-            if (!document.getElementById('theme-toggle')) {
-                const navbar = document.querySelector('.navbar-nav');
-                if (navbar) {
-                    const themeToggle = document.createElement('li');
-                    themeToggle.className = 'nav-item ms-2';
-                    themeToggle.innerHTML = `
-                        <button id="theme-toggle" class="btn btn-outline-light btn-sm">
-                            <i class="bi ${settings.darkMode ? 'bi-sun' : 'bi-moon'}"></i>
-                        </button>
-                    `;
-                    navbar.appendChild(themeToggle);
-                    
-                    document.getElementById('theme-toggle').addEventListener('click', () => {
-                        this.toggleDarkMode();
-                    });
-                }
-            }
+            // Create accessibility controls
+            createAccessibilityControls();
         },
         
         /**
@@ -272,12 +475,26 @@ const ThemeManager = (function() {
             settings.darkMode = enabled;
             applyTheme();
             saveSettings();
-            
-            // Update theme toggle button
-            const themeToggle = document.getElementById('theme-toggle');
-            if (themeToggle) {
-                themeToggle.innerHTML = `<i class="bi ${enabled ? 'bi-sun' : 'bi-moon'}"></i>`;
-            }
+        },
+        
+        /**
+         * Set high contrast mode
+         * @param {boolean} enabled - Whether high contrast mode is enabled
+         */
+        setHighContrast: function(enabled) {
+            settings.highContrast = enabled;
+            applyTheme();
+            saveSettings();
+        },
+        
+        /**
+         * Set reduced motion mode
+         * @param {boolean} enabled - Whether reduced motion mode is enabled
+         */
+        setReducedMotion: function(enabled) {
+            settings.reducedMotion = enabled;
+            applyTheme();
+            saveSettings();
         },
         
         /**
@@ -341,7 +558,9 @@ const ThemeManager = (function() {
                 darkMode: false,
                 fontSize: 'medium',
                 colorAccent: 'blue',
-                density: 'normal'
+                density: 'normal',
+                highContrast: false,
+                reducedMotion: false
             });
             
             applyTheme();
@@ -357,4 +576,3 @@ window.ThemeManager = ThemeManager;
 document.addEventListener('DOMContentLoaded', function() {
     ThemeManager.init();
 });
-
