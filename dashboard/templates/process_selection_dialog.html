@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Select Data Source - WiseFlow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/process_selection.css">
+</head>
+<body>
+    <a href="#main-content" class="visually-hidden-focusable skip-link">Skip to main content</a>
+    
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark" aria-label="Main navigation">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#" aria-label="WiseFlow Home">WiseFlow</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="/data-mining">Data Mining</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/templates">Templates</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/database">Database</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/visualization">Visualization</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/settings">Settings</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-5" id="main-content">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Select Data Source</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row text-center">
+                            <div class="col-md-3 mb-4">
+                                <a href="/data-mining/github-config" class="text-decoration-none">
+                                    <div class="data-source-card" data-source="github">
+                                        <div class="icon-container mb-3">
+                                            <i class="bi bi-github fs-1"></i>
+                                        </div>
+                                        <h5>GitHub</h5>
+                                        <p class="text-muted">Code Mining Source</p>
+                                    </div>
+                                </a>
+                            </div>
+                            <div class="col-md-3 mb-4">
+                                <a href="/data-mining/websearch-config" class="text-decoration-none">
+                                    <div class="data-source-card" data-source="websearch">
+                                        <div class="icon-container mb-3">
+                                            <i class="bi bi-globe fs-1"></i>
+                                        </div>
+                                        <h5>WebSearch</h5>
+                                        <p class="text-muted">Web Content Mining</p>
+                                    </div>
+                                </a>
+                            </div>
+                            <div class="col-md-3 mb-4">
+                                <a href="/data-mining/youtube-config" class="text-decoration-none">
+                                    <div class="data-source-card" data-source="youtube">
+                                        <div class="icon-container mb-3">
+                                            <i class="bi bi-youtube fs-1"></i>
+                                        </div>
+                                        <h5>YouTube</h5>
+                                        <p class="text-muted">Video Mining Content</p>
+                                    </div>
+                                </a>
+                            </div>
+                            <div class="col-md-3 mb-4">
+                                <a href="/data-mining/arxiv-config" class="text-decoration-none">
+                                    <div class="data-source-card" data-source="arxiv">
+                                        <div class="icon-container mb-3">
+                                            <i class="bi bi-journal-text fs-1"></i>
+                                        </div>
+                                        <h5>ArXiv</h5>
+                                        <p class="text-muted">Research Papers Mining</p>
+                                    </div>
+                                </a>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h6 class="card-title">
+                                            <i class="bi bi-info-circle me-2"></i>
+                                            How to Choose a Data Source
+                                        </h6>
+                                        <p class="card-text">Select the most appropriate data source based on your research needs:</p>
+                                        <ul>
+                                            <li><strong>GitHub</strong>: For mining code repositories, documentation, issues, and pull requests.</li>
+                                            <li><strong>WebSearch</strong>: For general web content including articles, blogs, documentation, and forums.</li>
+                                            <li><strong>YouTube</strong>: For mining video content, transcripts, and comments.</li>
+                                            <li><strong>ArXiv</strong>: For academic research papers and scientific publications.</li>
+                                        </ul>
+                                        <p class="card-text mb-0">You can run multiple data mining processes simultaneously to gather information from different sources.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-footer d-flex justify-content-between">
+                        <a href="/dashboard" class="btn btn-secondary">Back to Dashboard</a>
+                        <a href="/templates" class="btn btn-outline-primary">Load from Template</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Shared modules -->
+    <script src="/static/js/shared/utils.js"></script>
+    <script src="/static/js/shared/event_bus.js"></script>
+    <script src="/static/js/shared/api_service.js"></script>
+    
+    <!-- Application scripts -->
+    <script src="/static/js/process_selection.js"></script>
+</body>
+</html>
+

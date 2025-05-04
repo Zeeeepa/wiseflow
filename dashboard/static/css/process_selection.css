@@ -1,0 +1,142 @@
+/* Process Selection Dialog Styles */
+
+.data-source-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.data-source-card:hover, .data-source-card-hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+}
+
+.data-source-card .icon-container {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 15px;
+    transition: all 0.3s ease;
+}
+
+.data-source-card[data-source="github"] .icon-container {
+    background-color: #f0f6ff;
+    color: #0366d6;
+}
+
+.data-source-card[data-source="websearch"] .icon-container {
+    background-color: #f0fff4;
+    color: #28a745;
+}
+
+.data-source-card[data-source="youtube"] .icon-container {
+    background-color: #fff0f0;
+    color: #ff0000;
+}
+
+.data-source-card[data-source="arxiv"] .icon-container {
+    background-color: #f7f0ff;
+    color: #6f42c1;
+}
+
+.data-source-card:hover .icon-container, .data-source-card-hover .icon-container {
+    transform: scale(1.1);
+}
+
+.data-source-card h5 {
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+.data-source-card p {
+    font-size: 0.85rem;
+    margin-bottom: 0;
+}
+
+/* Active Mining Table Styles */
+#active-mining-table .progress {
+    height: 20px;
+    border-radius: 4px;
+}
+
+#active-mining-table .progress-bar {
+    background-color: #0d6efd;
+    color: white;
+    font-weight: 500;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Toast Notification Styles */
+.toast-container {
+    z-index: 1060;
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    .data-source-card {
+        background-color: #2d2d2d;
+        border-color: #444;
+    }
+    
+    .data-source-card[data-source="github"] .icon-container {
+        background-color: #1a2535;
+        color: #58a6ff;
+    }
+    
+    .data-source-card[data-source="websearch"] .icon-container {
+        background-color: #1a2e22;
+        color: #3fb950;
+    }
+    
+    .data-source-card[data-source="youtube"] .icon-container {
+        background-color: #351a1a;
+        color: #ff6b6b;
+    }
+    
+    .data-source-card[data-source="arxiv"] .icon-container {
+        background-color: #2a1a35;
+        color: #a371f7;
+    }
+    
+    .data-source-card h5 {
+        color: #e0e0e0;
+    }
+    
+    .data-source-card p {
+        color: #aaa;
+    }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .data-source-card {
+        padding: 15px 10px;
+    }
+    
+    .data-source-card .icon-container {
+        width: 50px;
+        height: 50px;
+    }
+    
+    .data-source-card h5 {
+        font-size: 1rem;
+    }
+    
+    .data-source-card p {
+        font-size: 0.75rem;
+    }
+}
+
