@@ -98,41 +98,33 @@ class Event:
         timestamp = datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else None
         
         return cls(
-            event_type=event_type,
-            data=data.get("data", {}),
-            source=data.get("source"),
-            timestamp=timestamp,
-            event_id=data.get("event_id")
-        )
-    
-    def __str__(self) -> str:
-        """Return a string representation of the event."""
-        return f"Event({self.event_type.name}, source={self.source}, id={self.event_id})"
-
-
 class EventBus:
-    """Event bus for the event system."""
-    
-    _instance = None
-    
-    def __new__(cls):
-        """Create a singleton instance."""
-        if cls._instance is None:
-            cls._instance = super(EventBus, cls).__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
     def __init__(self):
-        """Initialize the event bus."""
-        if self._initialized:
+        self._subscribers = {}
+        self._max_queue_size = 1000
+        self._overflow_policy = 'drop'  # or 'block'
+        self._queues = {}
+
+    async def publish(self, event: Event) -> None:
+        if not self._enabled:
             return
-            
-        self._subscribers: Dict[EventType, List[Callable]] = {}
-        self._event_history: List[Event] = []
-        self._max_history_size = 1000
-        self._lock = asyncio.Lock()
-        self._propagate_exceptions = False  # Default to not propagating exceptions
-        self._initialized = True
+
+        for subscriber in self._subscribers.get(event.event_type, []):
+            queue = self._queues.get(subscriber)
+            if not queue:
+                queue = asyncio.Queue(maxsize=self._max_queue_size)
+                self._queues[subscriber] = queue
+
+            try:
+                if self._overflow_policy == 'drop':
+                    if queue.full():
+                        logger.warning(f"Queue full for subscriber {subscriber.__name__}, dropping event")
+                        continue
+                    await queue.put_nowait(event)
+                else:  # block
+                    await queue.put(event)
+            except Exception as e:
+                logger.error(f"Error queueing event: {e}")
         self._enabled = ENABLE_EVENT_SYSTEM
         
         # Register built-in subscribers
