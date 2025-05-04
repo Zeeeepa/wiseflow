@@ -85,17 +85,57 @@ async def templates_management(request: Request):
     )
 
 @router.get("/visualization", response_class=HTMLResponse)
-async def visualization(request: Request):
-    """Serve the visualization interface."""
+async def visualization_page(request: Request):
+    """Serve the data visualization page."""
     return templates.TemplateResponse(
         "visualization.html", 
         {"request": request}
     )
 
 @router.get("/settings", response_class=HTMLResponse)
-async def settings(request: Request):
-    """Serve the settings interface."""
+async def settings_page(request: Request):
+    """Serve the settings page."""
     return templates.TemplateResponse(
         "settings.html", 
+        {"request": request}
+    )
+
+@router.get("/process-selection", response_class=HTMLResponse)
+async def process_selection(request: Request):
+    """Serve the process selection dialog."""
+    return templates.TemplateResponse(
+        "process_selection_dialog.html", 
+        {"request": request}
+    )
+
+@router.get("/github-config", response_class=HTMLResponse)
+async def github_config(request: Request):
+    """Serve the GitHub configuration dialog."""
+    return templates.TemplateResponse(
+        "github_config_dialog.html", 
+        {"request": request}
+    )
+
+@router.get("/websearch-config", response_class=HTMLResponse)
+async def websearch_config(request: Request):
+    """Serve the WebSearch configuration dialog."""
+    return templates.TemplateResponse(
+        "websearch_config_dialog.html", 
+        {"request": request}
+    )
+
+@router.get("/youtube-config", response_class=HTMLResponse)
+async def youtube_config(request: Request):
+    """Serve the YouTube configuration dialog."""
+    return templates.TemplateResponse(
+        "youtube_config_dialog.html", 
+        {"request": request}
+    )
+
+@router.get("/arxiv-config", response_class=HTMLResponse)
+async def arxiv_config(request: Request):
+    """Serve the ArXiv configuration dialog."""
+    return templates.TemplateResponse(
+        "arxiv_dialog.html", 
         {"request": request}
     )

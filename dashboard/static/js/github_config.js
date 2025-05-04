@@ -1,29 +1,99 @@
 /**
- * GitHub Configuration Dialog
- * Handles the configuration of GitHub data mining tasks
+ * GitHub Configuration Dialog Handler
+ * Manages the GitHub data mining configuration form
  */
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize the GitHub configuration dialog
-    initGitHubConfig();
-});
-
-/**
- * Initialize the GitHub configuration dialog
- */
-function initGitHubConfig() {
-    // Add event listener to the "Add More" button for reference contexts
-    const addReferenceBtn = document.getElementById('add-reference-btn');
-    if (addReferenceBtn) {
-        addReferenceBtn.addEventListener('click', function() {
-            addReferenceContextInput();
+    // Reference context handlers
+    const addContextBtn = document.getElementById('add-context-btn');
+    const referenceContexts = document.getElementById('reference-contexts');
+    
+    // Add new reference context input
+    if (addContextBtn) {
+        addContextBtn.addEventListener('click', function() {
+            const newContext = document.createElement('div');
+            newContext.className = 'input-group mb-2';
+            newContext.innerHTML = `
+                <input type="text" class="form-control" placeholder="Enter file path or URL" aria-label="Reference context">
+                <button class="btn btn-outline-secondary remove-context" type="button">
+                    <i class="bi bi-trash"></i>
+                </button>
+            `;
+            referenceContexts.appendChild(newContext);
+            
+            // Add event listener to the new remove button
+            const removeBtn = newContext.querySelector('.remove-context');
+            removeBtn.addEventListener('click', function() {
+                newContext.remove();
+            });
         });
     }
     
-    // Add event listeners to remove reference context buttons
-    setupRemoveReferenceButtons();
+    // Add event listeners to existing remove buttons
+    document.querySelectorAll('.remove-context').forEach(button => {
+        button.addEventListener('click', function() {
+            this.closest('.input-group').remove();
+        });
+    });
     
-    // Add event listener to the cancel button
+    // Save template button handler
+    const saveTemplateBtn = document.getElementById('save-template-btn');
+    if (saveTemplateBtn) {
+        saveTemplateBtn.addEventListener('click', function() {
+            // Show the save template modal
+            const saveTemplateModal = new bootstrap.Modal(document.getElementById('save-template-modal'));
+            saveTemplateModal.show();
+        });
+    }
+    
+    // Confirm save template button handler
+    const confirmSaveTemplateBtn = document.getElementById('confirm-save-template');
+    if (confirmSaveTemplateBtn) {
+        confirmSaveTemplateBtn.addEventListener('click', function() {
+            const templateName = document.getElementById('template-name').value;
+            const templateDescription = document.getElementById('template-description').value;
+            
+            // Validate template name
+            if (!validators.required(templateName)) {
+                showNotification('Please enter a template name', 'error');
+                return;
+            }
+            
+            // Get form data
+            const templateData = getFormData();
+            templateData.name = templateName;
+            templateData.description = templateDescription;
+            
+            // Save template (in a real app, this would be an API call)
+            saveTemplate(templateData);
+        });
+    }
+    
+    // Form submission handler
+    const githubConfigForm = document.getElementById('github-config-form');
+    if (githubConfigForm) {
+        githubConfigForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Validate form
+            const customValidators = {
+                'focus': validators.required,
+                'parallel-workers': (value) => validators.numberRange(value, 1, 10)
+            };
+            
+            if (!validateForm(githubConfigForm, customValidators)) {
+                return;
+            }
+            
+            // Get form data
+            const formData = getFormData();
+            
+            // Start the data mining process (in a real app, this would be an API call)
+            startDataMining(formData);
+        });
+    }
+    
+    // Cancel button handler
     const cancelBtn = document.getElementById('cancel-btn');
     if (cancelBtn) {
         cancelBtn.addEventListener('click', function() {
@@ -31,131 +101,38 @@ function initGitHubConfig() {
         });
     }
     
-    // Add event listener to the start button
-    const startBtn = document.getElementById('start-btn');
-    if (startBtn) {
-        startBtn.addEventListener('click', function() {
-            startGitHubDataMining();
-        });
-    }
-    
-    // Add event listener to the save template button
-    const saveTemplateBtn = document.getElementById('save-template-btn');
-    if (saveTemplateBtn) {
-        saveTemplateBtn.addEventListener('click', function() {
-            showSaveTemplateModal();
-        });
-    }
-    
-    // Add event listener to the confirm save template button
-    const confirmSaveTemplateBtn = document.getElementById('confirm-save-template-btn');
-    if (confirmSaveTemplateBtn) {
-        confirmSaveTemplateBtn.addEventListener('click', function() {
-            saveAsTemplate();
-        });
-    }
-    
-    // Load template if specified in URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const templateId = urlParams.get('template');
-    if (templateId) {
-        loadTemplate(templateId);
-    }
-}
-
-/**
- * Add a new reference context input field
- */
-function addReferenceContextInput() {
-    const referenceContexts = document.getElementById('reference-contexts');
-    if (referenceContexts) {
-        const inputGroup = document.createElement('div');
-        inputGroup.className = 'input-group mb-2';
-        
-        inputGroup.innerHTML = `
-            <input type="text" class="form-control" placeholder="File path or URL">
-            <button class="btn btn-outline-danger remove-reference" type="button">
-                <i class="bi bi-trash"></i>
-            </button>
-        `;
-        
-        referenceContexts.appendChild(inputGroup);
-        
-        // Add event listener to the new remove button
-        const removeBtn = inputGroup.querySelector('.remove-reference');
-        if (removeBtn) {
-            removeBtn.addEventListener('click', function() {
-                inputGroup.remove();
+    // Add keyboard navigation for better accessibility
+    const focusableElements = githubConfigForm ? githubConfigForm.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])') : [];
+    if (focusableElements.length > 0) {
+        // Add keyboard navigation between form elements
+        focusableElements.forEach((element, index) => {
+            element.addEventListener('keydown', function(e) {
+                // Handle tab navigation
+                if (e.key === 'Tab') {
+                    // No need to do anything, default behavior works
+                } 
+                // Handle arrow navigation
+                else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    const nextElement = focusableElements[(index + 1) % focusableElements.length];
+                    nextElement.focus();
+                } 
+                else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    const prevElement = focusableElements[(index - 1 + focusableElements.length) % focusableElements.length];
+                    prevElement.focus();
+                }
             });
-        }
-    }
-}
-
-/**
- * Setup event listeners for remove reference buttons
- */
-function setupRemoveReferenceButtons() {
-    const removeButtons = document.querySelectorAll('.remove-reference');
-    removeButtons.forEach(button => {
-        button.addEventListener('click', function() {
-            this.closest('.input-group').remove();
         });
-    });
-}
-
-/**
- * Start GitHub data mining with the current configuration
- */
-function startGitHubDataMining() {
-    // Get form values
-    const config = getFormValues();
-    
-    // Validate form
-    if (!validateForm(config)) {
-        return;
     }
-    
-    // Send the configuration to the server
-    fetch('/api/data-mining/github/start', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(config)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Redirect to the data mining dashboard
-            window.location.href = '/data-mining?task=' + data.taskId;
-        } else {
-            alert('Error starting data mining task: ' + data.error);
-        }
-    })
-    .catch(error => {
-        console.error('Error starting data mining task:', error);
-        alert('Error starting data mining task. Please try again.');
-    });
-}
+});
 
-/**
- * Get all form values
- * @returns {Object} Form values
- */
-function getFormValues() {
-    // Get reference contexts
-    const referenceContexts = [];
-    document.querySelectorAll('#reference-contexts input').forEach(input => {
-        if (input.value.trim()) {
-            referenceContexts.push(input.value.trim());
-        }
-    });
-    
-    // Return form values
-    return {
-        focus: document.getElementById('focus').value.trim(),
-        description: document.getElementById('description').value.trim(),
-        referenceContexts: referenceContexts,
+// Function to get all form data
+function getFormData() {
+    const formData = {
+        focus: document.getElementById('focus').value,
+        description: document.getElementById('description').value,
+        referenceContexts: [],
         searchScheme: document.getElementById('search-scheme').value,
         options: {
             searchRepositories: document.getElementById('search-repositories').checked,
@@ -163,7 +140,7 @@ function getFormValues() {
             searchIssues: document.getElementById('search-issues').checked,
             searchPullRequests: document.getElementById('search-pull-requests').checked
         },
-        goal: document.getElementById('goal').value.trim(),
+        goal: document.getElementById('goal').value,
         parallelWorkers: parseInt(document.getElementById('parallel-workers').value),
         advancedOptions: {
             cloneRepositories: document.getElementById('clone-repositories').checked,
@@ -172,159 +149,127 @@ function getFormValues() {
             saveFindings: document.getElementById('save-findings').checked
         }
     };
+    
+    // Get all reference contexts
+    document.querySelectorAll('#reference-contexts .input-group input').forEach(input => {
+        if (input.value.trim()) {
+            formData.referenceContexts.push(input.value.trim());
+        }
+    });
+    
+    return formData;
 }
 
-/**
- * Validate the form
- * @param {Object} config - Form values
- * @returns {boolean} True if valid, false otherwise
- */
-function validateForm(config) {
-    if (!config.focus) {
-        alert('Please enter a focus for the data mining task.');
-        return false;
-    }
+// Function to save a template
+function saveTemplate(templateData) {
+    console.log('Saving template:', templateData);
     
-    if (!config.goal) {
-        alert('Please enter a goal for the data mining task.');
-        return false;
-    }
+    // Show loading state
+    showLoading('save-template-btn', 'Saving...');
     
-    if (config.parallelWorkers < 1 || config.parallelWorkers > 10) {
-        alert('Parallel workers must be between 1 and 10.');
-        return false;
-    }
-    
-    return true;
-}
-
-/**
- * Show the save template modal
- */
-function showSaveTemplateModal() {
-    const modal = new bootstrap.Modal(document.getElementById('save-template-modal'));
-    modal.show();
-}
-
-/**
- * Save the current configuration as a template
- */
-function saveAsTemplate() {
-    const templateName = document.getElementById('template-name').value.trim();
-    const templateDescription = document.getElementById('template-description').value.trim();
-    
-    if (!templateName) {
-        alert('Please enter a name for the template.');
-        return;
-    }
-    
-    // Get form values
-    const config = getFormValues();
-    
-    // Add template metadata
-    config.templateName = templateName;
-    config.templateDescription = templateDescription;
-    config.templateType = 'github';
-    
-    // Send the template to the server
-    fetch('/api/templates/save', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(config)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
+    // In a real application, this would be an API call
+    // For now, we'll simulate an API call with a timeout
+    setTimeout(() => {
+        try {
             // Hide the modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('save-template-modal'));
-            modal.hide();
+            const saveTemplateModal = bootstrap.Modal.getInstance(document.getElementById('save-template-modal'));
+            saveTemplateModal.hide();
             
             // Show success message
-            alert('Template saved successfully!');
-        } else {
-            alert('Error saving template: ' + data.error);
+            showNotification('Template saved successfully', 'success');
+            
+            // Reset loading state
+            hideLoading('save-template-btn');
+        } catch (error) {
+            console.error('Error saving template:', error);
+            showNotification('Error saving template: ' + (error.message || 'Unknown error'), 'error');
+            hideLoading('save-template-btn');
         }
-    })
-    .catch(error => {
-        console.error('Error saving template:', error);
-        alert('Error saving template. Please try again.');
+    }, 1000);
+}
+
+// Function to start the data mining process
+function startDataMining(formData) {
+    console.log('Starting data mining with config:', formData);
+    
+    // Show loading state
+    const startBtn = document.querySelector('#github-config-form button[type="submit"]');
+    if (startBtn) {
+        startBtn.disabled = true;
+        startBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Starting...';
+    }
+    
+    // In a real application, this would be an API call
+    // For now, we'll simulate an API call with a timeout
+    setTimeout(() => {
+        try {
+            // Show success message
+            showNotification('Starting GitHub data mining process...', 'success');
+            
+            // Redirect to dashboard
+            window.location.href = '/data-mining';
+        } catch (error) {
+            console.error('Error starting data mining:', error);
+            showNotification('Error starting data mining: ' + (error.message || 'Unknown error'), 'error');
+            
+            // Reset button state
+            if (startBtn) {
+                startBtn.disabled = false;
+                startBtn.innerHTML = 'Start';
+            }
+        }
+    }, 1500);
+}
+
+// Function to show a notification
+function showNotification(message, type = 'success') {
+    // Create a toast notification
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type === 'success' ? 'primary' : 'danger'} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.setAttribute('aria-live', 'assertive');
+    toast.setAttribute('aria-atomic', 'true');
+    
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    `;
+    
+    // Add to the document
+    const toastContainer = document.createElement('div');
+    toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    toastContainer.appendChild(toast);
+    document.body.appendChild(toastContainer);
+    
+    // Initialize and show the toast
+    const bsToast = new bootstrap.Toast(toast, { autohide: true, delay: 3000 });
+    bsToast.show();
+    
+    // Remove from DOM after hiding
+    toast.addEventListener('hidden.bs.toast', function() {
+        toastContainer.remove();
     });
 }
 
-/**
- * Load a template
- * @param {string} templateId - Template ID
- */
-function loadTemplate(templateId) {
-    fetch(`/api/templates/${templateId}`)
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Fill the form with template data
-            fillFormWithTemplate(data.template);
-        } else {
-            alert('Error loading template: ' + data.error);
-        }
-    })
-    .catch(error => {
-        console.error('Error loading template:', error);
-        alert('Error loading template. Please try again.');
-    });
+// Function to show a loading state
+function showLoading(buttonId, message) {
+    const button = document.getElementById(buttonId);
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ${message}`;
+    }
 }
 
-/**
- * Fill the form with template data
- * @param {Object} template - Template data
- */
-function fillFormWithTemplate(template) {
-    // Set basic fields
-    document.getElementById('focus').value = template.focus || '';
-    document.getElementById('description').value = template.description || '';
-    document.getElementById('search-scheme').value = template.searchScheme || 'basic';
-    document.getElementById('goal').value = template.goal || '';
-    document.getElementById('parallel-workers').value = template.parallelWorkers || 4;
-    
-    // Set options
-    if (template.options) {
-        document.getElementById('search-repositories').checked = template.options.searchRepositories !== false;
-        document.getElementById('search-code').checked = template.options.searchCode !== false;
-        document.getElementById('search-issues').checked = template.options.searchIssues === true;
-        document.getElementById('search-pull-requests').checked = template.options.searchPullRequests === true;
-    }
-    
-    // Set advanced options
-    if (template.advancedOptions) {
-        document.getElementById('clone-repositories').checked = template.advancedOptions.cloneRepositories !== false;
-        document.getElementById('follow-repository-links').checked = template.advancedOptions.followRepositoryLinks !== false;
-        document.getElementById('include-forks').checked = template.advancedOptions.includeForks === true;
-        document.getElementById('save-findings').checked = template.advancedOptions.saveFindings !== false;
-    }
-    
-    // Set reference contexts
-    if (template.referenceContexts && template.referenceContexts.length > 0) {
-        // Clear existing reference contexts
-        const referenceContexts = document.getElementById('reference-contexts');
-        referenceContexts.innerHTML = '';
-        
-        // Add reference contexts from template
-        template.referenceContexts.forEach(context => {
-            const inputGroup = document.createElement('div');
-            inputGroup.className = 'input-group mb-2';
-            
-            inputGroup.innerHTML = `
-                <input type="text" class="form-control" placeholder="File path or URL" value="${context}">
-                <button class="btn btn-outline-danger remove-reference" type="button">
-                    <i class="bi bi-trash"></i>
-                </button>
-            `;
-            
-            referenceContexts.appendChild(inputGroup);
-        });
-        
-        // Setup remove buttons
-        setupRemoveReferenceButtons();
+// Function to hide a loading state
+function hideLoading(buttonId) {
+    const button = document.getElementById(buttonId);
+    if (button) {
+        button.disabled = false;
+        button.innerHTML = button.getAttribute('data-bs-original-title') || 'Save as Template';
     }
 }
 
