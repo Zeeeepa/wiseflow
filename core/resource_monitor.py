@@ -1,381 +1,242 @@
 """
-Resource monitor for tracking system resources and managing auto-shutdown.
+Resource monitoring module for WiseFlow.
+
+This module provides functionality to monitor system resources like CPU, memory, and disk usage.
 """
 
 import os
 import time
-import threading
+import asyncio
 import logging
 import psutil
-from typing import Any, Dict, List, Optional, Union, Callable
-import json
-import datetime
+from typing import Dict, Any, Optional, Callable, List
+from datetime import datetime
 
-from core.thread_pool_manager import thread_pool_manager, TaskPriority
+from core.config import config
+from core.event_system import (
+    EventType, Event, publish_sync,
+    create_resource_event
+)
 
 logger = logging.getLogger(__name__)
 
-
 class ResourceMonitor:
-    """Monitor system resources and manage auto-shutdown."""
+    """
+    Monitor system resources like CPU, memory, and disk usage.
     
-    _instance = None
-    
-    def __new__(cls, *args, **kwargs):
-        """Create a singleton instance."""
-        if cls._instance is None:
-            cls._instance = super(ResourceMonitor, cls).__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+    This class provides functionality to monitor system resources and trigger
+    actions when thresholds are exceeded.
+    """
     
     def __init__(
         self,
-        check_interval: float = 60.0,
+        check_interval: float = 10.0,
         cpu_threshold: float = 90.0,
-        memory_threshold: float = 90.0,
+        memory_threshold: float = 85.0,
         disk_threshold: float = 90.0,
-        auto_shutdown_enabled: bool = False,
-        auto_shutdown_idle_time: float = 1800.0,
-        auto_shutdown_callback: Optional[Callable] = None
+        warning_threshold_factor: float = 0.8,
+        history_size: int = 10,
+        callback: Optional[Callable[[str, float, float], None]] = None
     ):
-        """Initialize the resource monitor.
+        """
+        Initialize the resource monitor.
         
         Args:
-            check_interval: Interval between resource checks in seconds
-            cpu_threshold: CPU usage threshold percentage
-            memory_threshold: Memory usage threshold percentage
-            disk_threshold: Disk usage threshold percentage
-            auto_shutdown_enabled: Whether to enable auto-shutdown
-            auto_shutdown_idle_time: Idle time before auto-shutdown in seconds
-            auto_shutdown_callback: Callback function for auto-shutdown
+            check_interval: Interval in seconds between resource checks
+            cpu_threshold: CPU usage threshold in percent
+            memory_threshold: Memory usage threshold in percent
+            disk_threshold: Disk usage threshold in percent
+            warning_threshold_factor: Factor to multiply thresholds by for warnings
+            history_size: Number of history points to keep
+            callback: Optional callback function to call when thresholds are exceeded
         """
-        if self._initialized:
-            return
-            
         self.check_interval = check_interval
         self.cpu_threshold = cpu_threshold
         self.memory_threshold = memory_threshold
         self.disk_threshold = disk_threshold
-        self.auto_shutdown_enabled = auto_shutdown_enabled
-        self.auto_shutdown_idle_time = auto_shutdown_idle_time
-        self.auto_shutdown_callback = auto_shutdown_callback
+        self.warning_threshold_factor = warning_threshold_factor
+        self.history_size = history_size
+        self.callback = callback
         
-        self.last_activity_time = time.time()
-        self.shutdown_requested = False
-        self.monitor_thread = None
-        self.stop_event = threading.Event()
+        self.cpu_history: List[float] = []
+        self.memory_history: List[float] = []
+        self.disk_history: List[float] = []
         
-        self.resource_history = {
-            'cpu': [],
-            'memory': [],
-            'disk': [],
-            'timestamp': []
-        }
-        self.history_max_size = 1000  # Maximum number of history entries
+        self.monitoring_task = None
+        self.is_running = False
+        self.last_check_time = None
         
-        self._initialized = True
-        logger.info("ResourceMonitor initialized")
-        
-    def start(self):
-        """Start the resource monitor thread."""
-        if self.monitor_thread and self.monitor_thread.is_alive():
-            logger.warning("ResourceMonitor already running")
+        # Calculate warning thresholds
+        self.cpu_warning = cpu_threshold * warning_threshold_factor
+        self.memory_warning = memory_threshold * warning_threshold_factor
+        self.disk_warning = disk_threshold * warning_threshold_factor
+    
+    async def start(self):
+        """Start the resource monitor."""
+        if self.is_running:
+            logger.warning("Resource monitor is already running")
             return
-            
-        self.stop_event.clear()
-        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.monitor_thread.start()
-        logger.info("ResourceMonitor started")
         
-    def stop(self):
-        """Stop the resource monitor thread."""
-        if not self.monitor_thread or not self.monitor_thread.is_alive():
-            logger.warning("ResourceMonitor not running")
+        self.is_running = True
+        self.monitoring_task = asyncio.create_task(self._monitor_resources())
+        logger.info("Resource monitor started")
+    
+    async def stop(self):
+        """Stop the resource monitor."""
+        if not self.is_running:
+            logger.warning("Resource monitor is not running")
             return
-            
-        self.stop_event.set()
-        self.monitor_thread.join(timeout=10.0)
-        logger.info("ResourceMonitor stopped")
         
-    def _monitor_loop(self):
-        """Main monitoring loop."""
-        while not self.stop_event.is_set():
+        self.is_running = False
+        if self.monitoring_task:
+            self.monitoring_task.cancel()
             try:
-                # Check resources
-                self._check_resources()
-                
-                # Check for auto-shutdown
-                if self.auto_shutdown_enabled and not self.shutdown_requested:
-                    self._check_auto_shutdown()
-                    
-                # Sleep until next check
-                self.stop_event.wait(self.check_interval)
-                
-            except Exception as e:
-                logger.error(f"Error in resource monitor: {str(e)}")
-                time.sleep(self.check_interval)
-                
-    def _check_resources(self):
-        """Check system resources and update history."""
+                await self.monitoring_task
+            except asyncio.CancelledError:
+                pass
+        
+        logger.info("Resource monitor stopped")
+    
+    async def _monitor_resources(self):
+        """Monitor resources in a loop."""
         try:
-            # Get CPU usage
-            cpu_percent = psutil.cpu_percent(interval=1.0)
-            
-            # Get memory usage
-            memory = psutil.virtual_memory()
-            memory_percent = memory.percent
-            
-            # Get disk usage for the current directory
-            disk = psutil.disk_usage(os.getcwd())
-            disk_percent = disk.percent
+            while self.is_running:
+                await self._check_resources()
+                await asyncio.sleep(self.check_interval)
+        except asyncio.CancelledError:
+            logger.info("Resource monitoring task cancelled")
+        except Exception as e:
+            logger.error(f"Error in resource monitoring: {e}")
+    
+    async def _check_resources(self):
+        """Check system resources and trigger actions if thresholds are exceeded."""
+        try:
+            # Get current resource usage
+            cpu_percent = psutil.cpu_percent(interval=1)
+            memory_percent = psutil.virtual_memory().percent
+            disk_percent = psutil.disk_usage('/').percent
             
             # Update history
-            timestamp = time.time()
-            self.resource_history['cpu'].append(cpu_percent)
-            self.resource_history['memory'].append(memory_percent)
-            self.resource_history['disk'].append(disk_percent)
-            self.resource_history['timestamp'].append(timestamp)
+            self._update_history(cpu_percent, memory_percent, disk_percent)
             
-            # Trim history if needed
-            if len(self.resource_history['cpu']) > self.history_max_size:
-                self.resource_history['cpu'] = self.resource_history['cpu'][-self.history_max_size:]
-                self.resource_history['memory'] = self.resource_history['memory'][-self.history_max_size:]
-                self.resource_history['disk'] = self.resource_history['disk'][-self.history_max_size:]
-                self.resource_history['timestamp'] = self.resource_history['timestamp'][-self.history_max_size:]
-                
+            # Calculate average usage
+            avg_cpu = sum(self.cpu_history) / len(self.cpu_history) if self.cpu_history else cpu_percent
+            avg_memory = sum(self.memory_history) / len(self.memory_history) if self.memory_history else memory_percent
+            avg_disk = sum(self.disk_history) / len(self.disk_history) if self.disk_history else disk_percent
+            
             # Log resource usage
-            logger.debug(f"Resource usage: CPU={cpu_percent:.1f}%, Memory={memory_percent:.1f}%, Disk={disk_percent:.1f}%")
+            logger.debug(
+                f"Resource usage - CPU: {cpu_percent:.1f}% (avg: {avg_cpu:.1f}%), "
+                f"Memory: {memory_percent:.1f}% (avg: {avg_memory:.1f}%), "
+                f"Disk: {disk_percent:.1f}% (avg: {avg_disk:.1f}%)"
+            )
             
-            # Check thresholds and log warnings
-            if cpu_percent > self.cpu_threshold:
-                logger.warning(f"CPU usage above threshold: {cpu_percent:.1f}% > {self.cpu_threshold:.1f}%")
-                
-            if memory_percent > self.memory_threshold:
-                logger.warning(f"Memory usage above threshold: {memory_percent:.1f}% > {self.memory_threshold:.1f}%")
-                
-            if disk_percent > self.disk_threshold:
-                logger.warning(f"Disk usage above threshold: {disk_percent:.1f}% > {self.disk_threshold:.1f}%")
-                
+            # Check for critical thresholds
+            if avg_cpu >= self.cpu_threshold:
+                self._handle_threshold_exceeded("CPU", avg_cpu, self.cpu_threshold, True)
+            elif avg_cpu >= self.cpu_warning:
+                self._handle_threshold_exceeded("CPU", avg_cpu, self.cpu_warning, False)
+            
+            if avg_memory >= self.memory_threshold:
+                self._handle_threshold_exceeded("Memory", avg_memory, self.memory_threshold, True)
+            elif avg_memory >= self.memory_warning:
+                self._handle_threshold_exceeded("Memory", avg_memory, self.memory_warning, False)
+            
+            if avg_disk >= self.disk_threshold:
+                self._handle_threshold_exceeded("Disk", avg_disk, self.disk_threshold, True)
+            elif avg_disk >= self.disk_warning:
+                self._handle_threshold_exceeded("Disk", avg_disk, self.disk_warning, False)
+            
+            # Update last check time
+            self.last_check_time = datetime.now()
         except Exception as e:
-            logger.error(f"Error checking resources: {str(e)}")
-            
-    def _check_auto_shutdown(self):
-        """Check if auto-shutdown should be triggered."""
-        current_time = time.time()
-        idle_time = current_time - self.last_activity_time
+            logger.error(f"Error checking resources: {e}")
+    
+    def _update_history(self, cpu_percent: float, memory_percent: float, disk_percent: float):
+        """Update resource usage history."""
+        self.cpu_history.append(cpu_percent)
+        self.memory_history.append(memory_percent)
+        self.disk_history.append(disk_percent)
         
-        # Get thread pool stats
-        thread_pool_stats = thread_pool_manager.get_stats()
-        active_tasks = thread_pool_stats['pending_tasks'] + thread_pool_stats['running_tasks']
+        # Trim history if needed
+        if len(self.cpu_history) > self.history_size:
+            self.cpu_history = self.cpu_history[-self.history_size:]
+        if len(self.memory_history) > self.history_size:
+            self.memory_history = self.memory_history[-self.history_size:]
+        if len(self.disk_history) > self.history_size:
+            self.disk_history = self.disk_history[-self.history_size:]
+    
+    def _handle_threshold_exceeded(self, resource_type: str, value: float, threshold: float, is_critical: bool):
+        """Handle a threshold being exceeded."""
+        if is_critical:
+            logger.warning(f"{resource_type} usage critical: {value:.1f}% (threshold: {threshold:.1f}%)")
+            event_type = EventType.RESOURCE_CRITICAL
+        else:
+            logger.info(f"{resource_type} usage warning: {value:.1f}% (threshold: {threshold:.1f}%)")
+            event_type = EventType.RESOURCE_WARNING
         
-        # Check if system is idle
-        if active_tasks == 0 and idle_time >= self.auto_shutdown_idle_time:
-            logger.info(f"System idle for {idle_time:.1f} seconds, initiating auto-shutdown")
-            self.shutdown_requested = True
-            
-            # Call shutdown callback if provided
-            if self.auto_shutdown_callback:
-                try:
-                    self.auto_shutdown_callback()
-                except Exception as e:
-                    logger.error(f"Error in auto-shutdown callback: {str(e)}")
-                    
-    def record_activity(self):
-        """Record user activity to reset idle timer."""
-        self.last_activity_time = time.time()
-        logger.debug("Activity recorded")
-        
-    def get_resource_usage(self) -> Dict[str, float]:
-        """Get current resource usage.
-        
-        Returns:
-            Dict[str, float]: Current resource usage percentages
-        """
+        # Publish event
         try:
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage(os.getcwd())
-            
-            return {
-                'cpu': cpu_percent,
-                'memory': memory.percent,
-                'disk': disk.percent,
-                'timestamp': time.time()
-            }
+            event = create_resource_event(
+                event_type,
+                resource_type.lower(),
+                value,
+                threshold
+            )
+            publish_sync(event)
         except Exception as e:
-            logger.error(f"Error getting resource usage: {str(e)}")
-            return {
-                'cpu': 0.0,
-                'memory': 0.0,
-                'disk': 0.0,
-                'timestamp': time.time(),
-                'error': str(e)
-            }
-            
-    def get_resource_history(self, limit: Optional[int] = None) -> Dict[str, List]:
-        """Get resource usage history.
+            logger.warning(f"Failed to publish resource event: {e}")
         
-        Args:
-            limit: Maximum number of history entries to return
-            
-        Returns:
-            Dict[str, List]: Resource usage history
+        # Call callback if provided
+        if self.callback:
+            try:
+                self.callback(resource_type, value, threshold)
+            except Exception as e:
+                logger.error(f"Error in resource monitor callback: {e}")
+    
+    def get_resource_usage(self) -> Dict[str, Any]:
         """
-        if limit is None or limit >= len(self.resource_history['cpu']):
-            return self.resource_history
-            
+        Get current resource usage.
+        
+        Returns:
+            Dictionary with resource usage information
+        """
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
         return {
-            'cpu': self.resource_history['cpu'][-limit:],
-            'memory': self.resource_history['memory'][-limit:],
-            'disk': self.resource_history['disk'][-limit:],
-            'timestamp': self.resource_history['timestamp'][-limit:]
+            "cpu": {
+                "percent": cpu_percent,
+                "average": sum(self.cpu_history) / len(self.cpu_history) if self.cpu_history else cpu_percent,
+                "threshold": self.cpu_threshold,
+                "warning": self.cpu_warning
+            },
+            "memory": {
+                "percent": memory.percent,
+                "used": memory.used,
+                "total": memory.total,
+                "average": sum(self.memory_history) / len(self.memory_history) if self.memory_history else memory.percent,
+                "threshold": self.memory_threshold,
+                "warning": self.memory_warning
+            },
+            "disk": {
+                "percent": disk.percent,
+                "used": disk.used,
+                "total": disk.total,
+                "average": sum(self.disk_history) / len(self.disk_history) if self.disk_history else disk.percent,
+                "threshold": self.disk_threshold,
+                "warning": self.disk_warning
+            },
+            "last_check": self.last_check_time.isoformat() if self.last_check_time else None,
+            "is_running": self.is_running
         }
-        
-    def get_system_info(self) -> Dict[str, Any]:
-        """Get detailed system information.
-        
-        Returns:
-            Dict[str, Any]: System information
-        """
-        try:
-            # CPU info
-            cpu_count = psutil.cpu_count(logical=False)
-            cpu_count_logical = psutil.cpu_count(logical=True)
-            cpu_freq = psutil.cpu_freq()
-            
-            # Memory info
-            memory = psutil.virtual_memory()
-            swap = psutil.swap_memory()
-            
-            # Disk info
-            disk = psutil.disk_usage(os.getcwd())
-            
-            # Network info
-            net_io = psutil.net_io_counters()
-            
-            # Process info
-            process = psutil.Process(os.getpid())
-            process_memory = process.memory_info()
-            
-            # Thread pool info
-            thread_pool_stats = thread_pool_manager.get_stats()
-            
-            return {
-                'cpu': {
-                    'physical_cores': cpu_count,
-                    'logical_cores': cpu_count_logical,
-                    'frequency_mhz': cpu_freq.current if cpu_freq else None,
-                    'usage_percent': psutil.cpu_percent(interval=0.1)
-                },
-                'memory': {
-                    'total_gb': memory.total / (1024 ** 3),
-                    'available_gb': memory.available / (1024 ** 3),
-                    'used_gb': memory.used / (1024 ** 3),
-                    'percent': memory.percent,
-                    'swap_total_gb': swap.total / (1024 ** 3),
-                    'swap_used_gb': swap.used / (1024 ** 3),
-                    'swap_percent': swap.percent
-                },
-                'disk': {
-                    'total_gb': disk.total / (1024 ** 3),
-                    'used_gb': disk.used / (1024 ** 3),
-                    'free_gb': disk.free / (1024 ** 3),
-                    'percent': disk.percent
-                },
-                'network': {
-                    'bytes_sent': net_io.bytes_sent,
-                    'bytes_recv': net_io.bytes_recv,
-                    'packets_sent': net_io.packets_sent,
-                    'packets_recv': net_io.packets_recv
-                },
-                'process': {
-                    'pid': process.pid,
-                    'memory_rss_mb': process_memory.rss / (1024 ** 2),
-                    'memory_vms_mb': process_memory.vms / (1024 ** 2),
-                    'cpu_percent': process.cpu_percent(interval=0.1),
-                    'threads': process.num_threads(),
-                    'create_time': datetime.datetime.fromtimestamp(process.create_time()).strftime('%Y-%m-%d %H:%M:%S')
-                },
-                'thread_pool': thread_pool_stats,
-                'auto_shutdown': {
-                    'enabled': self.auto_shutdown_enabled,
-                    'idle_time': self.auto_shutdown_idle_time,
-                    'last_activity': datetime.datetime.fromtimestamp(self.last_activity_time).strftime('%Y-%m-%d %H:%M:%S'),
-                    'idle_seconds': time.time() - self.last_activity_time
-                }
-            }
-        except Exception as e:
-            logger.error(f"Error getting system info: {str(e)}")
-            return {'error': str(e)}
-            
-    def save_resource_history(self, filepath: str) -> bool:
-        """Save resource history to a file.
-        
-        Args:
-            filepath: Path to save the history file
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            with open(filepath, 'w') as f:
-                json.dump(self.resource_history, f)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving resource history: {str(e)}")
-            return False
-            
-    def load_resource_history(self, filepath: str) -> bool:
-        """Load resource history from a file.
-        
-        Args:
-            filepath: Path to the history file
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            with open(filepath, 'r') as f:
-                self.resource_history = json.load(f)
-            return True
-        except Exception as e:
-            logger.error(f"Error loading resource history: {str(e)}")
-            return False
-            
-    def set_auto_shutdown(self, enabled: bool, idle_time: Optional[float] = None):
-        """Configure auto-shutdown settings.
-        
-        Args:
-            enabled: Whether to enable auto-shutdown
-            idle_time: Idle time before auto-shutdown in seconds
-        """
-        self.auto_shutdown_enabled = enabled
-        
-        if idle_time is not None:
-            self.auto_shutdown_idle_time = idle_time
-            
-        logger.info(f"Auto-shutdown {'enabled' if enabled else 'disabled'}, idle time: {self.auto_shutdown_idle_time} seconds")
-        
-    def set_thresholds(self, cpu: Optional[float] = None, memory: Optional[float] = None, disk: Optional[float] = None):
-        """Set resource usage thresholds.
-        
-        Args:
-            cpu: CPU usage threshold percentage
-            memory: Memory usage threshold percentage
-            disk: Disk usage threshold percentage
-        """
-        if cpu is not None:
-            self.cpu_threshold = cpu
-            
-        if memory is not None:
-            self.memory_threshold = memory
-            
-        if disk is not None:
-            self.disk_threshold = disk
-            
-        logger.info(f"Resource thresholds set: CPU={self.cpu_threshold}%, Memory={self.memory_threshold}%, Disk={self.disk_threshold}%")
 
-
-# Global instance
-resource_monitor = ResourceMonitor()
+# Create a singleton instance
+resource_monitor = ResourceMonitor(
+    check_interval=config.get("RESOURCE_CHECK_INTERVAL", 10.0),
+    cpu_threshold=config.get("CPU_THRESHOLD", 90.0),
+    memory_threshold=config.get("MEMORY_THRESHOLD", 85.0),
+    disk_threshold=config.get("DISK_THRESHOLD", 90.0)
+)
 
