@@ -4,8 +4,11 @@ import sys
 import time
 import psutil
 from colorama import Fore
-from typing import Optional
+from typing import Optional, Dict, List, Any, Tuple
 import asyncio
+import gc
+import logging
+import traceback
 
 # from contextlib import nullcontext, asynccontextmanager
 from contextlib import asynccontextmanager
@@ -34,110 +37,74 @@ from .utils import (
 )
 
 
-# todo 4.x 也许可以推动开源版本和服务器版本的爬虫归一为一个版本
+# todo 4.x 也许可以推动开源版本和服务器版本的爬虫归一为一��版本
 # 缓存全部使用本地方案，直接缓存 prepross 之后的 data
 # 增加totally_forbidden_domains 配置，默认一些设计平台（这些需要专门的爬虫），另外用户可以添加，最后就是自动对爬取失败的直接添加。爬取时遇到这些直接返回空的结果
 
 class AsyncWebCrawler:
     """
-    Asynchronous web crawler with flexible caching capabilities.
-
-    There are two ways to use the crawler:
-
-    1. Using context manager (recommended for simple cases):
-        ```python
-        async with AsyncWebCrawler() as crawler:
-            result = await crawler.arun(url="https://example.com")
-        ```
-
-    2. Using explicit lifecycle management (recommended for long-running applications):
-        ```python
-        crawler = AsyncWebCrawler()
-        await crawler.start()
-
-        # Use the crawler multiple times
-        result1 = await crawler.arun(url="https://example.com")
-        result2 = await crawler.arun(url="https://another.com")
-
-        await crawler.close()
-        ```
-
-    Migration Guide:
-    Old way (deprecated):
-        crawler = AsyncWebCrawler(always_by_pass_cache=True, browser_type="chromium", headless=True)
-
-    New way (recommended):
-        browser_config = BrowserConfig(browser_type="chromium", headless=True)
-        crawler = AsyncWebCrawler(config=browser_config)
-
-
-    Attributes:
-        browser_config (BrowserConfig): Configuration object for browser settings.
-        crawler_strategy (AsyncCrawlerStrategy): Strategy for crawling web pages.
-        logger (AsyncLogger): Logger instance for recording events and errors.
-        crawl4ai_folder (str): Directory for storing cache.
-        base_directory (str): Base directory for storing cache.
-        ready (bool): Whether the crawler is ready for use.
-
-        Methods:
-            start(): Start the crawler explicitly without using context manager.
-            close(): Close the crawler explicitly without using context manager.
-            arun(): Run the crawler for a single source: URL (web, local file, or raw HTML).
-            awarmup(): Perform warmup sequence.
-            arun_many(): Run the crawler for multiple sources.
-            aprocess_html(): Process HTML content.
-
-    Typical Usage:
-        async with AsyncWebCrawler() as crawler:
-            result = await crawler.arun(url="https://example.com")
-            print(result.markdown)
-
-        Using configuration:
-        browser_config = BrowserConfig(browser_type="chromium", headless=True)
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            crawler_config = CrawlerRunConfig(
-                cache_mode=CacheMode.BYPASS
-            )
-            result = await crawler.arun(url="https://example.com", config=crawler_config)
-            print(result.markdown)
+    Asynchronous web crawler for fetching web pages.
+    
+    This class provides an asynchronous interface for crawling web pages,
+    with support for caching, robots.txt, and various browser configurations.
     """
 
     _domain_last_hit = {}
+    # Track memory usage over time for better decision making
+    _memory_history: List[float] = []
+    # Maximum number of memory history points to keep
+    _max_memory_history_size = 10
+    # Domain-specific cooldown tracking
+    _domain_cooldowns: Dict[str, float] = {}
 
     def __init__(
         self,
-        crawler_strategy: Optional[AsyncCrawlerStrategy] = None,
         config: Optional[BrowserConfig] = None,
         base_directory: str = os.getenv("PROJECT_DIR", ''),
         thread_safe: bool = False,
-        memory_threshold_percent: float = 90.0,
+        memory_threshold_percent: float = 85.0,
+        memory_warning_percent: float = 75.0,
+        memory_check_interval: float = 10.0,
+        cooldown_period: int = 300,  # 5 minutes in seconds
+        max_retries: int = 3,
+        retry_delay: int = 5,
         **kwargs,
     ):
         """
         Initialize the AsyncWebCrawler.
-
+        
         Args:
-            crawler_strategy: Strategy for crawling web pages. If None, will create AsyncPlaywrightCrawlerStrategy
-            config: Configuration object for browser settings. If None, will be created from kwargs
-            always_bypass_cache: Whether to always bypass cache (new parameter)
+            config: Browser configuration
+            always_bypass_cache: Whether to always bypass the cache
             always_by_pass_cache: Deprecated, use always_bypass_cache instead
             base_directory: Base directory for storing cache
             thread_safe: Whether to use thread-safe operations
+            memory_threshold_percent: Percentage of memory usage that triggers cooldown
+            memory_warning_percent: Percentage of memory usage that triggers a warning
+            memory_check_interval: How often to check memory usage (in seconds)
+            cooldown_period: How long to wait during cooldown (in seconds)
+            max_retries: Maximum number of retries for failed requests
+            retry_delay: Delay between retries (in seconds)
             **kwargs: Additional arguments for backwards compatibility
         """
 
         self.memory_threshold_percent = memory_threshold_percent
+        self.memory_warning_percent = memory_warning_percent
+        self.memory_check_interval = memory_check_interval
+        self.cooldown_period = cooldown_period
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self.browser_config = config or BrowserConfig()
+        
         # Initialize logger first since other components may need it
         self.logger = AsyncLogger(
             log_file=os.path.join(base_directory, ".crawl4ai", "crawler.log"),
-            verbose=self.browser_config.verbose,
-            tag_width=10,
+            log_level=logging.INFO,
         )
 
         # Initialize crawler strategy
         params = {k: v for k, v in kwargs.items() if k in ["browser_config", "logger"]}
-        self.crawler_strategy = crawler_strategy or AsyncPlaywrightCrawlerStrategy(
+        self.crawler_strategy = AsyncPlaywrightCrawlerStrategy(
             browser_config=self.browser_config,
             logger=self.logger,
             **params,  # Pass remaining kwargs for backwards compatibility
@@ -149,6 +116,7 @@ class AsyncWebCrawler:
 
         # Thread safety setup
         self._lock = asyncio.Lock() if thread_safe else None
+        self._memory_monitor_task = None
 
         # Initialize directories
         self.crawl4ai_folder = os.path.join(base_directory, ".craw4ai-de")
@@ -160,33 +128,107 @@ class AsyncWebCrawler:
 
         self.ready = False
 
+        # Initialize memory history
+        self._memory_history = []
+
+        # Track active crawl tasks
+        self._active_tasks = set()
+        self._task_lock = asyncio.Lock()
+
+    async def _monitor_memory_usage(self):
+        """
+        Continuously monitor memory usage and take action if it exceeds thresholds.
+        """
+        try:
+            while True:
+                await asyncio.sleep(self.memory_check_interval)
+                
+                # Get current memory usage
+                memory_percent = psutil.virtual_memory().percent
+                
+                # Update memory history
+                self._memory_history.append(memory_percent)
+                if len(self._memory_history) > self._max_memory_history_size:
+                    self._memory_history.pop(0)
+                
+                # Calculate average memory usage
+                avg_memory = sum(self._memory_history) / len(self._memory_history)
+                
+                # Log memory usage at warning level
+                if memory_percent >= self.memory_warning_percent:
+                    self.logger.warning(
+                        f"Memory usage at {memory_percent:.1f}% (avg: {avg_memory:.1f}%), "
+                        f"threshold: {self.memory_threshold_percent}%"
+                    )
+                else:
+                    self.logger.info(
+                        f"Memory usage at {memory_percent:.1f}% (avg: {avg_memory:.1f}%)"
+                    )
+                
+                # If memory usage is consistently high, trigger garbage collection
+                if avg_memory > self.memory_warning_percent:
+                    self.logger.warning("Triggering garbage collection due to high memory usage")
+                    gc.collect()
+        except asyncio.CancelledError:
+            self.logger.info("Memory monitor task cancelled")
+        except Exception as e:
+            self.logger.error(f"Error in memory monitor: {e}")
+            traceback.print_exc()
+
     async def start(self):
         """
-        Start the crawler explicitly without using context manager.
-        This is equivalent to using 'async with' but gives more control over the lifecycle.
-
-        This method will:
-        1. Initialize the browser and context
-        2. Perform warmup sequence
-        3. Return the crawler instance for method chaining
-
+        Start the crawler.
+        
+        This method initializes the crawler and prepares it for use.
+        It should be called before any crawling operations.
+        
         Returns:
-            AsyncWebCrawler: The initialized crawler instance
+            self: The crawler instance
         """
         await self.crawler_strategy.__aenter__()
         await self.awarmup()
+        
+        # Start memory monitoring
+        if self._memory_monitor_task is None or self._memory_monitor_task.done():
+            self._memory_monitor_task = asyncio.create_task(self._monitor_memory_usage())
+            
         return self
 
     async def close(self):
         """
-        Close the crawler explicitly without using context manager.
-        This should be called when you're done with the crawler if you used start().
-
-        This method will:
+        Close the crawler.
+        
+        This method cleans up resources used by the crawler.
+        It should be called when the crawler is no longer needed.
+        
+        Steps:
         1. Clean up browser resources
         2. Close any open pages and contexts
         """
+        # Cancel memory monitor task
+        if self._memory_monitor_task and not self._memory_monitor_task.done():
+            self._memory_monitor_task.cancel()
+            try:
+                await self._memory_monitor_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Cancel any active tasks
+        async with self._task_lock:
+            for task in self._active_tasks:
+                if not task.done():
+                    task.cancel()
+            
+            # Wait for all tasks to complete or be cancelled
+            if self._active_tasks:
+                await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            self._active_tasks.clear()
+        
+        # Close crawler strategy
         await self.crawler_strategy.__aexit__(None, None, None)
+        
+        # Force garbage collection
+        gc.collect()
 
     async def __aenter__(self):
         return await self.start()
@@ -211,31 +253,114 @@ class AsyncWebCrawler:
         """异步空上下文管理器"""
         yield
 
+    async def _check_and_handle_memory(self, url: str) -> bool:
+        """
+        Check memory usage and handle high memory situations.
+        
+        Returns:
+            bool: True if processing should continue, False if it should be aborted
+        """
+        # Get current memory usage
+        memory_percent = psutil.virtual_memory().percent
+        
+        # Extract domain from URL for domain-specific cooldown
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc
+        except:
+            domain = "unknown"
+            
+        # Check if domain is in cooldown
+        current_time = time.time()
+        if domain in self._domain_cooldowns:
+            cooldown_until = self._domain_cooldowns[domain]
+            if current_time < cooldown_until:
+                remaining = int(cooldown_until - current_time)
+                self.logger.warning(
+                    f"Domain {domain} is in cooldown for {remaining} more seconds"
+                )
+                return False
+            else:
+                # Cooldown period is over
+                del self._domain_cooldowns[domain]
+        
+        # Handle high memory usage
+        if memory_percent >= self.memory_threshold_percent:
+            self.logger.warning(
+                f"Memory usage exceeds {self.memory_threshold_percent}%, "
+                f"initiating cooldown for {self.cooldown_period} seconds"
+            )
+            
+            # Put domain in cooldown
+            self._domain_cooldowns[domain] = current_time + self.cooldown_period
+            
+            # Try to free memory
+            gc.collect()
+            
+            # Restart crawler if memory is still high
+            if psutil.virtual_memory().percent >= self.memory_threshold_percent:
+                self.logger.warning("Memory still high after garbage collection, restarting crawler")
+                await self.close()
+                await asyncio.sleep(5)  # Short delay before restart
+                await self.start()
+                
+            return False
+            
+        return True
+
     async def arun(
         self,
         url: str,
         config: CrawlerRunConfig = None,
         **kwargs,
     ) -> CrawlResult:
-
+        """
+        Run the crawler for a single URL with improved error handling and memory management.
+        
+        Args:
+            url: The URL to crawl
+            config: Configuration for this crawl operation
+            **kwargs: Additional parameters
+            
+        Returns:
+            CrawlResult: The result of the crawl operation
+        """
         crawler_config = config or CrawlerRunConfig()
+        
         if not isinstance(url, str) or not url:
-            self.logger.error("Invalid URL, make sure the URL is a non-empty string")
-            return CrawlResult(url=url, html="", success=False, error_message="Invalid URL, make sure the URL is a non-empty string")
+            error_msg = "Invalid URL, make sure the URL is a non-empty string"
+            self.logger.error(error_msg)
+            return CrawlResult(
+                url=url, 
+                html="", 
+                success=False, 
+                error_message=error_msg
+            )
 
+        # Use lock if thread safety is enabled
         async with self._lock or self.nullcontext():
-            # check memory usage
-            if psutil.virtual_memory().percent >= self.memory_threshold_percent:
-                self.logger.warning(f"Memory usage exceeds {self.memory_threshold_percent}%, cool down for 5 mins")
-                # self.crawler_strategy.browser_manager._cleanup_expired_sessions()
-                await self.close()
-                await asyncio.sleep(300)
-                await self.start()
+            # Check memory usage and handle high memory situations
+            if not await self._check_and_handle_memory(url):
+                return CrawlResult(
+                    url=url,
+                    html="",
+                    success=False,
+                    error_message="Crawler is in cooldown due to high memory usage"
+                )
+
+            # Track this task
+            task = asyncio.current_task()
+            if task:
+                async with self._task_lock:
+                    self._active_tasks.add(task)
 
             try:
                 # Create cache context
                 cache_context = CacheContext(
-                    url, crawler_config.cache_mode, False
+                    url=url,
+                    cache_mode=crawler_config.cache_mode,
+                    cache_ttl=crawler_config.cache_ttl,
+                    cache_key=crawler_config.cache_key,
                 )
 
                 # Initialize processing variables
@@ -280,20 +405,18 @@ class AsyncWebCrawler:
                 # Fetch fresh content if needed
                 if not cached_result or not html:
                     t1 = time.perf_counter()
-
-                    if crawler_config.user_agent:
-                        self.crawler_strategy.update_user_agent(crawler_config.user_agent)
-
+                    
                     # Check robots.txt if enabled
                     if crawler_config and crawler_config.check_robots_txt:
                         if not await self.robots_parser.can_fetch(url, self.browser_config.user_agent):
+                            self.logger.warning(
+                                f"Robots.txt disallows crawling {url}"
+                            )
                             return CrawlResult(
                                 url=url,
                                 html="",
                                 success=False,
-                                status_code=403,
-                                error_message="Access denied by robots.txt",
-                                response_headers={"X-Robots-Status": "Blocked by robots.txt"}
+                                error_message="Robots.txt disallows crawling this URL",
                             )
 
                     ##############################

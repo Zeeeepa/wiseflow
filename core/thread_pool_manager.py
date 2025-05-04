@@ -1,550 +1,336 @@
 """
-Thread pool manager for handling concurrent tasks in Wiseflow.
+Thread pool manager for WiseFlow.
+
+This module provides a thread pool manager for executing tasks concurrently.
 """
 
 import os
 import time
-import threading
-import queue
-import logging
 import asyncio
-import concurrent.futures
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple
-from enum import Enum
+import logging
 import uuid
-import traceback
+import concurrent.futures
+from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
+from datetime import datetime
+from enum import Enum, auto
+
+from core.config import config
+from core.task_manager import TaskPriority, TaskStatus
+from core.event_system import (
+    EventType, Event, publish_sync,
+    create_task_event
+)
+from core.utils.error_handling import handle_exceptions, TaskError
 
 logger = logging.getLogger(__name__)
 
-
-class TaskPriority(Enum):
-    """Priority levels for tasks."""
-    LOW = 0
-    NORMAL = 1
-    HIGH = 2
-    CRITICAL = 3
-
-
-class TaskStatus(Enum):
-    """Status of a task."""
-    PENDING = 'pending'
-    RUNNING = 'running'
-    COMPLETED = 'completed'
-    FAILED = 'failed'
-    CANCELLED = 'cancelled'
-
-
-class Task:
-    """Represents a task to be executed by the thread pool."""
-    
-    def __init__(
-        self,
-        func: Callable,
-        args: Optional[Tuple] = None,
-        kwargs: Optional[Dict[str, Any]] = None,
-        priority: TaskPriority = TaskPriority.NORMAL,
-        task_id: Optional[str] = None,
-        timeout: Optional[float] = None,
-        callback: Optional[Callable] = None,
-        error_callback: Optional[Callable] = None
-    ):
-        """Initialize a task.
-        
-        Args:
-            func: Function to execute
-            args: Positional arguments for the function
-            kwargs: Keyword arguments for the function
-            priority: Priority level for the task
-            task_id: Unique identifier for the task (generated if not provided)
-            timeout: Maximum execution time in seconds (None for no timeout)
-            callback: Function to call with the result when task completes
-            error_callback: Function to call with the exception when task fails
-        """
-        self.func = func
-        self.args = args or ()
-        self.kwargs = kwargs or {}
-        self.priority = priority
-        self.task_id = task_id or str(uuid.uuid4())
-        self.timeout = timeout
-        self.callback = callback
-        self.error_callback = error_callback
-        
-        self.status = TaskStatus.PENDING
-        self.result = None
-        self.error = None
-        self.start_time = None
-        self.end_time = None
-        self.thread = None
-        self.future = None
-        
-    def __lt__(self, other):
-        """Compare tasks based on priority for priority queue ordering."""
-        if not isinstance(other, Task):
-            return NotImplemented
-        return self.priority.value > other.priority.value  # Higher priority value comes first
-
-
 class ThreadPoolManager:
-    """Manager for thread pools and async tasks."""
+    """
+    Thread pool manager for WiseFlow.
+    
+    This class provides a thread pool for executing CPU-bound tasks concurrently.
+    """
     
     _instance = None
     
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls):
         """Create a singleton instance."""
         if cls._instance is None:
             cls._instance = super(ThreadPoolManager, cls).__new__(cls)
             cls._instance._initialized = False
         return cls._instance
     
-    def __init__(
-        self,
-        max_workers: Optional[int] = None,
-        thread_name_prefix: str = 'wiseflow-worker',
-        queue_size: int = 0,  # 0 means unlimited
-        default_timeout: Optional[float] = None
-    ):
-        """Initialize the thread pool manager.
-        
-        Args:
-            max_workers: Maximum number of worker threads (default: CPU count * 5)
-            thread_name_prefix: Prefix for worker thread names
-            queue_size: Maximum size of the task queue (0 for unlimited)
-            default_timeout: Default timeout for tasks in seconds (None for no timeout)
-        """
+    def __init__(self):
+        """Initialize the thread pool manager."""
         if self._initialized:
             return
             
-        self.max_workers = max_workers or min(32, os.cpu_count() * 5)
-        self.thread_name_prefix = thread_name_prefix
-        self.queue_size = queue_size
-        self.default_timeout = default_timeout
-        
-        # Task queue with priority
-        self.task_queue = queue.PriorityQueue(maxsize=queue_size)
-        
-        # Thread pool
-        self.executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=self.max_workers,
-            thread_name_prefix=self.thread_name_prefix
-        )
-        
-        # Task tracking
-        self.tasks = {}  # task_id -> Task
-        self.tasks_lock = threading.RLock()
-        
-        # Worker management
-        self.worker_threads = []
-        self.shutdown_event = threading.Event()
-        
-        # Start worker threads
-        for _ in range(self.max_workers):
-            worker = threading.Thread(target=self._worker_loop, daemon=True)
-            worker.start()
-            self.worker_threads.append(worker)
-            
-        # Async event loop
-        self.loop = asyncio.new_event_loop()
-        self.async_thread = threading.Thread(target=self._run_async_loop, daemon=True)
-        self.async_thread.start()
+        self.max_workers = config.get("MAX_THREAD_WORKERS", os.cpu_count() or 4)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
+        self.tasks: Dict[str, Dict[str, Any]] = {}
+        self.futures: Dict[str, concurrent.futures.Future] = {}
         
         self._initialized = True
-        logger.info(f"ThreadPoolManager initialized with {self.max_workers} workers")
         
-    def _worker_loop(self):
-        """Worker thread loop for processing tasks from the queue."""
-        while not self.shutdown_event.is_set():
-            try:
-                # Get task from queue with timeout to check shutdown periodically
-                try:
-                    priority_task = self.task_queue.get(timeout=1.0)
-                except queue.Empty:
-                    continue
-                    
-                task = priority_task
-                
-                # Skip cancelled tasks
-                if task.status == TaskStatus.CANCELLED:
-                    self.task_queue.task_done()
-                    continue
-                    
-                # Execute task
-                self._execute_task(task)
-                
-                # Mark task as done in queue
-                self.task_queue.task_done()
-                
-            except Exception as e:
-                logger.error(f"Error in worker thread: {str(e)}")
-                logger.debug(traceback.format_exc())
-                
-    def _execute_task(self, task: Task):
-        """Execute a task and handle results/errors.
-        
-        Args:
-            task: Task to execute
-        """
-        # Update task status
-        with self.tasks_lock:
-            task.status = TaskStatus.RUNNING
-            task.start_time = time.time()
-            task.thread = threading.current_thread()
-            
-        try:
-            # Execute with timeout if specified
-            if task.timeout is not None:
-                future = self.executor.submit(task.func, *task.args, **task.kwargs)
-                task.future = future
-                result = future.result(timeout=task.timeout)
-            else:
-                result = task.func(*task.args, **task.kwargs)
-                
-            # Update task with result
-            with self.tasks_lock:
-                task.status = TaskStatus.COMPLETED
-                task.result = result
-                task.end_time = time.time()
-                
-            # Call callback if provided
-            if task.callback:
-                try:
-                    task.callback(result)
-                except Exception as e:
-                    logger.error(f"Error in task callback: {str(e)}")
-                    
-        except concurrent.futures.TimeoutError:
-            # Handle timeout
-            with self.tasks_lock:
-                task.status = TaskStatus.FAILED
-                task.error = TimeoutError(f"Task timed out after {task.timeout} seconds")
-                task.end_time = time.time()
-                
-            logger.warning(f"Task {task.task_id} timed out after {task.timeout} seconds")
-            
-            # Call error callback if provided
-            if task.error_callback:
-                try:
-                    task.error_callback(task.error)
-                except Exception as e:
-                    logger.error(f"Error in task error callback: {str(e)}")
-                    
-        except Exception as e:
-            # Handle other exceptions
-            with self.tasks_lock:
-                task.status = TaskStatus.FAILED
-                task.error = e
-                task.end_time = time.time()
-                
-            logger.error(f"Task {task.task_id} failed: {str(e)}")
-            logger.debug(traceback.format_exc())
-            
-            # Call error callback if provided
-            if task.error_callback:
-                try:
-                    task.error_callback(e)
-                except Exception as e:
-                    logger.error(f"Error in task error callback: {str(e)}")
-                    
-    def _run_async_loop(self):
-        """Run the asyncio event loop in a separate thread."""
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
-        
+        logger.info(f"Thread pool manager initialized with {self.max_workers} workers")
+    
     def submit(
         self,
         func: Callable,
         *args,
-        priority: TaskPriority = TaskPriority.NORMAL,
         task_id: Optional[str] = None,
-        timeout: Optional[float] = None,
-        callback: Optional[Callable] = None,
-        error_callback: Optional[Callable] = None,
+        name: str = "Unnamed Task",
+        priority: TaskPriority = TaskPriority.NORMAL,
         **kwargs
     ) -> str:
-        """Submit a task to the thread pool.
+        """
+        Submit a task to the thread pool.
         
         Args:
             func: Function to execute
-            *args: Positional arguments for the function
-            priority: Priority level for the task
-            task_id: Unique identifier for the task (generated if not provided)
-            timeout: Maximum execution time in seconds (None for no timeout)
-            callback: Function to call with the result when task completes
-            error_callback: Function to call with the exception when task fails
-            **kwargs: Keyword arguments for the function
+            *args: Arguments to pass to the function
+            task_id: Optional task ID, if not provided a new one will be generated
+            name: Name of the task
+            priority: Priority of the task
+            **kwargs: Keyword arguments to pass to the function
             
         Returns:
-            str: Task ID
+            Task ID
         """
+        task_id = task_id or str(uuid.uuid4())
+        
         # Create task
-        task = Task(
-            func=func,
-            args=args,
-            kwargs=kwargs,
-            priority=priority,
-            task_id=task_id,
-            timeout=timeout or self.default_timeout,
-            callback=callback,
-            error_callback=error_callback
-        )
+        task = {
+            "task_id": task_id,
+            "name": name,
+            "func": func,
+            "args": args,
+            "kwargs": kwargs,
+            "priority": priority,
+            "status": TaskStatus.PENDING,
+            "created_at": datetime.now(),
+            "started_at": None,
+            "completed_at": None,
+            "result": None,
+            "error": None
+        }
         
-        # Register task
-        with self.tasks_lock:
-            self.tasks[task.task_id] = task
-            
-        # Add to queue
-        self.task_queue.put(task)
+        # Add task to manager
+        self.tasks[task_id] = task
         
-        return task.task_id
+        # Submit task to executor
+        future = self.executor.submit(func, *args, **kwargs)
+        self.futures[task_id] = future
         
-    async def submit_async(
-        self,
-        func: Callable,
-        *args,
-        priority: TaskPriority = TaskPriority.NORMAL,
-        task_id: Optional[str] = None,
-        timeout: Optional[float] = None,
-        **kwargs
-    ) -> Any:
-        """Submit a task to the thread pool and await its result.
+        # Update task status
+        task["status"] = TaskStatus.RUNNING
+        task["started_at"] = datetime.now()
+        
+        # Add callback to handle completion
+        future.add_done_callback(lambda f: self._handle_completion(task_id, f))
+        
+        # Publish event
+        try:
+            event = create_task_event(
+                EventType.TASK_CREATED,
+                task_id,
+                {"name": name, "priority": priority.name}
+            )
+            publish_sync(event)
+        except Exception as e:
+            logger.warning(f"Failed to publish task created event: {e}")
+        
+        logger.info(f"Task submitted to thread pool: {task_id} ({name})")
+        return task_id
+    
+    def _handle_completion(self, task_id: str, future: concurrent.futures.Future):
+        """
+        Handle task completion.
         
         Args:
-            func: Function to execute
-            *args: Positional arguments for the function
-            priority: Priority level for the task
-            task_id: Unique identifier for the task (generated if not provided)
-            timeout: Maximum execution time in seconds (None for no timeout)
-            **kwargs: Keyword arguments for the function
-            
-        Returns:
-            Any: Task result
-            
-        Raises:
-            Exception: If the task fails
+            task_id: ID of the task
+            future: Future object for the task
         """
-        # Create future for async result
-        future = self.loop.create_future()
-        
-        def on_complete(result):
-            self.loop.call_soon_threadsafe(future.set_result, result)
-            
-        def on_error(error):
-            self.loop.call_soon_threadsafe(future.set_exception, error)
-            
-        # Submit task with callbacks
-        task_id = self.submit(
-            func,
-            *args,
-            priority=priority,
-            task_id=task_id,
-            timeout=timeout,
-            callback=on_complete,
-            error_callback=on_error,
-            **kwargs
-        )
-        
-        # Wait for result
-        return await future
-        
-    def run_async(self, coro):
-        """Run a coroutine in the async event loop.
-        
-        Args:
-            coro: Coroutine to run
-            
-        Returns:
-            concurrent.futures.Future: Future for the coroutine result
-        """
-        return asyncio.run_coroutine_threadsafe(coro, self.loop)
-        
-    def get_task(self, task_id: str) -> Optional[Task]:
-        """Get a task by ID.
-        
-        Args:
-            task_id: Task ID
-            
-        Returns:
-            Optional[Task]: Task object if found, None otherwise
-        """
-        with self.tasks_lock:
-            return self.tasks.get(task_id)
-            
-    def get_task_status(self, task_id: str) -> Optional[TaskStatus]:
-        """Get the status of a task.
-        
-        Args:
-            task_id: Task ID
-            
-        Returns:
-            Optional[TaskStatus]: Task status if found, None otherwise
-        """
-        task = self.get_task(task_id)
-        return task.status if task else None
-        
-    def get_task_result(self, task_id: str) -> Any:
-        """Get the result of a completed task.
-        
-        Args:
-            task_id: Task ID
-            
-        Returns:
-            Any: Task result
-            
-        Raises:
-            ValueError: If task not found
-            RuntimeError: If task not completed
-            Exception: If task failed
-        """
-        task = self.get_task(task_id)
-        
+        task = self.tasks.get(task_id)
         if not task:
-            raise ValueError(f"Task {task_id} not found")
-            
-        if task.status == TaskStatus.PENDING or task.status == TaskStatus.RUNNING:
-            raise RuntimeError(f"Task {task_id} not completed yet")
-            
-        if task.status == TaskStatus.FAILED:
-            raise task.error or RuntimeError(f"Task {task_id} failed")
-            
-        if task.status == TaskStatus.CANCELLED:
-            raise RuntimeError(f"Task {task_id} was cancelled")
-            
-        return task.result
+            logger.warning(f"Task {task_id} not found")
+            return
         
-    def wait_for_task(self, task_id: str, timeout: Optional[float] = None) -> bool:
-        """Wait for a task to complete.
+        try:
+            # Get result
+            result = future.result()
+            
+            # Update task
+            task["status"] = TaskStatus.COMPLETED
+            task["completed_at"] = datetime.now()
+            task["result"] = result
+            
+            # Publish event
+            try:
+                event = create_task_event(
+                    EventType.TASK_COMPLETED,
+                    task_id,
+                    {"name": task["name"]}
+                )
+                publish_sync(event)
+            except Exception as e:
+                logger.warning(f"Failed to publish task completed event: {e}")
+            
+            logger.info(f"Task completed: {task_id} ({task['name']})")
+        except Exception as e:
+            # Update task
+            task["status"] = TaskStatus.FAILED
+            task["completed_at"] = datetime.now()
+            task["error"] = str(e)
+            
+            # Publish event
+            try:
+                event = create_task_event(
+                    EventType.TASK_FAILED,
+                    task_id,
+                    {"name": task["name"], "error": str(e)}
+                )
+                publish_sync(event)
+            except Exception as e:
+                logger.warning(f"Failed to publish task failed event: {e}")
+            
+            logger.error(f"Task failed: {task_id} ({task['name']}): {e}")
+    
+    def cancel(self, task_id: str) -> bool:
+        """
+        Cancel a task.
         
         Args:
-            task_id: Task ID
-            timeout: Maximum time to wait in seconds (None for no timeout)
+            task_id: ID of the task to cancel
             
         Returns:
-            bool: True if task completed, False if timed out
+            True if the task was cancelled, False otherwise
         """
-        task = self.get_task(task_id)
+        future = self.futures.get(task_id)
+        if not future:
+            logger.warning(f"Task {task_id} not found")
+            return False
         
-        if not task:
-            raise ValueError(f"Task {task_id} not found")
-            
-        start_time = time.time()
+        # Cancel future
+        result = future.cancel()
         
-        while task.status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
-            time.sleep(0.1)
-            
-            if timeout is not None and time.time() - start_time > timeout:
-                return False
-                
-        return True
-        
-    def cancel_task(self, task_id: str) -> bool:
-        """Cancel a task if possible.
-        
-        Args:
-            task_id: Task ID
-            
-        Returns:
-            bool: True if task was cancelled, False otherwise
-        """
-        with self.tasks_lock:
+        if result:
+            # Update task
             task = self.tasks.get(task_id)
+            if task:
+                task["status"] = TaskStatus.CANCELLED
+                task["completed_at"] = datetime.now()
             
-            if not task:
-                return False
-                
-            if task.status != TaskStatus.PENDING and task.status != TaskStatus.RUNNING:
-                return False
-                
-            # Cancel future if available
-            if task.future and not task.future.done():
-                task.future.cancel()
-                
-            # Update task status
-            if task.status == TaskStatus.PENDING:
-                task.status = TaskStatus.CANCELLED
-                task.end_time = time.time()
-                return True
-                
-            # For running tasks, we can't reliably cancel them
-            # Just mark as cancelled and let them complete
-            task.status = TaskStatus.CANCELLED
-            task.end_time = time.time()
+            # Publish event
+            try:
+                event = create_task_event(
+                    EventType.TASK_FAILED,
+                    task_id,
+                    {"name": task["name"] if task else "Unknown", "reason": "cancelled"}
+                )
+                publish_sync(event)
+            except Exception as e:
+                logger.warning(f"Failed to publish task cancelled event: {e}")
             
-            return True
-            
-    def shutdown(self, wait: bool = True):
-        """Shutdown the thread pool manager.
+            logger.info(f"Task cancelled: {task_id}")
+        
+        return result
+    
+    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a task by ID.
         
         Args:
-            wait: Whether to wait for all tasks to complete
+            task_id: ID of the task to get
+            
+        Returns:
+            Task dictionary or None if not found
         """
-        logger.info("Shutting down ThreadPoolManager")
+        return self.tasks.get(task_id)
+    
+    def get_task_status(self, task_id: str) -> Optional[TaskStatus]:
+        """
+        Get the status of a task.
         
-        # Signal workers to stop
-        self.shutdown_event.set()
+        Args:
+            task_id: ID of the task to get status for
+            
+        Returns:
+            Task status or None if task not found
+        """
+        task = self.tasks.get(task_id)
+        return task["status"] if task else None
+    
+    def get_task_result(self, task_id: str) -> Any:
+        """
+        Get the result of a task.
         
-        # Wait for workers to finish if requested
-        if wait:
-            for worker in self.worker_threads:
-                worker.join(timeout=5.0)
-                
-        # Shutdown executor
-        self.executor.shutdown(wait=wait)
+        Args:
+            task_id: ID of the task to get result for
+            
+        Returns:
+            Task result or None if task not found or not completed
+        """
+        task = self.tasks.get(task_id)
+        return task["result"] if task and task["status"] == TaskStatus.COMPLETED else None
+    
+    def get_task_error(self, task_id: str) -> Optional[str]:
+        """
+        Get the error of a failed task.
         
-        # Stop async loop
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self.async_thread.join(timeout=5.0)
-        
-        logger.info("ThreadPoolManager shutdown complete")
-        
-    def get_stats(self) -> Dict[str, Any]:
-        """Get statistics about the thread pool.
+        Args:
+            task_id: ID of the task to get error for
+            
+        Returns:
+            Task error or None if task not found or not failed
+        """
+        task = self.tasks.get(task_id)
+        return task["error"] if task and task["status"] == TaskStatus.FAILED else None
+    
+    def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all tasks.
         
         Returns:
-            Dict[str, Any]: Statistics
+            Dictionary of all tasks
         """
-        with self.tasks_lock:
-            total_tasks = len(self.tasks)
-            pending_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.PENDING)
-            running_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.RUNNING)
-            completed_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.COMPLETED)
-            failed_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.FAILED)
-            cancelled_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.CANCELLED)
-            
-            queue_size = self.task_queue.qsize()
-            
-            return {
-                'max_workers': self.max_workers,
-                'active_workers': running_tasks,
-                'queue_size': queue_size,
-                'total_tasks': total_tasks,
-                'pending_tasks': pending_tasks,
-                'running_tasks': running_tasks,
-                'completed_tasks': completed_tasks,
-                'failed_tasks': failed_tasks,
-                'cancelled_tasks': cancelled_tasks
-            }
-            
-    def cleanup_completed_tasks(self, max_age: float = 3600.0):
-        """Clean up completed tasks older than max_age.
+        return self.tasks.copy()
+    
+    def get_pending_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all pending tasks.
+        
+        Returns:
+            Dictionary of pending tasks
+        """
+        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.PENDING}
+    
+    def get_running_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all running tasks.
+        
+        Returns:
+            Dictionary of running tasks
+        """
+        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.RUNNING}
+    
+    def get_completed_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all completed tasks.
+        
+        Returns:
+            Dictionary of completed tasks
+        """
+        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.COMPLETED}
+    
+    def get_failed_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all failed tasks.
+        
+        Returns:
+            Dictionary of failed tasks
+        """
+        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.FAILED}
+    
+    def get_cancelled_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all cancelled tasks.
+        
+        Returns:
+            Dictionary of cancelled tasks
+        """
+        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.CANCELLED}
+    
+    def shutdown(self, wait: bool = True):
+        """
+        Shutdown the thread pool.
         
         Args:
-            max_age: Maximum age of completed tasks in seconds
+            wait: Whether to wait for pending tasks to complete
         """
-        current_time = time.time()
-        
-        with self.tasks_lock:
-            to_remove = []
-            
-            for task_id, task in self.tasks.items():
-                if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-                    if task.end_time and current_time - task.end_time > max_age:
-                        to_remove.append(task_id)
-                        
-            for task_id in to_remove:
-                del self.tasks[task_id]
-                
-            return len(to_remove)
+        self.executor.shutdown(wait=wait)
+        logger.info(f"Thread pool manager shutdown (wait={wait})")
 
-
-# Global instance
+# Create a singleton instance
 thread_pool_manager = ThreadPoolManager()
 

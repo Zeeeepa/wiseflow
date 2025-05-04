@@ -1,116 +1,151 @@
 # -*- coding: utf-8 -*-
-from utils.pb_api import PbTalker
-from utils.general_utils import get_logger, extract_and_convert_dates, is_chinese, isURL
-from agents.get_info import *
-from agents.insights import InsightExtractor
+from core.utils.pb_api import PbTalker
+from core.utils.general_utils import get_logger, extract_and_convert_dates, is_chinese, isURL
+from core.agents.get_info import *
+from core.agents.insights import InsightExtractor
 import json
-from scrapers import *
-from utils.zhipu_search import run_v4_async
+from core.scrapers import *
+from core.utils.zhipu_search import run_v4_async
 from urllib.parse import urlparse
-from crawl4ai import AsyncWebCrawler, CacheMode
+from core.crawl4ai import AsyncWebCrawler, CacheMode
 from datetime import datetime
 import asyncio
 import time
 import feedparser
-from plugins import PluginManager
-from connectors import ConnectorBase, DataItem
-from references import ReferenceManager
-from analysis.multimodal_analysis import process_item_with_images
-from analysis.multimodal_knowledge_integration import integrate_multimodal_analysis_with_knowledge_graph
+from core.plugins import PluginManager
+from core.connectors import ConnectorBase, DataItem, initialize_all_connectors
+from core.references import ReferenceManager
+from core.analysis.multimodal_analysis import process_item_with_images
+from core.analysis.multimodal_knowledge_integration import integrate_multimodal_analysis_with_knowledge_graph
+from core.config import (
+    PROJECT_DIR, PRIMARY_MODEL, SECONDARY_MODEL, ENABLE_MULTIMODAL,
+    MAX_CONCURRENT_TASKS
+)
+from core.event_system import (
+    EventType, Event, publish_sync,
+    create_focus_point_event, create_task_event
+)
+from core.utils.error_handling import handle_exceptions, WiseflowError
 
-project_dir = os.environ.get("PROJECT_DIR", "")
-if project_dir:
-    os.makedirs(project_dir, exist_ok=True)
-
-wiseflow_logger = get_logger('wiseflow', project_dir)
+# Initialize logger and PocketBase client
+wiseflow_logger = get_logger('wiseflow', PROJECT_DIR)
 pb = PbTalker(wiseflow_logger)
-
-model = os.environ.get("PRIMARY_MODEL", "")
-if not model:
-    raise ValueError("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
-secondary_model = os.environ.get("SECONDARY_MODEL", model)
 
 # Initialize plugin manager
 plugin_manager = PluginManager(plugins_dir="core")
 
 # Initialize reference manager
-reference_manager = ReferenceManager(storage_path=os.path.join(project_dir, "references"))
+reference_manager = ReferenceManager(storage_path=os.path.join(PROJECT_DIR, "references"))
 
 # Initialize insight extractor
 insight_extractor = InsightExtractor(pb_client=pb)
 
+# Initialize knowledge graph builder
+try:
+    from core.knowledge.graph import KnowledgeGraphBuilder
+    knowledge_graph_builder = KnowledgeGraphBuilder(name="Wiseflow Knowledge Graph")
+except ImportError:
+    wiseflow_logger.warning("Knowledge graph module not available")
+    knowledge_graph_builder = None
+
+@handle_exceptions(default_message="Error processing information", log_error=True)
 async def info_process(url: str, 
                        url_title: str, 
                        author: str, 
                        publish_date: str, 
-                       contents: list[str], 
+                       contents: list, 
                        link_dict: dict, 
                        focus_id: str,
-                       get_info_prompts: list[str]):
-    """Process information and save to database."""
-    wiseflow_logger.debug('info summarising by llm...')
+                       get_info_prompts: list):
+    """Process information from a URL."""
+    wiseflow_logger.debug(f'get_info for {url}')
+    
+    # Extract information using LLM
     infos = await get_info(contents, link_dict, get_info_prompts, author, publish_date, _logger=wiseflow_logger)
     if infos:
         wiseflow_logger.debug(f'get {len(infos)} infos, will save to pb')
 
+    processed_items = []
     for info in infos:
         info['url'] = url
         info['url_title'] = url_title
         info['tag'] = focus_id
-
-        # Process insights for each info item
-        try:
-            content = info.get('content', '')
-            if content:
-                # Extract insights from the content
-                insights = await insight_extractor.process_item({
-                    'id': info.get('id', str(uuid.uuid4())),
-                    'content': content,
-                    'title': info.get('title', url_title),
-                    'url': url,
-                    'author': author,
-                    'publish_date': publish_date
-                })
-                
-                # Add insights to the info object
-                info['insights'] = insights
-                wiseflow_logger.debug(f'Added insights to info item: {len(str(insights))} bytes')
-        except Exception as e:
-            wiseflow_logger.error(f'Error processing insights: {e}')
+        
+        # Extract and convert dates
+        if 'date' in info and info['date']:
+            try:
+                info['date'] = extract_and_convert_dates(info['date'])
+            except Exception as e:
+                wiseflow_logger.error(f'Error converting date: {e}')
+        
+        # Translate content if needed
+        if 'content' in info and info['content'] and not is_chinese(info['content']):
+            try:
+                from core.agents.translate import translate_text
+                info['content'] = await translate_text(info['content'], PRIMARY_MODEL)
+            except Exception as e:
+                wiseflow_logger.error(f'Error translating content: {e}')
         
         # Save to database
         info_id = await pb.create('infos', info)
+        if info_id:
+            processed_items.append(info_id)
+            
+            # Publish event
+            try:
+                event = create_focus_point_event(
+                    EventType.DATA_PROCESSED,
+                    focus_id,
+                    {"info_id": info_id}
+                )
+                publish_sync(event)
+            except Exception as e:
+                wiseflow_logger.warning(f"Failed to publish data processed event: {e}")
         
         # Process multimodal analysis if enabled
-        if os.environ.get("ENABLE_MULTIMODAL", "false").lower() == "true":
+        if ENABLE_MULTIMODAL:
             try:
                 # Get the saved item with retry logic
                 saved_item = None
                 max_retries = 3
-                retry_delay = 1  # seconds
+                retry_count = 0
                 
-                for attempt in range(max_retries):
-                    saved_item = pb.read_one('infos', info_id)
+                while retry_count < max_retries:
+                    saved_item = pb.read_one(collection_name='infos', id=info_id)
                     if saved_item:
                         break
-                    wiseflow_logger.warning(f"Item not found on attempt {attempt+1}, retrying in {retry_delay} seconds...")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
+                    
+                    retry_count += 1
+                    wiseflow_logger.warning(f"Retry {retry_count}/{max_retries} to get item {info_id}")
+                    await asyncio.sleep(1)
                 
                 if saved_item:
-                    # Process the item for multimodal analysis
-                    updated_item = await process_item_with_images(saved_item)
-                    wiseflow_logger.info(f"Multimodal analysis completed for item {info_id}")
+                    # Check if the item has images
+                    has_images = False
+                    if 'content' in saved_item and saved_item['content']:
+                        has_images = '![' in saved_item['content'] and '](' in saved_item['content']
                     
-                    # Verify the update was successful
-                    if "error" in updated_item and not isinstance(updated_item["error"], str):
-                        wiseflow_logger.error(f"Error in multimodal analysis: {updated_item.get('error', 'Unknown error')}")
+                    if has_images:
+                        wiseflow_logger.info(f"Processing multimodal analysis for item {info_id}")
+                        
+                        # Process multimodal analysis
+                        multimodal_result = await process_item_with_images(saved_item, VL_MODEL)
+                        
+                        # Update the item with multimodal analysis
+                        if multimodal_result:
+                            update_data = {
+                                'multimodal_analysis': multimodal_result
+                            }
+                            pb.update(collection_name='infos', id=info_id, data=update_data)
                 else:
                     wiseflow_logger.error(f"Failed to retrieve item {info_id} after {max_retries} attempts")
             except Exception as e:
                 wiseflow_logger.error(f'Error processing multimodal analysis: {e}')
+    
+    return processed_items
 
-async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_prompts: list[str]):
+@handle_exceptions(default_message="Error processing data with plugins", log_error=True)
+async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_prompts: list[str]) -> List[Dict[str, Any]]:
     """Process a data item using the appropriate processor plugin."""
     # Get the focus point processor
     processor_name = "text_processor"
@@ -120,18 +155,18 @@ async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_p
         wiseflow_logger.warning(f"Processor {processor_name} not found, falling back to default processing")
         # Fall back to default processing
         if data_item.content_type.startswith("text/"):
-            await info_process(
+            # Process using default method
+            return await info_process(
                 data_item.url or "", 
                 data_item.metadata.get("title", ""), 
-                data_item.metadata.get("content", ""), 
-                data_item.metadata.get("source", ""), 
-                focus["id"],
-                focus["focuspoint"],
+                data_item.metadata.get("author", ""), 
+                data_item.metadata.get("publish_date", ""), 
                 [data_item.content],
-                data_item.metadata,
+                data_item.metadata.get("links", {}), 
+                focus["id"],
                 get_info_prompts
             )
-        return
+        return []
     
     try:
         # Process the data item
@@ -141,23 +176,40 @@ async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_p
             "prompts": get_info_prompts
         })
         
-        # Save processed data
+        # Extract processed content
+        processed_items = []
         if processed_data and processed_data.processed_content:
             for info in processed_data.processed_content:
                 if isinstance(info, dict):
                     info['url'] = data_item.url or ""
                     info['url_title'] = data_item.metadata.get("title", "")
                     info['tag'] = focus["id"]
-                    _ = pb.add(collection_name='infos', body=info)
-                    if not _:
+                    info_id = pb.add(collection_name='infos', body=info)
+                    if info_id:
+                        processed_items.append(info_id)
+                        
+                        # Publish event
+                        try:
+                            event = create_focus_point_event(
+                                EventType.DATA_PROCESSED,
+                                focus["id"],
+                                {"info_id": info_id}
+                            )
+                            publish_sync(event)
+                        except Exception as e:
+                            wiseflow_logger.warning(f"Failed to publish data processed event: {e}")
+                    else:
                         wiseflow_logger.error('add info failed, writing to cache_file')
                         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-                        with open(os.path.join(project_dir, f'{timestamp}_cache_infos.json'), 'w', encoding='utf-8') as f:
+                        with open(os.path.join(PROJECT_DIR, f'{timestamp}_cache_infos.json'), 'w', encoding='utf-8') as f:
                             json.dump(info, f, ensure_ascii=False, indent=4)
+        
+        return processed_items
     except Exception as e:
         wiseflow_logger.error(f"Error processing data item: {e}")
+        return []
 
-
+@handle_exceptions(default_message="Error collecting data from connector", log_error=True)
 async def collect_from_connector(connector_name: str, params: dict) -> list[DataItem]:
     """Collect data from a connector."""
     connector = plugin_manager.get_plugin(connector_name)
@@ -167,363 +219,389 @@ async def collect_from_connector(connector_name: str, params: dict) -> list[Data
         return []
     
     try:
-        return connector.collect(params)
+        # Use the improved collect_with_retry method for better error handling
+        return await connector.collect_with_retry(params)
     except Exception as e:
         wiseflow_logger.error(f"Error collecting data from connector {connector_name}: {e}")
         return []
 
-
-async def main_process(focus: dict, sites: list):
-    wiseflow_logger.debug('new task initializing...')
-    focus_id = focus["id"]
-    focus_point = focus["focuspoint"].strip()
-    explanation = focus["explanation"].strip() if focus["explanation"] else ''
-    wiseflow_logger.debug(f'focus_id: {focus_id}, focus_point: {focus_point}, explanation: {explanation}, search_engine: {focus["search_engine"]}')
-    existing_urls = {url['url'] for url in pb.read(collection_name='infos', fields=['url'], filter=f"tag='{focus_id}'")}
-    focus_statement = f"{focus_point}"
-    date_stamp = datetime.now().strftime('%Y-%m-%d')
-    if is_chinese(focus_point):
-        focus_statement = f"{focus_statement}\n注：{explanation}（目前日期是{date_stamp}）"
-    else:
-        focus_statement = f"{focus_statement}\nNote: {explanation}(today is {date_stamp})"
-
-    if is_chinese(focus_statement):
-        get_link_sys_prompt = get_link_system.replace('{focus_statement}', focus_statement)
-        # get_link_sys_prompt = f"今天的日期是{date_stamp}，{get_link_sys_prompt}"
-        get_link_suffix_prompt = get_link_suffix
-        get_info_sys_prompt = get_info_system.replace('{focus_statement}', focus_statement)
-        # get_info_sys_prompt = f"今天的日期是{date_stamp}，{get_info_sys_prompt}"
-        get_info_suffix_prompt = get_info_suffix
-    else:
-        get_link_sys_prompt = get_link_system_en.replace('{focus_statement}', focus_statement)
-        # get_link_sys_prompt = f"today is {date_stamp}, {get_link_sys_prompt}"
-        get_link_suffix_prompt = get_link_suffix_en
-        get_info_sys_prompt = get_info_system_en.replace('{focus_statement}', focus_statement)
-        # get_info_sys_prompt = f"today is {date_stamp}, {get_info_sys_prompt}"
-        get_info_suffix_prompt = get_info_suffix_en
-    
-    get_link_prompts = [get_link_sys_prompt, get_link_suffix_prompt, secondary_model]
-    get_info_prompts = [get_info_sys_prompt, get_info_suffix_prompt, model]
-
-    # Load plugins if not already loaded
-    if not plugin_manager.plugins:
-        wiseflow_logger.info("Loading plugins...")
-        plugins = plugin_manager.load_all_plugins()
-        wiseflow_logger.info(f"Loaded {len(plugins)} plugins")
-        
-        # Initialize plugins with configurations
-        configs = {}  # Load configurations from database or config files
-        results = plugin_manager.initialize_all_plugins(configs)
-        
-        for name, success in results.items():
-            if success:
-                wiseflow_logger.info(f"Initialized plugin: {name}")
-            else:
-                wiseflow_logger.error(f"Failed to initialize plugin: {name}")
-
-    # Process references
-    references = []
-    if focus.get("references"):
-        try:
-            references = json.loads(focus["references"])
-        except:
-            references = []
-    
-    for reference in references:
-        ref_type = reference.get("type")
-        ref_content = reference.get("content")
-        
-        if not ref_type or not ref_content:
-            continue
-        
-        if ref_type == "url" and ref_content not in existing_urls:
-            # Add URL to sites for processing
-            sites.append({"url": ref_content, "type": "web"})
-        elif ref_type == "text":
-            # Process text reference
-            data_item = DataItem(
-                source_id=f"text_reference_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                content=ref_content,
-                metadata={"title": reference.get("name", "Text Reference"), "type": "text"},
-                content_type="text/plain"
-            )
-            await process_data_with_plugins(data_item, focus, get_info_prompts)
-
-    working_list = set()
-    if focus.get('search_engine', False):
-        query = focus_point if not explanation else f"{focus_point}({explanation})"
-        search_intent, search_content = await run_v4_async(query, _logger=wiseflow_logger)
-        _intent = search_intent['search_intent'][0]['intent']
-        _keywords = search_intent['search_intent'][0]['keywords']
-        wiseflow_logger.info(f'\nquery: {query} keywords: {_keywords}')
-        search_results = search_content['search_result']
-        for result in search_results:
-            if 'content' not in result or 'link' not in result:
-                continue
-            url = result['link']
-            if url in existing_urls:
-                continue
-            if '（发布时间' not in result['title']:
-                title = result['title']
-                publish_date = ''
-            else:
-                title, publish_date = result['title'].split('（发布时间')
-                publish_date = publish_date.strip('）')
-                # 严格匹配YYYY-MM-DD格式
-                date_match = re.search(r'\d{4}-\d{2}-\d{2}', publish_date)
-                if date_match:
-                    publish_date = date_match.group()
-                    publish_date = extract_and_convert_dates(publish_date)
-                else:
-                    publish_date = ''
-                    
-            title = title.strip() + '(from search engine)'
-            author = result.get('media', '')
-            if not author:
-                author = urlparse(url).netloc
-            texts = [result['content']]
-            await info_process(url, title, author, publish_date, texts, {}, focus_id, get_info_prompts)
-
-    # Determine concurrency for this focus point
-    concurrency = focus.get("concurrency", 1)
-    if concurrency < 1:
-        concurrency = 1
-    
-    # Create a semaphore to limit concurrency
-    semaphore = asyncio.Semaphore(concurrency)
-
-    recognized_img_cache = {}
-    for site in sites:
-        if site.get('type', 'web') == 'rss':
-            try:
-                feed = feedparser.parse(site['url'])
-            except Exception as e:
-                wiseflow_logger.warning(f"{site['url']} RSS feed is not valid: {e}")
-                continue
-            rss_urls = {entry.link for entry in feed.entries if entry.link and isURL(entry.link)}
-            wiseflow_logger.debug(f'get {len(rss_urls)} urls from rss source {site["url"]}')
-            working_list.update(rss_urls - existing_urls)
-        else:
-            if site['url'] not in existing_urls and isURL(site['url']):
-                working_list.add(site['url'])
-
-    # Try to use the web connector plugin if available
-    web_connector = plugin_manager.get_plugin("web_connector")
-    if web_connector and isinstance(web_connector, ConnectorBase):
-        wiseflow_logger.info("Using web connector plugin for data collection")
-        
-        # Process sites in parallel with concurrency control
-        tasks = []
-        for url in working_list:
-            tasks.append(process_url_with_connector(url, web_connector, focus, get_info_prompts, semaphore))
-        
-        if tasks:
-            await asyncio.gather(*tasks)
-    else:
-        # Fall back to the original crawler implementation
-        wiseflow_logger.info("Web connector plugin not available, using default crawler")
-        crawler = AsyncWebCrawler(config=browser_cfg)
-        await crawler.start()
-        
-        # Process URLs with concurrency control
-        tasks = []
-        for url in working_list:
-            tasks.append(process_url_with_crawler(url, crawler, focus_id, existing_urls, get_link_prompts, get_info_prompts, recognized_img_cache, semaphore))
-        
-        if tasks:
-            await asyncio.gather(*tasks)
-        
-        await crawler.close()
-    
-    wiseflow_logger.debug(f'task finished, focus_id: {focus_id}')
-
-
+@handle_exceptions(default_message="Error processing URL with connector", log_error=True)
 async def process_url_with_connector(url, connector, focus, get_info_prompts, semaphore):
     """Process a URL using a connector with concurrency control."""
     async with semaphore:
-        try:
-            wiseflow_logger.debug(f"Processing URL with connector: {url}")
-            data_items = await collect_from_connector("web_connector", {"urls": [url]})
-            
-            for data_item in data_items:
-                await process_data_with_plugins(data_item, focus, get_info_prompts)
-        except Exception as e:
-            wiseflow_logger.error(f"Error processing URL {url} with connector: {e}")
+        wiseflow_logger.debug(f"Processing URL with connector: {url}")
+        
+        # Collect data from the URL
+        data_items = await collect_from_connector(connector.name, {"urls": [url]})
+        
+        results = []
+        for data_item in data_items:
+            processed_results = await process_data_with_plugins(data_item, focus, get_info_prompts)
+            results.extend(processed_results)
+        
+        return results
 
-
+@handle_exceptions(default_message="Error processing URL with crawler", log_error=True)
 async def process_url_with_crawler(url, crawler, focus_id, existing_urls, get_link_prompts, get_info_prompts, recognized_img_cache, semaphore):
-    """Process a URL using the crawler with concurrency control."""
+    """Process a URL using the crawler with concurrency control and improved error handling."""
     async with semaphore:
         try:
             wiseflow_logger.debug(f"Processing URL with crawler: {url}")
             
+            # Validate URL before processing
+            if not url or not isinstance(url, str):
+                wiseflow_logger.warning(f"Invalid URL: {url}, skipping")
+                return
+                
+            # Check for common file extensions to skip
             has_common_ext = any(url.lower().endswith(ext) for ext in common_file_exts)
             if has_common_ext:
                 wiseflow_logger.debug(f'{url} is a common file, skip')
                 return
 
-            parsed_url = urlparse(url)
-            existing_urls.add(f"{parsed_url.scheme}://{parsed_url.netloc}")
-            existing_urls.add(f"{parsed_url.scheme}://{parsed_url.netloc}/")
-            domain = parsed_url.netloc
-                
-            crawler_config.cache_mode = CacheMode.WRITE_ONLY if url in [s['url'] for s in sites] else CacheMode.ENABLED
+            # Parse URL and add to existing URLs to avoid duplicates
             try:
-                result = await crawler.arun(url=url, config=crawler_config)
+                parsed_url = urlparse(url)
+                domain = parsed_url.netloc
+                
+                # Add variations of the URL to existing_urls to prevent duplicates
+                existing_urls.add(f"{parsed_url.scheme}://{parsed_url.netloc}")
+                existing_urls.add(f"{parsed_url.scheme}://{parsed_url.netloc}/")
             except Exception as e:
-                wiseflow_logger.error(e)
+                wiseflow_logger.error(f"Error parsing URL {url}: {e}")
                 return
-            if not result.success:
-                wiseflow_logger.warning(f'{url} failed to crawl')
+                
+            # Configure crawler cache mode
+            from core.crawl4ai.crawler_config import CrawlerRunConfig
+            crawler_config = CrawlerRunConfig()
+            crawler_config.cache_mode = CacheMode.WRITE_ONLY if url in [s['url'] for s in sites] else CacheMode.ENABLED
+            
+            # Crawl the URL with retry logic
+            max_retries = 3
+            retry_count = 0
+            result = None
+            
+            while retry_count < max_retries:
+                try:
+                    result = await crawler.arun(url=url, config=crawler_config)
+                    break
+                except Exception as e:
+                    retry_count += 1
+                    wiseflow_logger.warning(f"Attempt {retry_count}/{max_retries} failed for {url}: {e}")
+                    
+                    if retry_count >= max_retries:
+                        wiseflow_logger.error(f"Failed to crawl {url} after {max_retries} attempts: {e}")
+                        return
+                        
+                    # Exponential backoff
+                    await asyncio.sleep(2 ** retry_count)
+            
+            # Check if crawl was successful
+            if not result or not result.success:
+                wiseflow_logger.warning(f'{url} failed to crawl: {result.error_message if result else "Unknown error"}')
                 return
+                
+            # Extract metadata
             metadata_dict = result.metadata if result.metadata else {}
 
+            # Process based on domain-specific scrapers or default approach
             if domain in custom_scrapers:
-                result = custom_scrapers[domain](result)
-                raw_markdown = result.content
-                used_img = result.images
-                title = result.title
-                if title == 'maybe a new_type_article':
-                    wiseflow_logger.warning(f'we found a new type here,{url}\n{result}')
-                base_url = result.base
-                author = result.author
-                publish_date = result.publish_date
+                try:
+                    result = custom_scrapers[domain](result)
+                    raw_markdown = result.content
+                    used_img = result.images
+                    title = result.title
+                    if title == 'maybe a new_type_article':
+                        wiseflow_logger.warning(f'we found a new type here,{url}\n{result}')
+                    base_url = result.base
+                    author = result.author
+                    publish_date = result.publish_date
+                except Exception as e:
+                    wiseflow_logger.error(f"Error in custom scraper for {domain}: {e}")
+                    # Fall back to default processing
+                    raw_markdown = result.markdown
+                    media_dict = result.media if result.media else {}
+                    used_img = [d['src'] for d in media_dict.get('images', [])]
+                    title = metadata_dict.get('title', '')
+                    base_url = metadata_dict.get('base', '')
+                    author = metadata_dict.get('author', '')
+                    publish_date = metadata_dict.get('publish_date', '')
             else:
                 raw_markdown = result.markdown
                 media_dict = result.media if result.media else {}
                 used_img = [d['src'] for d in media_dict.get('images', [])]
-                title = ''
-                base_url = ''
-                author = ''
-                publish_date = ''
+                title = metadata_dict.get('title', '')
+                base_url = metadata_dict.get('base', '')
+                author = metadata_dict.get('author', '')
+                publish_date = metadata_dict.get('publish_date', '')
+                
+            # Validate content
             if not raw_markdown:
                 wiseflow_logger.warning(f'{url} no content\n{result}\nskip')
                 return
+                
             wiseflow_logger.debug('data preprocessing...')
+            
+            # Fill in missing metadata
             if not title:
                 title = metadata_dict.get('title', '')
             if not base_url:
                 base_url = metadata_dict.get('base', '')
-            if not base_url:
-                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
-
             if not author:
                 author = metadata_dict.get('author', '')
             if not publish_date:
                 publish_date = metadata_dict.get('publish_date', '')
 
-            link_dict, links_parts, contents, recognized_img_cache = await pre_process(raw_markdown, base_url, used_img, recognized_img_cache, existing_urls)
-
-            if link_dict and links_parts:
-                wiseflow_logger.debug('links_parts exists, more links detecting...')
-                links_texts = []
-                for _parts in links_parts:
-                    links_texts.extend(_parts.split('\n\n'))
-                more_url = await get_more_related_urls(links_texts, link_dict, get_link_prompts, _logger=wiseflow_logger)
-                if more_url:
-                    wiseflow_logger.debug(f'get {len(more_url)} more related urls, will add to working list')
-                    # Instead of adding to working_list, create new tasks for these URLs
-                    for new_url in more_url - existing_urls:
-                        existing_urls.add(new_url)
-                        asyncio.create_task(process_url_with_crawler(new_url, crawler, focus_id, existing_urls, get_link_prompts, get_info_prompts, recognized_img_cache, semaphore))
-                
-            if not contents:
+            # Process content and extract links
+            try:
+                link_dict, links_parts, contents, recognized_img_cache = await pre_process(raw_markdown, base_url, used_img, recognized_img_cache, existing_urls)
+            except Exception as e:
+                wiseflow_logger.error(f"Error preprocessing content from {url}: {e}")
                 return
 
-            if not author or author.lower() == 'na' or not publish_date or publish_date.lower() == 'na':
-                wiseflow_logger.debug('no author or publish date from metadata, will try to get by llm')
-                main_content_text = re.sub(r'!\[.*?]\(.*?\)', '', raw_markdown)
-                main_content_text = re.sub(r'\[.*?]\(.*?\)', '', main_content_text)
-                alt_author, alt_publish_date = await get_author_and_publish_date(main_content_text, secondary_model, _logger=wiseflow_logger)
-                if not author or author.lower() == 'na':
-                    author = alt_author if alt_author else parsed_url.netloc
-                if not publish_date or publish_date.lower() == 'na':
-                    publish_date = alt_publish_date if alt_publish_date else ''
-
-            publish_date = extract_and_convert_dates(publish_date)
-
-            await info_process(url, title, author, publish_date, contents, link_dict, focus_id, get_info_prompts)
-        except Exception as e:
-            wiseflow_logger.error(f"Error processing URL {url} with crawler: {e}")
-
-
-async def process_focus_point(focus_id: str, focus_point: str, explanation: str, sites: list, search_engine: bool = False):
-    """Process a focus point and generate collective insights."""
-    try:
-        wiseflow_logger.info(f'Processing focus point: {focus_point}')
-        
-        # Get all info items for this focus point
-        info_items = pb.read(collection_name='infos', filter=f"tag='{focus_id}'")
-        
-        if not info_items:
-            wiseflow_logger.warning(f'No information items found for focus ID {focus_id}')
-            return
-        
-        # Extract insights from all items
-        all_insights = []
-        for item in info_items:
-            if 'insights' in item and item['insights']:
-                all_insights.append(item['insights'])
-        
-        if not all_insights:
-            wiseflow_logger.warning(f'No insights found for focus ID {focus_id}')
-            return
-        
-        # Generate collective insights
-        collective_insights = await generate_collective_insights(
-            all_insights,
-            focus_point,
-            explanation
-        )
-        
-        # Save collective insights
-        pb.update(
-            collection_name='focus_point',
-            id=focus_id,
-            data={
-                'collective_insights': collective_insights,
-                'updated_at': datetime.now().isoformat()
-            }
-        )
-        
-        wiseflow_logger.info(f'Collective insights generated and saved for focus point {focus_id}')
-        
-        # Process multimodal knowledge integration if enabled
-        if os.environ.get("ENABLE_MULTIMODAL", "false").lower() == "true":
-            try:
-                wiseflow_logger.info(f'Integrating multimodal analysis into knowledge graph for focus point {focus_id}')
-                
-                # Use a separate task for integration to avoid blocking
-                integration_task = asyncio.create_task(
-                    integrate_multimodal_analysis_with_knowledge_graph(focus_id)
-                )
-                
-                # Set a timeout for the integration task
+            # Process additional links if found
+            if link_dict and links_parts:
                 try:
-                    integration_result = await asyncio.wait_for(integration_task, timeout=300)  # 5 minute timeout
-                    wiseflow_logger.info(f'Multimodal knowledge integration completed: {integration_result}')
-                except asyncio.TimeoutError:
-                    wiseflow_logger.warning(f'Multimodal knowledge integration timed out for focus point {focus_id}')
-                    # Cancel the task instead of letting it run in the background
-                    integration_task.cancel()
-                    try:
-                        await integration_task
-                    except asyncio.CancelledError:
-                        wiseflow_logger.info(f'Multimodal knowledge integration task for focus point {focus_id} was cancelled')
-                    except Exception as e:
-                        wiseflow_logger.error(f'Error while cancelling integration task: {e}')
-                    
-                    # Log the timeout as a partial result
-                    pb.update(
-                        collection_name='focus_point',
-                        id=focus_id,
-                        data={
-                            'multimodal_integration_status': 'timeout',
-                            'multimodal_integration_timestamp': datetime.now().isoformat()
-                        }
-                    )
+                    wiseflow_logger.debug('links_parts exists, more links detecting...')
+                    links_texts = []
+                    for _parts in links_parts:
+                        links_texts.extend(_parts.split('\n\n'))
+                    more_url = await get_more_related_urls(links_texts, link_dict, get_link_prompts, _logger=wiseflow_logger)
+                    if more_url:
+                        wiseflow_logger.debug(f'get {len(more_url)} more related urls, will add to working list')
+                        # Instead of adding to working_list, create new tasks for these URLs
+                        for new_url in more_url - existing_urls:
+                            existing_urls.add(new_url)
+                            asyncio.create_task(process_url_with_crawler(new_url, crawler, focus_id, existing_urls, get_link_prompts, get_info_prompts, recognized_img_cache, semaphore))
+                except Exception as e:
+                    wiseflow_logger.error(f"Error processing additional links from {url}: {e}")
+                    # Continue with main content processing even if link extraction fails
             
-            except Exception as e:
-                wiseflow_logger.error(f'Error integrating multimodal analysis into knowledge graph: {e}')
+            # Skip if no content was extracted
+            if not contents:
+                wiseflow_logger.warning(f"No content extracted from {url}")
+                return
+
+            # Try to extract author and publish date if missing
+            if not author or author.lower() == 'na' or not publish_date or publish_date.lower() == 'na':
+                try:
+                    wiseflow_logger.debug('no author or publish date from metadata, will try to get by llm')
+                    main_content_text = re.sub(r'!\[.*?]\(.*?\)', '', raw_markdown)
+                    main_content_text = re.sub(r'\[.*?]\(.*?\)', '', main_content_text)
+                    alt_author, alt_publish_date = await get_author_and_publish_date(main_content_text, SECONDARY_MODEL, _logger=wiseflow_logger)
+                    if not author or author.lower() == 'na':
+                        author = alt_author if alt_author else parsed_url.netloc
+                    if not publish_date or publish_date.lower() == 'na':
+                        publish_date = alt_publish_date
+                except Exception as e:
+                    wiseflow_logger.error(f"Error extracting author and publish date: {e}")
+                    # Use defaults if extraction fails
+                    if not author or author.lower() == 'na':
+                        author = parsed_url.netloc
+                    if not publish_date or publish_date.lower() == 'na':
+                        publish_date = datetime.now().strftime("%Y-%m-%d")
+
+            # Process the content and extract information
+            focus = pb.read_one(collection_name='focus_point', id=focus_id)
+            if not focus:
+                wiseflow_logger.error(f"Focus point with ID {focus_id} not found")
+                return
+                
+            return await info_process(url, title, author, publish_date, contents, link_dict, focus_id, get_info_prompts)
+        except Exception as e:
+            wiseflow_logger.error(f"Error processing URL {url}: {e}")
+            return []
+
+@handle_exceptions(default_message="Error in main process", log_error=True)
+async def main_process(focus: dict, sites: list):
+    """Main process for a focus point."""
+    wiseflow_logger.info(f"Processing focus point: {focus.get('focuspoint', '')}")
+    
+    # Publish event
+    try:
+        event = create_focus_point_event(
+            EventType.FOCUS_POINT_PROCESSED,
+            focus["id"],
+            {"sites_count": len(sites)}
+        )
+        publish_sync(event)
     except Exception as e:
-        wiseflow_logger.error(f'Error generating collective insights: {e}')
+        wiseflow_logger.warning(f"Failed to publish focus point processed event: {e}")
+    
+    # Initialize plugins
+    plugins = plugin_manager.load_all_plugins()
+    wiseflow_logger.info(f"Loaded {len(plugins)} plugins")
+    
+    # Initialize plugins with configurations
+    configs = {}  # Load configurations from database or config files
+    results = plugin_manager.initialize_all_plugins(configs)
+    
+    for name, success in results.items():
+        if success:
+            wiseflow_logger.info(f"Initialized plugin: {name}")
+        else:
+            wiseflow_logger.warning(f"Failed to initialize plugin: {name}")
+
+    # Process references
+    references = []
+    if focus.get('references'):
+        try:
+            references = json.loads(focus['references'])
+        except Exception as e:
+            wiseflow_logger.error(f"Error parsing references: {e}")
+    
+    # Add references to reference manager
+    for reference in references:
+        reference_manager.add_reference(reference)
+    
+    # Generate prompts
+    from core.agents.get_info_prompts import get_info_prompts, get_link_prompts
+    get_info_prompts = get_info_prompts(focus.get('focuspoint', ''), focus.get('explanation', ''))
+    get_link_prompts = get_link_prompts(focus.get('focuspoint', ''), focus.get('explanation', ''))
+    
+    # Check if search engine is enabled
+    if focus.get('search_engine', False):
+        wiseflow_logger.info("Search engine enabled, performing search")
+        try:
+            search_results = await run_v4_async(focus.get('focuspoint', ''), focus.get('explanation', ''))
+            if search_results:
+                wiseflow_logger.info(f"Got {len(search_results)} search results")
+                
+                # Process search results
+                for result in search_results:
+                    url = result.get('url', '')
+                    if url:
+                        # Create a data item from the search result
+                        data_item = DataItem(
+                            source_id=f"search_{focus['id']}",
+                            content=result.get('content', ''),
+                            metadata={
+                                "title": result.get('title', ''),
+                                "author": result.get('author', ''),
+                                "publish_date": result.get('date', ''),
+                                "source": "search_engine"
+                            },
+                            url=url,
+                            content_type="text/plain"
+                        )
+                        
+                        # Process the data item
+                        await process_data_with_plugins(data_item, focus, get_info_prompts)
+        except Exception as e:
+            wiseflow_logger.error(f"Error performing search: {e}")
+    
+    # Process sites
+    if not sites:
+        wiseflow_logger.warning("No sites to process")
+        return
+    
+    # Create a set to track processed URLs
+    working_list = set()
+    existing_urls = set()
+    
+    # Add URLs from sites to working list
+    for site in sites:
+        if site.get('type') == 'rss':
+            # Process RSS feed
+            try:
+                feed = feedparser.parse(site['url'])
+                if feed.entries:
+                    wiseflow_logger.info(f"Found {len(feed.entries)} entries in RSS feed: {site['url']}")
+                    
+                    # Process each entry
+                    for entry in feed.entries:
+                        entry_url = entry.get('link', '')
+                        if entry_url and entry_url not in existing_urls and isURL(entry_url):
+                            working_list.add(entry_url)
+                            existing_urls.add(entry_url)
+            except Exception as e:
+                wiseflow_logger.error(f"Error processing RSS feed {site['url']}: {e}")
+        else:
+            # Process web URL
+            if site['url'] not in existing_urls and isURL(site['url']):
+                working_list.add(site['url'])
+                existing_urls.add(site['url'])
+
+    # Check if we have a web connector plugin
+    web_connector = plugin_manager.get_plugin("web_connector")
+    
+    if web_connector and isinstance(web_connector, ConnectorBase):
+        wiseflow_logger.info("Using web connector plugin for data collection")
+        
+        # Process sites with the web connector
+        all_processed_items = []
+        
+        # Create a semaphore to limit concurrency
+        semaphore = asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_REQUESTS", "5")))
+        
+        # Process URLs with concurrency control
+        tasks = []
+        for site in sites:
+            url = site.get("url", "")
+            if url:
+                tasks.append(process_url_with_connector(url, web_connector, focus, get_info_prompts, semaphore))
+        
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    wiseflow_logger.error(f"Error processing URL: {result}")
+                elif result:
+                    all_processed_items.extend(result)
+        
+        # Update knowledge graph with processed items if enabled
+        if ENABLE_MULTIMODAL and knowledge_graph_builder and all_processed_items:
+            try:
+                wiseflow_logger.info(f"Updating knowledge graph with {len(all_processed_items)} items")
+                for item_id in all_processed_items:
+                    item = pb.read_one(collection_name='infos', id=item_id)
+                    if item:
+                        knowledge_graph_builder.add_item(item)
+                
+                # Integrate multimodal analysis with knowledge graph
+                await integrate_multimodal_analysis_with_knowledge_graph(
+                    focus["id"],
+                    knowledge_graph_builder
+                )
+            except Exception as e:
+                wiseflow_logger.error(f"Error updating knowledge graph: {e}")
+    else:
+        # Fall back to default crawler
+        wiseflow_logger.info("Web connector plugin not available, using default crawler")
+        
+        # Initialize crawler
+        crawler = AsyncWebCrawler()
+        await crawler.start()
+        
+        try:
+            # Create a semaphore to limit concurrency
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+            
+            # Initialize image recognition cache
+            recognized_img_cache = {}
+            
+            # Process URLs with concurrency control
+            tasks = []
+            for url in working_list:
+                tasks.append(process_url_with_crawler(
+                    url, crawler, focus["id"], existing_urls, 
+                    get_link_prompts, get_info_prompts, 
+                    recognized_img_cache, semaphore
+                ))
+            
+            if tasks:
+                await asyncio.gather(*tasks)
+        finally:
+            await crawler.close()
+    
+    wiseflow_logger.info(f"Finished processing focus point: {focus.get('focuspoint', '')}")
+    
+    # Generate insights if enabled
+    if focus.get('generate_insights', True):
+        wiseflow_logger.info(f"Generating insights for focus point: {focus.get('focuspoint', '')}")
+        try:
+            await insight_extractor.generate_insights_for_focus(focus["id"])
+        except Exception as e:
+            wiseflow_logger.error(f"Error generating insights: {e}")
+    
+    return True
