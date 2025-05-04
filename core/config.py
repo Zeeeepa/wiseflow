@@ -28,6 +28,69 @@ if env_path.exists():
 from cryptography.fernet import Fernet
 from base64 import b64encode
 
+class ConfigValidationError(Exception):
+    """Exception raised for configuration validation errors."""
+    pass
+
+def validate_config_value(key: str, value: Any) -> Any:
+    """
+    Validate configuration values based on their keys.
+    
+    Args:
+        key: Configuration key
+        value: Configuration value
+        
+    Returns:
+        Validated value (possibly converted to appropriate type)
+        
+    Raises:
+        ConfigValidationError: If validation fails
+    """
+    # Memory thresholds
+    if key in ['memory_threshold_percent', 'memory_warning_percent']:
+        try:
+            float_value = float(value)
+            if not (0 <= float_value <= 100):
+                raise ConfigValidationError(f"{key} must be between 0 and 100")
+            return float_value
+        except ValueError:
+            raise ConfigValidationError(f"{key} must be a number")
+    
+    # Concurrency settings
+    if key in ['LLM_CONCURRENT_NUMBER', 'MAX_CONCURRENT_TASKS']:
+        try:
+            int_value = int(value)
+            if int_value < 1:
+                raise ConfigValidationError(f"{key} must be at least 1")
+            return int_value
+        except ValueError:
+            raise ConfigValidationError(f"{key} must be an integer")
+    
+    # Timeout settings
+    if key in ['CRAWLER_TIMEOUT', 'AUTO_SHUTDOWN_IDLE_TIME', 'AUTO_SHUTDOWN_CHECK_INTERVAL']:
+        try:
+            int_value = int(value)
+            if int_value < 0:
+                raise ConfigValidationError(f"{key} must be non-negative")
+            return int_value
+        except ValueError:
+            raise ConfigValidationError(f"{key} must be an integer")
+    
+    # Boolean settings
+    if key in ['VERBOSE', 'AUTO_SHUTDOWN_ENABLED', 'ENABLE_MULTIMODAL', 
+               'ENABLE_KNOWLEDGE_GRAPH', 'ENABLE_INSIGHTS', 'ENABLE_REFERENCES']:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            if value.lower() in ['true', 'yes', '1', 'on']:
+                return True
+            if value.lower() in ['false', 'no', '0', 'off']:
+                return False
+        raise ConfigValidationError(f"{key} must be a boolean value")
+    
+    # Return the value as is for other keys
+    return value
+
 class Config:
     SENSITIVE_KEYS = {
         'LLM_API_KEY', 'PB_API_AUTH', 'ZHIPU_API_KEY',
@@ -46,11 +109,28 @@ class Config:
         return self._cipher.decrypt(encrypted).decode()
         
     def set(self, key: str, value: Any) -> None:
-        if key in self.SENSITIVE_KEYS:
-            self._encrypted_values[key] = self._encrypt_value(str(value))
-        else:
-            self._config[key] = value
+        """
+        Set a configuration value with validation.
+        
+        Args:
+            key: Configuration key
+            value: Configuration value
             
+        Raises:
+            ConfigValidationError: If validation fails
+        """
+        try:
+            validated_value = validate_config_value(key, value)
+            
+            if key in self.SENSITIVE_KEYS:
+                self._encrypted_values[key] = self._encrypt_value(str(validated_value))
+            else:
+                self._config[key] = validated_value
+                
+        except ConfigValidationError as e:
+            logger.warning(f"Configuration validation error: {e}")
+            raise
+    
     def get(self, key: str, default: Any = None) -> Any:
         if key in self.SENSITIVE_KEYS:
             encrypted = self._encrypted_values.get(key)
@@ -321,4 +401,3 @@ ENABLE_KNOWLEDGE_GRAPH = get_bool_config("ENABLE_KNOWLEDGE_GRAPH", False)
 ENABLE_INSIGHTS = get_bool_config("ENABLE_INSIGHTS", True)
 ENABLE_REFERENCES = get_bool_config("ENABLE_REFERENCES", True)
 ENABLE_EVENT_SYSTEM = get_bool_config("ENABLE_EVENT_SYSTEM", True)
-

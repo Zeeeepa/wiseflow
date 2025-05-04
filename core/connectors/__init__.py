@@ -10,6 +10,8 @@ import asyncio
 import uuid
 import logging
 from datetime import datetime
+import time
+from ratelimit import limits, sleep_and_retry
 
 from core.plugins import PluginBase
 from core.event_system import (
@@ -103,21 +105,44 @@ class DataItem:
 
 
 class ConnectorBase(PluginBase):
-    """Base class for data source connectors."""
+    """
+    Base class for data source connectors.
+    
+    This class provides a foundation for implementing connectors to various data sources,
+    with support for rate limiting, retry logic, and async operations.
+    """
     
     name: str = "base_connector"
     description: str = "Base connector for data sources"
     source_type: str = "base"
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize the connector with optional configuration."""
-        super().__init__(config)
-        self.last_run: Optional[datetime] = None
-        self.error_count: int = 0
-        self.max_retries: int = config.get("max_retries", 3) if config else 3
-        self.retry_delay: float = config.get("retry_delay", 1.0) if config else 1.0
-        self.safe_config_keys: List[str] = []
+        """
+        Initialize the connector.
         
+        Args:
+            config: Configuration dictionary
+        """
+        super().__init__(config or {})
+        # Configure rate limits from config
+        self.rate_limit = self.config.get('rate_limit', 60)  # requests per minute
+        self.max_connections = self.config.get('max_connections', 10)
+        self.connection_pool = None
+        self.retry_count = self.config.get('retry_count', 3)
+        self.retry_delay = self.config.get('retry_delay', 5)  # seconds
+        self._initialized = False
+    
+    @sleep_and_retry
+    @limits(calls=60, period=60)  # default 60 calls per 60 seconds
+    def _rate_limited_request(self, *args, **kwargs):
+        """
+        Make a rate-limited request.
+        
+        This method is decorated with rate limiting to prevent overloading the data source.
+        """
+        # Implementation depends on the specific connector
+        pass
+    
     @abc.abstractmethod
     def collect(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
         """
@@ -158,7 +183,7 @@ class ConnectorBase(PluginBase):
         attempt = 0
         last_error = None
         
-        while attempt < self.max_retries:
+        while attempt < self.retry_count:
             try:
                 # Use the async version for better integration
                 result = await self.collect_async(params)
@@ -177,14 +202,14 @@ class ConnectorBase(PluginBase):
                 # Publish error event
                 self._publish_collection_error(str(e), attempt)
                 
-                if attempt < self.max_retries:
+                if attempt < self.retry_count:
                     # Exponential backoff
                     delay = self.retry_delay * (2 ** (attempt - 1))
                     logger.info(f"Retrying in {delay:.2f} seconds...")
                     await asyncio.sleep(delay)
         
         # If we get here, all retries failed
-        error_message = f"Collection failed after {self.max_retries} attempts for {self.name}: {last_error}"
+        error_message = f"Collection failed after {self.retry_count} attempts for {self.name}: {last_error}"
         logger.error(error_message)
         raise ConnectionError(error_message, {"last_error": str(last_error)})
     
@@ -215,48 +240,6 @@ class ConnectorBase(PluginBase):
         """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.initialize)
-    
-from ratelimit import limits, sleep_and_retry
-
-class ConnectorBase(PluginBase):
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config)
-        # Configure rate limits from config
-        self.rate_limit = config.get('rate_limit', 60)  # requests per minute
-        self.max_connections = config.get('max_connections', 10)
-        self.connection_pool = None
-
-    @sleep_and_retry
-    @limits(calls=60, period=60)  # default 60 calls per 60 seconds
-    async def rate_limited_request(self, *args, **kwargs):
-        """Make a rate-limited request"""
-        return await self._make_request(*args, **kwargs)
-
-    async def initialize(self) -> bool:
-        """Initialize the connector with connection pooling"""
-        try:
-            # Initialize connection pool
-            self.connection_pool = await self._create_connection_pool(
-                max_size=self.max_connections
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Failed to initialize connector: {e}")
-            return False
-            
-            # Only include keys that are in the whitelist
-            for key in safe_keys:
-                if key in self.config:
-                    safe_config[key] = self.config[key]
-        
-        return {
-            "name": self.name,
-            "type": self.source_type,
-            "last_run": self.last_run.isoformat() if self.last_run else None,
-            "error_count": self.error_count,
-            "is_enabled": self.is_enabled,
-            "config": safe_config
-        }
     
     def shutdown(self) -> bool:
         """Shutdown the connector. Return True if successful, False otherwise."""
@@ -317,7 +300,7 @@ class ConnectorBase(PluginBase):
                     "error": error_message,
                     "phase": "collection",
                     "attempt": attempt,
-                    "max_retries": self.max_retries
+                    "max_retries": self.retry_count
                 }
             )
             publish_sync(event)
@@ -368,4 +351,3 @@ async def initialize_connector(name: str, connector: ConnectorBase) -> tuple[str
         return name, success
     except Exception as e:
         return name, e
-
