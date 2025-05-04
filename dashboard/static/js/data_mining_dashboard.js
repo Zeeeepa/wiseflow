@@ -437,65 +437,67 @@ function exportTaskResults(taskId) {
 
 // Setup event listeners
 function setupEventListeners() {
-    // Refresh button
-    const refreshBtn = document.getElementById('refresh-btn');
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', loadDataMiningTasks);
-    }
-    
-    // Export button
-    const exportBtn = document.getElementById('export-btn');
-    if (exportBtn) {
-        exportBtn.addEventListener('click', function() {
-            alert('Export functionality not implemented in this demo');
-        });
-    }
-    
-    // Filter dropdown items
-    document.querySelectorAll('[data-filter]').forEach(item => {
-        item.addEventListener('click', function(e) {
-            e.preventDefault();
-            const filter = this.getAttribute('data-filter');
-            filterTasks(filter);
-        });
+    // View toggle buttons
+    document.getElementById('view-grid-btn').addEventListener('click', function() {
+        setViewMode('grid');
     });
     
-    // Sort dropdown items
-    document.querySelectorAll('[data-sort]').forEach(item => {
-        item.addEventListener('click', function(e) {
-            e.preventDefault();
-            const sort = this.getAttribute('data-sort');
-            sortTasks(sort);
-            
-            // Update the dropdown button text
-            const sortText = this.textContent.trim();
-            document.getElementById('sortDropdown').innerHTML = `<i class="bi bi-sort-down"></i> Sort By: ${sortText}`;
-        });
+    document.getElementById('view-list-btn').addEventListener('click', function() {
+        setViewMode('list');
     });
     
-    // Data source selection in the new task modal
-    document.querySelectorAll('.data-source-card').forEach(card => {
-        card.addEventListener('click', function() {
-            const source = this.getAttribute('data-source');
-            selectDataSource(source);
-        });
+    // Filter change handlers
+    document.getElementById('task-type-filter').addEventListener('change', function() {
+        filterTasks();
     });
     
-    // View findings button in task details modal
-    document.getElementById('viewFindingsBtn').addEventListener('click', function() {
-        const taskId = this.getAttribute('data-task-id');
-        viewTaskFindings(taskId);
+    document.getElementById('task-status-filter').addEventListener('change', function() {
+        filterTasks();
+    });
+    
+    // Search button
+    document.getElementById('task-search-btn').addEventListener('click', function() {
+        filterTasks();
+    });
+    
+    // Search input (enter key)
+    document.getElementById('task-search').addEventListener('keyup', function(e) {
+        if (e.key === 'Enter') {
+            filterTasks();
+        }
+    });
+    
+    // Add interconnection button
+    document.getElementById('add-interconnection-btn').addEventListener('click', function() {
+        alert('Add interconnection functionality not implemented in this demo');
     });
     
     // Help button
     document.getElementById('helpBtn').addEventListener('click', function() {
         alert('Help functionality not implemented in this demo');
     });
+    
+    // Add event listeners for source card buttons
+    document.getElementById('add-github-mining-btn').addEventListener('click', function() {
+        window.location.href = '/github-config';
+    });
+    
+    document.getElementById('add-youtube-mining-btn').addEventListener('click', function() {
+        window.location.href = '/youtube-config';
+    });
+    
+    document.getElementById('add-arxiv-mining-btn').addEventListener('click', function() {
+        window.location.href = '/arxiv-config';
+    });
+    
+    document.getElementById('add-web-mining-btn').addEventListener('click', function() {
+        window.location.href = '/websearch-config';
+    });
 }
 
 // Filter tasks
-function filterTasks(filter) {
-    console.log(`Filtering tasks by: ${filter}`);
+function filterTasks() {
+    console.log('Filtering tasks');
     
     const rows = document.querySelectorAll('.task-row');
     
@@ -503,13 +505,13 @@ function filterTasks(filter) {
         const source = row.getAttribute('data-source');
         const status = row.getAttribute('data-status');
         
-        if (filter === 'all') {
+        if (document.getElementById('task-type-filter').value === 'all') {
             row.style.display = '';
-        } else if (filter === source) {
+        } else if (document.getElementById('task-type-filter').value === source) {
             row.style.display = '';
-        } else if (filter === 'active' && status === 'active') {
+        } else if (document.getElementById('task-type-filter').value === 'active' && status === 'active') {
             row.style.display = '';
-        } else if (filter === 'completed' && status === 'completed') {
+        } else if (document.getElementById('task-type-filter').value === 'completed' && status === 'completed') {
             row.style.display = '';
         } else {
             row.style.display = 'none';
@@ -518,29 +520,29 @@ function filterTasks(filter) {
 }
 
 // Sort tasks
-function sortTasks(sort) {
-    console.log(`Sorting tasks by: ${sort}`);
+function sortTasks() {
+    console.log('Sorting tasks');
     
     const tasksContainer = document.getElementById('data-mining-tasks');
     const rows = Array.from(document.querySelectorAll('.task-row'));
     
     // Sort the rows based on the selected sort option
     rows.sort((a, b) => {
-        if (sort === 'name-asc') {
+        if (document.getElementById('sortDropdown').value === 'name-asc') {
             return a.querySelector('td:first-child').textContent.localeCompare(b.querySelector('td:first-child').textContent);
-        } else if (sort === 'name-desc') {
+        } else if (document.getElementById('sortDropdown').value === 'name-desc') {
             return b.querySelector('td:first-child').textContent.localeCompare(a.querySelector('td:first-child').textContent);
-        } else if (sort === 'source-asc') {
+        } else if (document.getElementById('sortDropdown').value === 'source-asc') {
             return a.getAttribute('data-source').localeCompare(b.getAttribute('data-source'));
-        } else if (sort === 'progress-desc') {
+        } else if (document.getElementById('sortDropdown').value === 'progress-desc') {
             return parseInt(b.getAttribute('data-progress')) - parseInt(a.getAttribute('data-progress'));
-        } else if (sort === 'progress-asc') {
+        } else if (document.getElementById('sortDropdown').value === 'progress-asc') {
             return parseInt(a.getAttribute('data-progress')) - parseInt(b.getAttribute('data-progress'));
-        } else if (sort === 'runtime-desc' || sort === 'runtime-asc') {
+        } else if (document.getElementById('sortDropdown').value === 'runtime-desc' || document.getElementById('sortDropdown').value === 'runtime-asc') {
             // For demo purposes, we'll just use the current order
             // In a real application, you would parse the runtime and sort accordingly
-            return sort === 'runtime-desc' ? 1 : -1;
-        } else if (sort === 'date-desc') {
+            return document.getElementById('sortDropdown').value === 'runtime-desc' ? 1 : -1;
+        } else if (document.getElementById('sortDropdown').value === 'date-desc') {
             // For demo purposes, we'll just use the current order
             // In a real application, you would parse the date and sort accordingly
             return -1;
@@ -610,4 +612,3 @@ document.addEventListener('DOMContentLoaded', function() {
     `;
     document.head.appendChild(style);
 });
-

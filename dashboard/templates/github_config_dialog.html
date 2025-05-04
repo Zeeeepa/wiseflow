@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Configuration - WiseFlow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/github_config.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark" aria-label="Main navigation">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/" aria-label="WiseFlow Home">WiseFlow</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="/data-mining">Data Mining</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/templates">Templates</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/database">Database</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/visualization">Visualization</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/settings">Settings</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="card shadow">
+            <div class="card-header bg-dark text-white">
+                <h4 class="mb-0">GitHub Data Mining Configuration</h4>
+            </div>
+            <div class="card-body">
+                <form id="github-config-form">
+                    <div class="mb-3">
+                        <label for="focus" class="form-label">Focus</label>
+                        <input type="text" class="form-control" id="focus" name="focus" placeholder="e.g., Python RAG implementations" required>
+                        <div class="form-text">Define the main focus of your data mining task</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="2" placeholder="Describe what you're looking for in more detail"></textarea>
+                        <div class="form-text">Provide additional context to guide the mining process</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Reference Contexts</label>
+                        <div id="reference-contexts">
+                            <div class="input-group mb-2">
+                                <input type="text" class="form-control" placeholder="Enter file path or URL" aria-label="Reference context">
+                                <button class="btn btn-outline-secondary remove-context" type="button">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="add-context-btn">
+                            <i class="bi bi-plus-circle"></i> Add Context
+                        </button>
+                        <div class="form-text">Add reference files or URLs to provide additional context</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="search-scheme" class="form-label">Search Scheme</label>
+                        <select class="form-select" id="search-scheme" name="search-scheme">
+                            <option value="basic">Basic Search</option>
+                            <option value="advanced">Advanced Search</option>
+                            <option value="semantic">Semantic Search</option>
+                        </select>
+                        <div class="form-text">Select the search methodology to use</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Search Options</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="search-repositories" name="search-repositories" checked>
+                            <label class="form-check-label" for="search-repositories">
+                                Search Repositories
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="search-code" name="search-code" checked>
+                            <label class="form-check-label" for="search-code">
+                                Search Code
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="search-issues" name="search-issues">
+                            <label class="form-check-label" for="search-issues">
+                                Search Issues
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="search-pull-requests" name="search-pull-requests">
+                            <label class="form-check-label" for="search-pull-requests">
+                                Search Pull Requests
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="goal" class="form-label">Goal</label>
+                        <input type="text" class="form-control" id="goal" name="goal" placeholder="What do you want to achieve with this search?">
+                        <div class="form-text">Define the specific outcome you're looking for</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="parallel-workers" class="form-label">Parallel Workers</label>
+                        <input type="number" class="form-control" id="parallel-workers" name="parallel-workers" min="1" max="10" value="4">
+                        <div class="form-text">Number of parallel workers (1-10)</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Advanced Options</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="clone-repositories" name="clone-repositories" checked>
+                            <label class="form-check-label" for="clone-repositories">
+                                Clone repositories locally
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="follow-repository-links" name="follow-repository-links" checked>
+                            <label class="form-check-label" for="follow-repository-links">
+                                Follow repository links
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="include-forks" name="include-forks">
+                            <label class="form-check-label" for="include-forks">
+                                Include forks
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="save-findings" name="save-findings" checked>
+                            <label class="form-check-label" for="save-findings">
+                                Save findings to database
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between mt-4">
+                        <button type="button" class="btn btn-secondary" id="cancel-btn">Cancel</button>
+                        <div>
+                            <button type="button" class="btn btn-outline-primary me-2" id="save-template-btn" data-bs-original-title="Save as Template">Save as Template</button>
+                            <button type="submit" class="btn btn-primary">Start</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Template Modal -->
+    <div class="modal fade" id="save-template-modal" tabindex="-1" aria-labelledby="save-template-modal-label" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="save-template-modal-label">Save as Template</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="template-name" class="form-label">Template Name</label>
+                        <input type="text" class="form-control" id="template-name" placeholder="Enter a name for this template" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="template-description" class="form-label">Description (optional)</label>
+                        <textarea class="form-control" id="template-description" rows="2" placeholder="Describe this template"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirm-save-template">Save Template</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Shared modules -->
+    <script src="/static/js/shared/utils.js"></script>
+    <script src="/static/js/shared/event_bus.js"></script>
+    <script src="/static/js/shared/api_service.js"></script>
+    
+    <!-- Form validation utilities -->
+    <script>
+        // Form validation utilities
+        const validators = {
+            required: function(value) {
+                return value && value.trim().length > 0;
+            },
+            numberRange: function(value, min, max) {
+                const num = parseInt(value, 10);
+                return !isNaN(num) && num >= min && num <= max;
+            }
+        };
+        
+        // Function to validate a form
+        function validateForm(form, customValidators = {}) {
+            let isValid = true;
+            
+            // Get all required inputs
+            const requiredInputs = form.querySelectorAll('[required]');
+            requiredInputs.forEach(input => {
+                if (!validators.required(input.value)) {
+                    isValid = false;
+                    input.classList.add('is-invalid');
+                } else {
+                    input.classList.remove('is-invalid');
+                }
+            });
+            
+            // Apply custom validators
+            for (const [selector, validator] of Object.entries(customValidators)) {
+                const element = form.querySelector(`#${selector}`);
+                if (element && !validator(element.value)) {
+                    isValid = false;
+                    element.classList.add('is-invalid');
+                } else if (element) {
+                    element.classList.remove('is-invalid');
+                }
+            }
+            
+            return isValid;
+        }
+    </script>
+    
+    <!-- Application scripts -->
+    <script src="/static/js/github_config.js"></script>
+</body>
+</html>
+
