@@ -491,6 +491,23 @@ function setupEventListeners() {
     document.getElementById('helpBtn').addEventListener('click', function() {
         alert('Help functionality not implemented in this demo');
     });
+    
+    // Add event listeners for source card buttons
+    document.getElementById('add-github-mining-btn').addEventListener('click', function() {
+        window.location.href = '/github-config';
+    });
+    
+    document.getElementById('add-youtube-mining-btn').addEventListener('click', function() {
+        window.location.href = '/youtube-config';
+    });
+    
+    document.getElementById('add-arxiv-mining-btn').addEventListener('click', function() {
+        window.location.href = '/arxiv-config';
+    });
+    
+    document.getElementById('add-web-mining-btn').addEventListener('click', function() {
+        window.location.href = '/websearch-config';
+    });
 }
 
 // Filter tasks
@@ -610,4 +627,3 @@ document.addEventListener('DOMContentLoaded', function() {
     `;
     document.head.appendChild(style);
 });
-

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Select Data Source</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/process_selection.css') }}">
+</head>
+<body>
+    <div class="selection-dialog">
+        <h2>Select Data Source</h2>
+        
+        <div class="source-options">
+            <div class="source-option" data-source="github">
+                <div class="source-icon github-icon"></div>
+                <h3>GitHub</h3>
+                <p>Code Mining Source</p>
+            </div>
+            
+            <div class="source-option" data-source="websearch">
+                <div class="source-icon websearch-icon"></div>
+                <h3>WebSearch</h3>
+                <p>Web Content Mining</p>
+            </div>
+            
+            <div class="source-option" data-source="youtube">
+                <div class="source-icon youtube-icon"></div>
+                <h3>YouTube</h3>
+                <p>Video Mining Content</p>
+            </div>
+            
+            <div class="source-option" data-source="arxiv">
+                <div class="source-icon arxiv-icon"></div>
+                <h3>ArXiv</h3>
+                <p>Research Papers Mining</p>
+            </div>
+        </div>
+        
+        <div class="dialog-actions">
+            <button id="cancel-button" class="secondary-button">Cancel</button>
+            <button id="help-button" class="secondary-button">Help</button>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/process_selection.js') }}"></script>
+</body>
+</html>
+

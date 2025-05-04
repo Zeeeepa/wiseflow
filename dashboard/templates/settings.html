@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - WiseFlow</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+</head>
+<body>
+    <div class="container">
+        {% include 'includes/header.html' %}
+        
+        <main class="main-content">
+            <div class="settings-container">
+                <h1>Settings</h1>
+                
+                <form id="settings-form">
+                    <div class="settings-section">
+                        <h2>General</h2>
+                        
+                        <div class="settings-group">
+                            <div class="settings-group-header">
+                                <h3>Interface</h3>
+                                <button type="button" class="toggle-btn" data-target="interface-settings">▶</button>
+                            </div>
+                            <div id="interface-settings" class="settings-group-content">
+                                <div class="setting-item">
+                                    <input type="checkbox" id="dark-mode" name="dark-mode" checked>
+                                    <label for="dark-mode">Dark Mode</label>
+                                </div>
+                                <div class="setting-item">
+                                    <input type="checkbox" id="compact-view" name="compact-view" checked>
+                                    <label for="compact-view">Compact View</label>
+                                </div>
+                                <div class="setting-item">
+                                    <input type="checkbox" id="show-tooltips" name="show-tooltips">
+                                    <label for="show-tooltips">Show Tooltips</label>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="refresh-rate">Refresh Rate:</label>
+                                    <select id="refresh-rate" name="refresh-rate">
+                                        <option value="10">10 seconds</option>
+                                        <option value="30" selected>30 seconds</option>
+                                        <option value="60">1 minute</option>
+                                        <option value="300">5 minutes</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-group">
+                            <div class="settings-group-header">
+                                <h3>Database</h3>
+                                <button type="button" class="toggle-btn" data-target="database-settings">▶</button>
+                            </div>
+                            <div id="database-settings" class="settings-group-content">
+                                <div class="setting-item">
+                                    <label for="storage-location">Storage Location:</label>
+                                    <input type="text" id="storage-location" name="storage-location" value="/data/findings">
+                                </div>
+                                <div class="setting-item">
+                                    <label for="auto-backup">Auto-backup:</label>
+                                    <select id="auto-backup" name="auto-backup">
+                                        <option value="hourly">Hourly</option>
+                                        <option value="daily" selected>Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                        <option value="monthly">Monthly</option>
+                                        <option value="never">Never</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="retention-period">Retention Period:</label>
+                                    <select id="retention-period" name="retention-period">
+                                        <option value="30">30 days</option>
+                                        <option value="60">60 days</option>
+                                        <option value="90" selected>90 days</option>
+                                        <option value="180">180 days</option>
+                                        <option value="365">1 year</option>
+                                        <option value="0">Forever</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-group">
+                            <div class="settings-group-header">
+                                <h3>Processing</h3>
+                                <button type="button" class="toggle-btn" data-target="processing-settings">▶</button>
+                            </div>
+                            <div id="processing-settings" class="settings-group-content">
+                                <div class="setting-item">
+                                    <label for="max-parallel-tasks">Max Parallel Tasks:</label>
+                                    <input type="number" id="max-parallel-tasks" name="max-parallel-tasks" min="1" max="32" value="8">
+                                </div>
+                                <div class="setting-item">
+                                    <label for="default-workers">Default Workers Per Task:</label>
+                                    <input type="number" id="default-workers" name="default-workers" min="1" max="16" value="4">
+                                </div>
+                                <div class="setting-item">
+                                    <label for="cpu-limit">CPU Limit:</label>
+                                    <input type="range" id="cpu-limit" name="cpu-limit" min="10" max="100" value="80">
+                                    <span id="cpu-limit-value">80%</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="memory-limit">Memory Limit:</label>
+                                    <input type="range" id="memory-limit" name="memory-limit" min="10" max="100" value="70">
+                                    <span id="memory-limit-value">70%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h2>API Keys</h2>
+                        
+                        <div class="settings-group">
+                            <div class="settings-group-header">
+                                <h3>GitHub</h3>
+                                <button type="button" class="toggle-btn" data-target="github-settings">▶</button>
+                            </div>
+                            <div id="github-settings" class="settings-group-content">
+                                <div class="setting-item">
+                                    <label for="github-api-key">API Key:</label>
+                                    <input type="password" id="github-api-key" name="github-api-key" value="************************">
+                                    <button type="button" class="show-hide-btn" data-target="github-api-key">Show</button>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="github-rate-limit">Rate Limit:</label>
+                                    <input type="text" id="github-rate-limit" name="github-rate-limit" value="5000 requests/hour" readonly>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-group">
+                            <div class="settings-group-header">
+                                <h3>Search Engines</h3>
+                                <button type="button" class="toggle-btn" data-target="search-engine-settings">▶</button>
+                            </div>
+                            <div id="search-engine-settings" class="settings-group-content">
+                                <div class="setting-item">
+                                    <label for="google-api-key">Google API Key:</label>
+                                    <input type="password" id="google-api-key" name="google-api-key" value="************************">
+                                    <button type="button" class="show-hide-btn" data-target="google-api-key">Show</button>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="bing-api-key">Bing API Key:</label>
+                                    <input type="password" id="bing-api-key" name="bing-api-key" value="************************">
+                                    <button type="button" class="show-hide-btn" data-target="bing-api-key">Show</button>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="custom-search-id">Custom Search Engine ID:</label>
+                                    <input type="password" id="custom-search-id" name="custom-search-id" value="******************">
+                                    <button type="button" class="show-hide-btn" data-target="custom-search-id">Show</button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-group">
+                            <div class="settings-group-header">
+                                <h3>YouTube</h3>
+                                <button type="button" class="toggle-btn" data-target="youtube-settings">▶</button>
+                            </div>
+                            <div id="youtube-settings" class="settings-group-content">
+                                <div class="setting-item">
+                                    <label for="youtube-api-key">API Key:</label>
+                                    <input type="password" id="youtube-api-key" name="youtube-api-key" value="************************">
+                                    <button type="button" class="show-hide-btn" data-target="youtube-api-key">Show</button>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="youtube-rate-limit">Rate Limit:</label>
+                                    <input type="text" id="youtube-rate-limit" name="youtube-rate-limit" value="10000 units/day" readonly>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-group">
+                            <div class="settings-group-header">
+                                <h3>ArXiv</h3>
+                                <button type="button" class="toggle-btn" data-target="arxiv-settings">▶</button>
+                            </div>
+                            <div id="arxiv-settings" class="settings-group-content">
+                                <div class="setting-item">
+                                    <label for="arxiv-email">Email:</label>
+                                    <input type="email" id="arxiv-email" name="arxiv-email" value="user@example.com">
+                                </div>
+                                <div class="setting-item">
+                                    <label for="arxiv-rate-limit">Rate Limit:</label>
+                                    <input type="text" id="arxiv-rate-limit" name="arxiv-rate-limit" value="100 requests/minute" readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="button" id="cancel-button" class="secondary-button">Cancel</button>
+                        <button type="button" id="reset-defaults-button" class="secondary-button">Reset to Defaults</button>
+                        <button type="submit" id="save-button" class="primary-button">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </main>
+        
+        {% include 'includes/footer.html' %}
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+</body>
+</html>
+

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Configuration</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/github_dialog.css') }}">
+</head>
+<body>
+    <div class="config-dialog">
+        <h2>GitHub Data Mining Configuration</h2>
+        <form id="github-config-form">
+            <div class="form-group">
+                <label for="focus">Focus:</label>
+                <input type="text" id="focus" name="focus" class="full-width" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="description">Description:</label>
+                <textarea id="description" name="description" class="full-width" rows="2"></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="reference-context">Add Reference Context Files/URLs:</label>
+                <div id="reference-context-container">
+                    <input type="text" class="reference-context full-width" name="reference-context[]">
+                </div>
+                <button type="button" id="add-reference" class="secondary-button">+ Add More</button>
+            </div>
+            
+            <div class="form-group">
+                <label for="search-scheme">Search Scheme:</label>
+                <select id="search-scheme" name="search-scheme" class="full-width">
+                    <option value="basic">Basic Search</option>
+                    <option value="advanced">Advanced Search</option>
+                    <option value="semantic">Semantic Search</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Options:</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="search-repos" name="search-repos" checked>
+                        <label for="search-repos">Search Repositories</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="search-code" name="search-code" checked>
+                        <label for="search-code">Search Code</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="search-issues" name="search-issues">
+                        <label for="search-issues">Search Issues</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="search-prs" name="search-prs">
+                        <label for="search-prs">Search Pull Requests</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="goal">Goal:</label>
+                <input type="text" id="goal" name="goal" class="full-width">
+            </div>
+            
+            <div class="form-group">
+                <label for="parallel-workers">Parallel workers:</label>
+                <input type="number" id="parallel-workers" name="parallel-workers" min="1" max="10" value="4">
+                <span class="input-hint">(1-10)</span>
+            </div>
+            
+            <div class="form-group">
+                <label>Advanced Options:</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="clone-repos" name="clone-repos" checked>
+                        <label for="clone-repos">Clone repositories locally</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="follow-links" name="follow-links" checked>
+                        <label for="follow-links">Follow repository links</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="include-forks" name="include-forks">
+                        <label for="include-forks">Include forks</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="save-findings" name="save-findings" checked>
+                        <label for="save-findings">Save findings to database</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" id="cancel-button" class="secondary-button">Cancel</button>
+                <button type="button" id="save-template-button" class="secondary-button">Save as Template</button>
+                <button type="submit" id="start-button" class="primary-button">Start</button>
+            </div>
+        </form>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/github_config.js') }}"></script>
+</body>
+</html>
+

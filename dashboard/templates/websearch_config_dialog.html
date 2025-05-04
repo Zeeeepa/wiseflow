@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSearch Configuration</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/websearch_dialog.css') }}">
+</head>
+<body>
+    <div class="config-dialog">
+        <h2>WebSearch Data Mining Configuration</h2>
+        <form id="websearch-config-form">
+            <div class="form-group">
+                <label for="focus">Focus:</label>
+                <input type="text" id="focus" name="focus" class="full-width" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="description">Description:</label>
+                <textarea id="description" name="description" class="full-width" rows="2"></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="reference-context">Add Reference Context Files/URLs:</label>
+                <div id="reference-context-container">
+                    <input type="text" class="reference-context full-width" name="reference-context[]">
+                </div>
+                <button type="button" id="add-reference" class="secondary-button">+ Add More</button>
+            </div>
+            
+            <div class="form-group">
+                <label>Search Engines:</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="engine-google" name="engine-google" checked>
+                        <label for="engine-google">Google</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="engine-bing" name="engine-bing" checked>
+                        <label for="engine-bing">Bing</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="engine-duckduckgo" name="engine-duckduckgo" checked>
+                        <label for="engine-duckduckgo">DuckDuckGo</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="engine-baidu" name="engine-baidu">
+                        <label for="engine-baidu">Baidu</label>
+                    </div>
+                    <div class="checkbox-item custom-engine">
+                        <input type="checkbox" id="engine-custom" name="engine-custom">
+                        <label for="engine-custom">Custom:</label>
+                        <input type="text" id="custom-engine-url" name="custom-engine-url" class="medium-width">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>Content Types:</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="content-articles" name="content-articles" checked>
+                        <label for="content-articles">Articles</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="content-blogs" name="content-blogs" checked>
+                        <label for="content-blogs">Blogs</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="content-docs" name="content-docs" checked>
+                        <label for="content-docs">Documentation</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="content-forums" name="content-forums" checked>
+                        <label for="content-forums">Forums</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="content-news" name="content-news">
+                        <label for="content-news">News</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="content-academic" name="content-academic">
+                        <label for="content-academic">Academic</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="time-range">Time Range:</label>
+                <select id="time-range" name="time-range" class="full-width">
+                    <option value="day">Last 24 Hours</option>
+                    <option value="week">Last Week</option>
+                    <option value="month">Last Month</option>
+                    <option value="year" selected>Last Year</option>
+                    <option value="all">All Time</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="max-results">Max Results:</label>
+                <input type="number" id="max-results" name="max-results" min="10" max="500" value="100">
+                <span class="input-hint">(10-500)</span>
+            </div>
+            
+            <div class="form-group">
+                <label for="search-depth">Search Depth:</label>
+                <select id="search-depth" name="search-depth" class="full-width">
+                    <option value="shallow">Shallow</option>
+                    <option value="medium">Medium</option>
+                    <option value="deep" selected>Deep</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="parallel-workers">Parallel workers:</label>
+                <input type="number" id="parallel-workers" name="parallel-workers" min="1" max="10" value="4">
+                <span class="input-hint">(1-10)</span>
+            </div>
+            
+            <div class="form-group">
+                <label>Advanced Options:</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="extract-code" name="extract-code" checked>
+                        <label for="extract-code">Extract Code</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="follow-links" name="follow-links" checked>
+                        <label for="follow-links">Follow links</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="save-findings" name="save-findings" checked>
+                        <label for="save-findings">Save findings to database</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="use-proxy" name="use-proxy">
+                        <label for="use-proxy">Use proxy</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" id="cancel-button" class="secondary-button">Cancel</button>
+                <button type="button" id="save-template-button" class="secondary-button">Save as Template</button>
+                <button type="submit" id="start-button" class="primary-button">Start</button>
+            </div>
+        </form>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/websearch_config.js') }}"></script>
+</body>
+</html>
+

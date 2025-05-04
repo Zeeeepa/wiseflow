@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Visualization - WiseFlow</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/visualization.css') }}">
+</head>
+<body>
+    <div class="container">
+        {% include 'includes/header.html' %}
+        
+        <main class="main-content">
+            <div class="visualization-container">
+                <h1>Data Visualization</h1>
+                
+                <div class="visualization-controls">
+                    <div class="control-group">
+                        <label for="data-source">Source:</label>
+                        <select id="data-source" name="data-source">
+                            <option value="all" selected>All Sources</option>
+                            <option value="github">GitHub</option>
+                            <option value="websearch">WebSearch</option>
+                            <option value="youtube">YouTube</option>
+                            <option value="arxiv">ArXiv</option>
+                        </select>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label for="time-range">Time Range:</label>
+                        <select id="time-range" name="time-range">
+                            <option value="day">Last 24 Hours</option>
+                            <option value="week">Last Week</option>
+                            <option value="month" selected>Last Month</option>
+                            <option value="year">Last Year</option>
+                            <option value="all">All Time</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="visualization-view">
+                    <div id="visualization-canvas">
+                        <!-- Visualization will be rendered here by JavaScript -->
+                        <div class="placeholder-visualization">
+                            <div class="node main-node">RAG</div>
+                            <div class="connection left-connection"></div>
+                            <div class="connection right-connection"></div>
+                            <div class="node sub-node-left">Embeddings</div>
+                            <div class="node sub-node-right">Retrieval</div>
+                            <div class="connection sub-left-connection-1"></div>
+                            <div class="connection sub-left-connection-2"></div>
+                            <div class="connection sub-right-connection-1"></div>
+                            <div class="connection sub-right-connection-2"></div>
+                            <div class="node leaf-node-1">Vector DB</div>
+                            <div class="node leaf-node-2">Text</div>
+                            <div class="node leaf-node-3">Semantic</div>
+                            <div class="node leaf-node-4">Keyword</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="visualization-options">
+                    <div class="option-group">
+                        <label for="view-type">View Type:</label>
+                        <select id="view-type" name="view-type">
+                            <option value="network" selected>Network Graph</option>
+                            <option value="tree">Tree View</option>
+                            <option value="chord">Chord Diagram</option>
+                            <option value="sankey">Sankey Diagram</option>
+                            <option value="heatmap">Heatmap</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="grouping">Grouping:</label>
+                        <select id="grouping" name="grouping">
+                            <option value="topic" selected>By Topic</option>
+                            <option value="source">By Source</option>
+                            <option value="date">By Date</option>
+                            <option value="relevance">By Relevance</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="node-size">Node Size:</label>
+                        <select id="node-size" name="node-size">
+                            <option value="relevance" selected>By Relevance</option>
+                            <option value="connections">By Connections</option>
+                            <option value="recency">By Recency</option>
+                            <option value="uniform">Uniform</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="visualization-insights">
+                    <h3>Insights:</h3>
+                    <ul id="insights-list">
+                        <li>Most connected topic: <strong>Vector Databases</strong></li>
+                        <li>Strongest relationship: <strong>RAG ↔ Embeddings</strong></li>
+                        <li>Emerging cluster: <strong>Hybrid Retrieval Methods</strong></li>
+                        <li>Isolated topics: <strong>3</strong> <a href="#" class="view-isolated">click to view</a></li>
+                    </ul>
+                </div>
+                
+                <div class="visualization-actions">
+                    <button id="export-graph-btn" class="action-button">Export Graph</button>
+                    <button id="save-view-btn" class="action-button">Save View</button>
+                    <button id="share-btn" class="action-button">Share</button>
+                </div>
+            </div>
+        </main>
+        
+        {% include 'includes/footer.html' %}
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/visualization.js') }}"></script>
+</body>
+</html>
+
