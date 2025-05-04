@@ -215,27 +215,41 @@ class TaskManager:
         # Add task to manager
         self.tasks[task_id] = task
         
-        # Check if task is waiting on dependencies
-        if dependencies:
-            for dep_id in dependencies:
-                dep_task = self.tasks.get(dep_id)
-                if dep_task and dep_task.status != TaskStatus.COMPLETED:
-                    task.status = TaskStatus.WAITING
-                    self.waiting_tasks.add(task_id)
-                    break
+def cancel_task(self, task_id: str) -> bool:
+    task = self.get_task(task_id)
+    if not task:
+        logger.warning(f"Task {task_id} not found")
+        return False
+        
+    try:
+        # Cleanup any allocated resources
+        self._cleanup_task_resources(task)
+        
+        # Cancel the task
+        if task.status == TaskStatus.RUNNING:
+            task.task_object.cancel()
+            self.running_tasks.discard(task_id)
+        elif task.status == TaskStatus.PENDING:
+            self.pending_tasks.discard(task_id)
+        elif task.status == TaskStatus.WAITING:
+            self.waiting_tasks.discard(task_id)
+            
+        task.status = TaskStatus.CANCELLED
+        task.completed_at = datetime.now()
+        self.cancelled_tasks.add(task_id)
         
         # Publish event
-        try:
-            event = create_task_event(
-                EventType.TASK_CREATED,
-                task_id,
-                {"name": name, "priority": priority.name}
-            )
-            publish_sync(event)
-        except Exception as e:
-            logger.warning(f"Failed to publish task created event: {e}")
+        event = create_task_event(
+            EventType.TASK_CANCELLED,
+            task_id,
+            {"name": task.name, "reason": "cancelled by user"}
+        )
+        publish_sync(event)
         
-        logger.info(f"Task registered: {task_id} ({name})")
+        return True
+    except Exception as e:
+        logger.error(f"Error cancelling task {task_id}: {e}")
+        return False
         return task_id
     
     def cancel_task(self, task_id: str) -> bool:
