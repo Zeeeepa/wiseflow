@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSearch Data Mining Configuration - WiseFlow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/websearch_config.css">
+</head>
+<body>
+    <a href="#main-content" class="visually-hidden-focusable skip-link">Skip to main content</a>
+    
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark" aria-label="Main navigation">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#" aria-label="WiseFlow Home">WiseFlow</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="/data-mining">Data Mining</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/templates">Templates</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/database">Database</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/visualization">Visualization</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/settings">Settings</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4" id="main-content">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">WebSearch Data Mining Configuration</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="websearch-config-form">
+                            <div class="mb-3">
+                                <label for="focus" class="form-label">Focus</label>
+                                <input type="text" class="form-control" id="focus" placeholder="e.g., RAG Implementation Patterns" required>
+                                <div class="form-text">Enter the main topic or technology you want to focus on</div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="description" class="form-label">Description</label>
+                                <textarea class="form-control" id="description" rows="2" placeholder="Describe what you're looking for in more detail"></textarea>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="reference-context" class="form-label">Add Reference Context Files/URLs</label>
+                                <div id="reference-contexts">
+                                    <div class="input-group mb-2">
+                                        <input type="text" class="form-control" placeholder="Enter file path or URL" aria-label="Reference context">
+                                        <button class="btn btn-outline-secondary remove-context" type="button">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="add-context-btn">
+                                    <i class="bi bi-plus-lg"></i> Add More
+                                </button>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Search Engines</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="google-engine" checked>
+                                    <label class="form-check-label" for="google-engine">
+                                        Google
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="bing-engine" checked>
+                                    <label class="form-check-label" for="bing-engine">
+                                        Bing
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="duckduckgo-engine" checked>
+                                    <label class="form-check-label" for="duckduckgo-engine">
+                                        DuckDuckGo
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="baidu-engine">
+                                    <label class="form-check-label" for="baidu-engine">
+                                        Baidu
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="custom-engine">
+                                    <label class="form-check-label" for="custom-engine">
+                                        Custom
+                                    </label>
+                                    <input type="text" class="form-control form-control-sm mt-1" id="custom-engine-url" placeholder="Enter custom search engine URL" disabled>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Content Types</label>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="articles-content" checked>
+                                            <label class="form-check-label" for="articles-content">
+                                                Articles
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="blogs-content" checked>
+                                            <label class="form-check-label" for="blogs-content">
+                                                Blogs
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="documentation-content" checked>
+                                            <label class="form-check-label" for="documentation-content">
+                                                Documentation
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="forums-content" checked>
+                                            <label class="form-check-label" for="forums-content">
+                                                Forums
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="news-content">
+                                            <label class="form-check-label" for="news-content">
+                                                News
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="" id="academic-content">
+                                            <label class="form-check-label" for="academic-content">
+                                                Academic
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="time-range" class="form-label">Time Range</label>
+                                        <select class="form-select" id="time-range">
+                                            <option value="all">All Time</option>
+                                            <option value="day">Past 24 Hours</option>
+                                            <option value="week">Past Week</option>
+                                            <option value="month">Past Month</option>
+                                            <option value="year" selected>Last Year</option>
+                                            <option value="custom">Custom Range</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="max-results" class="form-label">Max Results</label>
+                                        <input type="number" class="form-control" id="max-results" min="10" max="500" value="100">
+                                        <div class="form-text">Number of results to retrieve (10-500)</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="search-depth" class="form-label">Search Depth</label>
+                                        <select class="form-select" id="search-depth">
+                                            <option value="shallow">Shallow</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="deep" selected>Deep</option>
+                                            <option value="very-deep">Very Deep</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="parallel-workers" class="form-label">Parallel workers</label>
+                                        <input type="number" class="form-control" id="parallel-workers" min="1" max="10" value="4">
+                                        <div class="form-text">Number of parallel workers (1-10)</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Advanced Options</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="extract-code" checked>
+                                    <label class="form-check-label" for="extract-code">
+                                        Extract Code
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="follow-links" checked>
+                                    <label class="form-check-label" for="follow-links">
+                                        Follow links
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="save-findings" checked>
+                                    <label class="form-check-label" for="save-findings">
+                                        Save findings to database
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="" id="use-proxy">
+                                    <label class="form-check-label" for="use-proxy">
+                                        Use proxy
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="d-flex justify-content-between mt-4">
+                                <a href="/data-mining" class="btn btn-secondary">Cancel</a>
+                                <div>
+                                    <button type="button" class="btn btn-outline-primary me-2" id="save-template-btn">Save as Template</button>
+                                    <button type="submit" class="btn btn-primary">Start</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Save Template Modal -->
+    <div class="modal fade" id="save-template-modal" tabindex="-1" aria-labelledby="save-template-modal-label" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="save-template-modal-label">Save as Template</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="template-name" class="form-label">Template Name</label>
+                        <input type="text" class="form-control" id="template-name" placeholder="e.g., WebSearch - RAG Implementation Patterns">
+                    </div>
+                    <div class="mb-3">
+                        <label for="template-description" class="form-label">Description (Optional)</label>
+                        <textarea class="form-control" id="template-description" rows="2" placeholder="Brief description of this template"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirm-save-template">Save Template</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Shared modules -->
+    <script src="/static/js/shared/utils.js"></script>
+    <script src="/static/js/shared/event_bus.js"></script>
+    <script src="/static/js/shared/api_service.js"></script>
+    
+    <!-- Application scripts -->
+    <script src="/static/js/websearch_config.js"></script>
+</body>
+</html>
+
