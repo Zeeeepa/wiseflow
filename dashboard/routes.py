@@ -48,6 +48,8 @@ async def data_mining_dashboard(request: Request):
     """Serve the data mining dashboard page."""
     return templates.TemplateResponse(
         "data_mining_dashboard.html", 
+        {"request": request}
+    )
       
 @router.get("/database", response_class=HTMLResponse)
 async def database_management(request: Request):
@@ -79,5 +81,21 @@ async def templates_management(request: Request):
     """Serve the templates management page."""
     return templates.TemplateResponse(
         "templates_management.html", 
+        {"request": request}
+    )
+
+@router.get("/visualization", response_class=HTMLResponse)
+async def visualization(request: Request):
+    """Serve the visualization interface."""
+    return templates.TemplateResponse(
+        "visualization.html", 
+        {"request": request}
+    )
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings(request: Request):
+    """Serve the settings interface."""
+    return templates.TemplateResponse(
+        "settings.html", 
         {"request": request}
     )
