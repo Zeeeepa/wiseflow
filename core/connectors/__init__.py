@@ -216,32 +216,33 @@ class ConnectorBase(PluginBase):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.initialize)
     
-    def update_last_run(self) -> None:
-        """Update the last run timestamp."""
-        self.last_run = datetime.now()
-        
-    def get_last_run(self) -> Optional[datetime]:
-        """Get the last run timestamp."""
-        return self.last_run
-    
-    def get_status(self) -> Dict[str, Any]:
-        """
-        Get the current status of the connector.
-        
-        Returns:
-            Dictionary with status information
-        """
-        # Use a whitelist approach for config to avoid exposing sensitive information
-        safe_config = {}
-        if self.config:
-            # Define a whitelist of safe keys to include
-            safe_keys = [
-                "name", "type", "enabled", "url", "base_url", "endpoint", 
-                "timeout", "max_retries", "retry_delay", "cache_enabled",
-                "max_results", "language", "format", "source", "category",
-                "tags", "description", "version", "author", "website",
-                "license", "max_concurrent_requests", "user_agent"
-            ] + self.safe_config_keys
+from ratelimit import limits, sleep_and_retry
+
+class ConnectorBase(PluginBase):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        # Configure rate limits from config
+        self.rate_limit = config.get('rate_limit', 60)  # requests per minute
+        self.max_connections = config.get('max_connections', 10)
+        self.connection_pool = None
+
+    @sleep_and_retry
+    @limits(calls=60, period=60)  # default 60 calls per 60 seconds
+    async def rate_limited_request(self, *args, **kwargs):
+        """Make a rate-limited request"""
+        return await self._make_request(*args, **kwargs)
+
+    async def initialize(self) -> bool:
+        """Initialize the connector with connection pooling"""
+        try:
+            # Initialize connection pool
+            self.connection_pool = await self._create_connection_pool(
+                max_size=self.max_connections
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize connector: {e}")
+            return False
             
             # Only include keys that are in the whitelist
             for key in safe_keys:
