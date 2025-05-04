@@ -1,70 +1,69 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from pathlib import Path
-from dotenv import load_dotenv
-env_path = Path(__file__).parent / '.env'
-if env_path.exists():
-    load_dotenv(env_path)
-
-import logging
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-import asyncio
 import os
-import json
-import signal
 import sys
-import psutil
+import time
+import json
+import asyncio
+import signal
+import logging
 from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Callable, Awaitable
 
-from core.general_process import main_process, wiseflow_logger, pb
-from core.task import AsyncTaskManager, Task, create_task_id
-from core.analysis import CrossSourceAnalyzer, KnowledgeGraph
-from core.llms.advanced import AdvancedLLMProcessor
-from core.resource_monitor import ResourceMonitor
-from core.thread_pool_manager import ThreadPoolManager, TaskPriority, TaskStatus
-from core.task_manager import TaskManager, TaskDependencyError
+# Import from centralized imports module
+from core.imports import (
+    config,
+    wiseflow_logger,
+    PbTalker,
+    ResourceMonitor,
+    ThreadPoolManager,
+    TaskManager,
+    TaskDependencyError,
+    TaskPriority,
+    TaskStatus,
+    handle_exceptions,
+    WiseflowError,
+    log_error,
+    save_error_to_file,
+    Event,
+    EventType,
+    publish,
+    publish_sync
+)
+
+# Import system initialization
+from core.initialize import (
+    initialize_system,
+    shutdown_system,
+    register_shutdown_handler
+)
+
+# Import process functions
+from core.general_process import main_process, generate_insights_for_focus
 
 # Configure the maximum number of concurrent tasks
-MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
+MAX_CONCURRENT_TASKS = config.get("MAX_CONCURRENT_TASKS", 4)
 
 # Configure auto-shutdown settings
-AUTO_SHUTDOWN_ENABLED = os.environ.get("AUTO_SHUTDOWN_ENABLED", "false").lower() == "true"
-AUTO_SHUTDOWN_IDLE_TIME = int(os.environ.get("AUTO_SHUTDOWN_IDLE_TIME", "3600"))  # Default: 1 hour
-AUTO_SHUTDOWN_CHECK_INTERVAL = int(os.environ.get("AUTO_SHUTDOWN_CHECK_INTERVAL", "300"))  # Default: 5 minutes
+AUTO_SHUTDOWN_ENABLED = config.get("AUTO_SHUTDOWN_ENABLED", False)
+AUTO_SHUTDOWN_IDLE_TIME = config.get("AUTO_SHUTDOWN_IDLE_TIME", 3600)  # Default: 1 hour
+AUTO_SHUTDOWN_CHECK_INTERVAL = config.get("AUTO_SHUTDOWN_CHECK_INTERVAL", 300)  # Default: 5 minutes
 
+# Initialize resource monitor
 resource_monitor = ResourceMonitor(
     check_interval=10.0,
-    cpu_threshold=80.0,
-    memory_threshold=80.0,
-    disk_threshold=90.0
+    warning_threshold=75.0,
+    critical_threshold=90.0
 )
-resource_monitor.start()
 
-# Initialize the thread pool manager
-thread_pool = ThreadPoolManager(
-    min_workers=2,
-    max_workers=MAX_CONCURRENT_TASKS,
-    resource_monitor=resource_monitor,
-    adjust_interval=30.0
-)
-thread_pool.start()
+# Initialize thread pool manager
+thread_pool = ThreadPoolManager(max_workers=MAX_CONCURRENT_TASKS)
 
-task_manager = TaskManager(
-    thread_pool=thread_pool,
-    resource_monitor=resource_monitor,
-    history_limit=1000
-)
-task_manager.start()
+# Initialize task manager
+task_manager = TaskManager()
 
-# Initialize the legacy task manager (for backward compatibility)
-legacy_task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
-
-# Initialize the cross-source analyzer
-cross_source_analyzer = CrossSourceAnalyzer()
-
-# Initialize the advanced LLM processor
-advanced_llm_processor = AdvancedLLMProcessor()
+# Initialize PocketBase client
+pb = PbTalker(wiseflow_logger)
 
 # Track the last activity time
 last_activity_time = datetime.now()
@@ -520,4 +519,3 @@ async def main():
         
 if __name__ == "__main__":
     asyncio.run(main())
-
