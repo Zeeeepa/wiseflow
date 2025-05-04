@@ -1,0 +1,61 @@
+.source-selection {
+    padding: 20px 0;
+}
+
+.source-card {
+    border: 2px solid #e9ecef;
+    border-radius: 10px;
+    padding: 20px;
+    height: 100%;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.source-card:hover {
+    border-color: #6c757d;
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+}
+
+.source-card.selected {
+    border-color: #0d6efd;
+    background-color: rgba(13, 110, 253, 0.1);
+}
+
+.source-icon {
+    font-size: 3rem;
+    margin-bottom: 15px;
+    color: #0d6efd;
+}
+
+.source-card h5 {
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.source-card p {
+    color: #6c757d;
+    margin-bottom: 0;
+}
+
+/* Source-specific colors */
+#github-source .source-icon {
+    color: #333;
+}
+
+#websearch-source .source-icon {
+    color: #4285F4;
+}
+
+#youtube-source .source-icon {
+    color: #FF0000;
+}
+
+#arxiv-source .source-icon {
+    color: #B31B1B;
+}
+
