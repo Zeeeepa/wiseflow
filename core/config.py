@@ -24,20 +24,38 @@ logger = logging.getLogger(__name__)
 # Load environment variables from .env file
 env_path = Path(__file__).parent / '.env'
 if env_path.exists():
-    load_dotenv(env_path)
-else:
-    logger.warning(f".env file not found at {env_path}")
+# Add to imports
+from cryptography.fernet import Fernet
+from base64 import b64encode
 
 class Config:
-    """
-    Configuration class for WiseFlow.
+    SENSITIVE_KEYS = {
+        'LLM_API_KEY', 'PB_API_AUTH', 'ZHIPU_API_KEY',
+        'EXA_API_KEY', 'WISEFLOW_API_KEY'
+    }
     
-    This class provides a centralized configuration system for the WiseFlow application,
-    combining environment variables, configuration files, and default values.
-    """
+    def __init__(self):
+        self._config = {}
+        self._encrypted_values = {}
+        self._cipher = Fernet(Fernet.generate_key())
     
-    # Default configuration values
-    DEFAULT_CONFIG = {
+    def _encrypt_value(self, value: str) -> bytes:
+        return self._cipher.encrypt(value.encode())
+        
+    def _decrypt_value(self, encrypted: bytes) -> str:
+        return self._cipher.decrypt(encrypted).decode()
+        
+    def set(self, key: str, value: Any) -> None:
+        if key in self.SENSITIVE_KEYS:
+            self._encrypted_values[key] = self._encrypt_value(str(value))
+        else:
+            self._config[key] = value
+            
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in self.SENSITIVE_KEYS:
+            encrypted = self._encrypted_values.get(key)
+            return self._decrypt_value(encrypted) if encrypted else default
+        return self._config.get(key, default)
         # Project settings
         "PROJECT_DIR": "work_dir",
         "VERBOSE": False,
