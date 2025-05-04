@@ -41,6 +41,29 @@ document.addEventListener('DOMContentLoaded', function() {
         viewIsolatedTopics();
     });
     
+    /**
+     * Utility function for making fetch requests
+     * @param {string} url - The URL to fetch from
+     * @param {URLSearchParams} params - The query parameters
+     * @param {Function} onSuccess - Callback function on success
+     * @param {Function} onError - Callback function on error
+     * @param {string} errorMessage - Custom error message
+     */
+    function fetchData(url, params, onSuccess, onError, errorMessage = 'Network request failed') {
+        fetch(`${url}?${params}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => onSuccess(data))
+            .catch(error => {
+                console.error(`Error: ${error}`);
+                onError(errorMessage);
+            });
+    }
+    
     // Load visualization data from server
     function loadVisualizationData() {
         const params = new URLSearchParams({
@@ -48,21 +71,15 @@ document.addEventListener('DOMContentLoaded', function() {
             timeRange: timeRangeSelect.value
         });
         
-        fetch(`/api/visualization/data?${params}`)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
+        fetchData(
+            '/api/visualization/data', 
+            params,
+            data => {
                 renderVisualization(data);
                 updateInsights(data.insights);
-            })
-            .catch(error => {
-                console.error('Error loading visualization data:', error);
-                showError('Failed to load visualization data. Please try again later.');
-            });
+            },
+            message => showError('Failed to load visualization data. Please try again later.')
+        );
     }
     
     // Update visualization based on control changes
@@ -75,21 +92,15 @@ document.addEventListener('DOMContentLoaded', function() {
             nodeSize: nodeSizeSelect.value
         });
         
-        fetch(`/api/visualization/data?${params}`)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
+        fetchData(
+            '/api/visualization/data', 
+            params,
+            data => {
                 renderVisualization(data);
                 updateInsights(data.insights);
-            })
-            .catch(error => {
-                console.error('Error updating visualization:', error);
-                showError('Failed to update visualization. Please try again later.');
-            });
+            },
+            message => showError('Failed to update visualization. Please try again later.')
+        );
     }
     
     // Render visualization based on data and selected view type
@@ -199,26 +210,38 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Render tree view visualization
     function renderTreeView(container, data) {
-        // Placeholder for tree view implementation
-        renderNetworkGraph(container, data); // Fallback to network graph for now
+        // TODO: Implement tree view visualization using D3.js
+        // This should display a hierarchical tree structure of the data
+        // with parent-child relationships clearly visible
+        // For now, fallback to network graph
+        renderNetworkGraph(container, data);
     }
     
     // Render chord diagram visualization
     function renderChordDiagram(container, data) {
-        // Placeholder for chord diagram implementation
-        renderNetworkGraph(container, data); // Fallback to network graph for now
+        // TODO: Implement chord diagram visualization using D3.js
+        // This should display relationships between entities as arcs
+        // with the width of the arc representing the strength of the relationship
+        // For now, fallback to network graph
+        renderNetworkGraph(container, data);
     }
     
     // Render sankey diagram visualization
     function renderSankeyDiagram(container, data) {
-        // Placeholder for sankey diagram implementation
-        renderNetworkGraph(container, data); // Fallback to network graph for now
+        // TODO: Implement sankey diagram visualization using D3.js
+        // This should display flows between nodes where the width of the flow
+        // represents the volume or strength of the connection
+        // For now, fallback to network graph
+        renderNetworkGraph(container, data);
     }
     
     // Render heatmap visualization
     function renderHeatmap(container, data) {
-        // Placeholder for heatmap implementation
-        renderNetworkGraph(container, data); // Fallback to network graph for now
+        // TODO: Implement heatmap visualization using D3.js
+        // This should display a matrix of data where colors represent values
+        // with a color scale from low to high intensity
+        // For now, fallback to network graph
+        renderNetworkGraph(container, data);
     }
     
     // Update insights based on visualization data
@@ -433,4 +456,3 @@ document.addEventListener('DOMContentLoaded', function() {
     // Check URL parameters on load
     checkUrlParams();
 });
-

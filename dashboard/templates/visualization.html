@@ -15,27 +15,38 @@
             <div class="visualization-container">
                 <h1>Data Visualization</h1>
                 
-                <div class="visualization-controls">
-                    <div class="control-group">
-                        <label for="data-source">Source:</label>
-                        <select id="data-source" name="data-source">
-                            <option value="all" selected>All Sources</option>
-                            <option value="github">GitHub</option>
-                            <option value="websearch">WebSearch</option>
-                            <option value="youtube">YouTube</option>
-                            <option value="arxiv">ArXiv</option>
-                        </select>
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Data Visualization</h5>
                     </div>
-                    
-                    <div class="control-group">
-                        <label for="time-range">Time Range:</label>
-                        <select id="time-range" name="time-range">
-                            <option value="day">Last 24 Hours</option>
-                            <option value="week">Last Week</option>
-                            <option value="month" selected>Last Month</option>
-                            <option value="year">Last Year</option>
-                            <option value="all">All Time</option>
-                        </select>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label for="source-filter" class="form-label">Source</label>
+                                <select class="form-select" id="source-filter" aria-label="Select data source">
+                                    <option value="all" selected>All Sources</option>
+                                    <option value="github">GitHub</option>
+                                    <option value="websearch">WebSearch</option>
+                                    <option value="youtube">YouTube</option>
+                                    <option value="arxiv">ArXiv</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="time-range" class="form-label">Time Range</label>
+                                <select class="form-select" id="time-range" aria-label="Select time range">
+                                    <option value="day">Last 24 Hours</option>
+                                    <option value="week">Last Week</option>
+                                    <option value="month" selected>Last Month</option>
+                                    <option value="quarter">Last Quarter</option>
+                                    <option value="year">Last Year</option>
+                                    <option value="all">All Time</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="apply-filters" class="form-label">&nbsp;</label>
+                                <button class="btn btn-primary w-100" id="apply-filters" aria-label="Apply filters">Apply Filters</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -117,4 +128,3 @@
     <script src="{{ url_for('static', filename='js/visualization.js') }}"></script>
 </body>
 </html>
-

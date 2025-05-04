@@ -23,9 +23,7 @@ document.addEventListener('DOMContentLoaded', function() {
         e.preventDefault();
         
         // Validate form
-        const focus = document.getElementById('focus').value.trim();
-        if (!focus) {
-            alert('Please enter a focus for your data mining task.');
+        if (!validateForm()) {
             return;
         }
         
@@ -56,7 +54,8 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/data-mining/github/start', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken() // Add CSRF protection
             },
             body: JSON.stringify(data)
         })
@@ -72,23 +71,21 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => {
             console.error('Error starting GitHub data mining:', error);
-            alert('There was an error starting the data mining process. Please try again.');
+            showToast('There was an error starting the data mining process. Please try again.', 'error');
         });
     });
     
     // Save as template
     saveTemplateButton.addEventListener('click', function() {
         // Validate form
-        const focus = document.getElementById('focus').value.trim();
-        if (!focus) {
-            alert('Please enter a focus for your template.');
+        if (!validateForm()) {
             return;
         }
         
         // Collect form data
         const formData = new FormData(form);
         const data = {
-            name: focus,
+            name: formData.get('focus'),
             type: 'github',
             config: {
                 focus: formData.get('focus'),
@@ -116,7 +113,8 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/templates/save', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken() // Add CSRF protection
             },
             body: JSON.stringify(data)
         })
@@ -127,11 +125,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return response.json();
         })
         .then(data => {
-            alert('Template saved successfully!');
+            showToast('Template saved successfully!', 'success');
         })
         .catch(error => {
             console.error('Error saving template:', error);
-            alert('There was an error saving the template. Please try again.');
+            showToast('There was an error saving the template. Please try again.', 'error');
         });
     });
     
@@ -139,5 +137,121 @@ document.addEventListener('DOMContentLoaded', function() {
     cancelButton.addEventListener('click', function() {
         window.location.href = '/dashboard';
     });
+    
+    /**
+     * Validate the form inputs
+     * @returns {boolean} True if validation passes, false otherwise
+     */
+    function validateForm() {
+        // Required fields
+        const focus = document.getElementById('focus').value.trim();
+        if (!focus) {
+            showToast('Please enter a focus for your data mining task.', 'error');
+            document.getElementById('focus').focus();
+            return false;
+        }
+        
+        // Validate goal field
+        const goal = document.getElementById('goal').value.trim();
+        if (!goal) {
+            showToast('Please enter a goal for your data mining task.', 'error');
+            document.getElementById('goal').focus();
+            return false;
+        }
+        
+        // Validate parallel workers
+        const parallelWorkers = parseInt(document.getElementById('parallel-workers').value, 10);
+        if (isNaN(parallelWorkers) || parallelWorkers < 1 || parallelWorkers > 10) {
+            showToast('Parallel workers must be a number between 1 and 10.', 'error');
+            document.getElementById('parallel-workers').focus();
+            return false;
+        }
+        
+        // Validate at least one search option is selected
+        const searchRepos = document.getElementById('search-repos').checked;
+        const searchCode = document.getElementById('search-code').checked;
+        const searchIssues = document.getElementById('search-issues').checked;
+        const searchPRs = document.getElementById('search-prs').checked;
+        
+        if (!searchRepos && !searchCode && !searchIssues && !searchPRs) {
+            showToast('Please select at least one search option.', 'error');
+            return false;
+        }
+        
+        // Validate references
+        const references = Array.from(document.querySelectorAll('.reference-context'))
+            .map(input => input.value.trim())
+            .filter(ref => ref !== '');
+            
+        // Validate URL format for references
+        for (const ref of references) {
+            if (ref.startsWith('http')) {
+                try {
+                    new URL(ref);
+                } catch (e) {
+                    showToast(`Invalid URL format: ${ref}`, 'error');
+                    return false;
+                }
+            }
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Show a toast message
+     * @param {string} message - The message to show
+     * @param {string} type - The type of toast (success, error, warning, info)
+     */
+    function showToast(message, type = 'success') {
+        // Create toast container if it doesn't exist
+        let toastContainer = document.querySelector('.toast-container');
+        
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+            document.body.appendChild(toastContainer);
+        }
+        
+        // Create toast element
+        const toastEl = document.createElement('div');
+        toastEl.className = `toast align-items-center text-white bg-${type === 'error' ? 'danger' : type}`;
+        toastEl.setAttribute('role', 'alert');
+        toastEl.setAttribute('aria-live', 'assertive');
+        toastEl.setAttribute('aria-atomic', 'true');
+        
+        toastEl.innerHTML = `
+            <div class="d-flex">
+                <div class="toast-body">
+                    ${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        `;
+        
+        // Add the toast to the container
+        toastContainer.appendChild(toastEl);
+        
+        // Initialize and show the toast
+        const toast = new bootstrap.Toast(toastEl, {
+            autohide: true,
+            delay: 3000
+        });
+        
+        toast.show();
+        
+        // Remove the toast element after it's hidden
+        toastEl.addEventListener('hidden.bs.toast', function() {
+            toastEl.remove();
+        });
+    }
+    
+    /**
+     * Get CSRF token from meta tag
+     * @returns {string} CSRF token
+     */
+    function getCSRFToken() {
+        const metaTag = document.querySelector('meta[name="csrf-token"]');
+        return metaTag ? metaTag.getAttribute('content') : '';
+    }
 });
-
