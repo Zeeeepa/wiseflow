@@ -1,0 +1,41 @@
+[run]
+source = core
+omit =
+    */test/*
+    */tests/*
+    */venv/*
+    */env/*
+    */.venv/*
+    */.env/*
+    */site-packages/*
+    */dist-packages/*
+    */docs/*
+    */examples/*
+    */scripts/*
+    */__pycache__/*
+    */.pytest_cache/*
+    */.git/*
+    */.github/*
+    */.vscode/*
+    */.idea/*
+    */setup.py
+    */conftest.py
+    */__init__.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    pass
+    raise ImportError
+    except ImportError
+    def __str__
+    def __unicode__
+    def __bytes__
+    
+[html]
+directory = coverage_reports/html
+title = Wiseflow Coverage Report
+
