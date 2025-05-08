@@ -2,6 +2,9 @@
 Thread pool manager for WiseFlow.
 
 This module provides a thread pool manager for executing tasks concurrently.
+
+DEPRECATED: This module is deprecated and will be removed in a future version.
+Please use the AsyncTaskManager from core.task instead.
 """
 
 import os
@@ -10,6 +13,7 @@ import asyncio
 import logging
 import uuid
 import concurrent.futures
+import warnings
 from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
 from datetime import datetime
 from enum import Enum, auto
@@ -23,6 +27,14 @@ from core.event_system import (
 from core.utils.error_handling import handle_exceptions, TaskError
 
 logger = logging.getLogger(__name__)
+
+# Show deprecation warning
+warnings.warn(
+    "The thread_pool_manager module is deprecated and will be removed in a future version. "
+    "Please use the AsyncTaskManager from core.task instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 class ThreadPoolManager:
     """
@@ -333,4 +345,3 @@ class ThreadPoolManager:
 
 # Create a singleton instance
 thread_pool_manager = ThreadPoolManager()
-

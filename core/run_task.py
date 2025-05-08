@@ -1,5 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""
+Task runner for WiseFlow.
+
+DEPRECATED: This module is deprecated and will be removed in a future version.
+Please use run_task_new.py instead.
+"""
+
 import os
 import sys
 import time
@@ -7,8 +14,17 @@ import json
 import asyncio
 import signal
 import logging
+import warnings
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Callable, Awaitable
+
+# Show deprecation warning
+warnings.warn(
+    "The run_task.py module is deprecated and will be removed in a future version. "
+    "Please use run_task_new.py instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 # Import from centralized imports module
 from core.imports import (

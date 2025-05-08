@@ -24,7 +24,7 @@ from datetime import datetime
 
 from core.utils.general_utils import get_logger
 from core.utils.pb_api import PbTalker
-from core.task import AsyncTaskManager, Task, create_task_id
+from core.task import AsyncTaskManager, Task, create_task_id, TaskPriority
 from core.plugins import PluginManager
 from core.plugins.connectors import ConnectorBase, DataItem
 from core.plugins.processors import ProcessorBase, ProcessedData
@@ -259,7 +259,8 @@ async def schedule_task():
                 focus_id=focus["id"],
                 function=process_focus_point,
                 args=(focus, sites),
-                auto_shutdown=auto_shutdown
+                auto_shutdown=auto_shutdown,
+                priority=TaskPriority.NORMAL
             )
             
             # Submit the task
