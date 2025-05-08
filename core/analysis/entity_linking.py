@@ -1,5 +1,4 @@
 """
-
 Entity Linking module for Wiseflow.
 
 This module provides functionality for linking entities across different data sources
@@ -9,6 +8,7 @@ to create a unified view of entities.
 from typing import Dict, List, Any, Optional, Union, Tuple
 import logging
 import uuid
+import traceback
 from datetime import datetime
 import os
 import json
@@ -24,7 +24,154 @@ from core.utils.pb_api import PbTalker
 
 logger = logging.getLogger(__name__)
 
-# ... existing EntityRegistry class ...
+class EntityRegistry:
+    """Registry for tracking and linking entities."""
+    
+    def __init__(self):
+        """Initialize the entity registry."""
+        self.entities = {}  # entity_id -> Entity
+        self.name_index = defaultdict(list)  # normalized_name -> [entity_id]
+        self.type_index = defaultdict(list)  # entity_type -> [entity_id]
+        self.canonical_map = {}  # entity_id -> canonical_id
+        self.entity_groups = defaultdict(list)  # canonical_id -> [entity_id]
+    
+    def add_entity(self, entity: Entity) -> None:
+        """Add an entity to the registry."""
+        if not entity or not isinstance(entity, Entity):
+            logger.warning(f"Attempted to add invalid entity to registry: {entity}")
+            return
+            
+        self.entities[entity.entity_id] = entity
+        
+        # Update indices
+        if entity.name:
+            normalized_name = self._normalize_name(entity.name)
+            self.name_index[normalized_name].append(entity.entity_id)
+        
+        if entity.entity_type:
+            self.type_index[entity.entity_type].append(entity.entity_id)
+        
+        # Initially, each entity is its own canonical entity
+        self.canonical_map[entity.entity_id] = entity.entity_id
+        self.entity_groups[entity.entity_id].append(entity.entity_id)
+    
+    def link_entities(self, entity_id1: str, entity_id2: str) -> bool:
+        """
+        Link two entities as referring to the same real-world entity.
+        
+        Args:
+            entity_id1: ID of the first entity
+            entity_id2: ID of the second entity
+            
+        Returns:
+            True if the linking was successful, False otherwise
+        """
+        if entity_id1 not in self.entities or entity_id2 not in self.entities:
+            logger.warning(f"Cannot link entities: one or both entities not found ({entity_id1}, {entity_id2})")
+            return False
+        
+        # Get the canonical IDs for both entities
+        canonical_id1 = self.canonical_map[entity_id1]
+        canonical_id2 = self.canonical_map[entity_id2]
+        
+        # If they're already linked, nothing to do
+        if canonical_id1 == canonical_id2:
+            return True
+        
+        # Choose the older canonical ID as the new canonical ID
+        entity1 = self.entities[canonical_id1]
+        entity2 = self.entities[canonical_id2]
+        
+        if entity1.timestamp <= entity2.timestamp:
+            new_canonical_id = canonical_id1
+            old_canonical_id = canonical_id2
+        else:
+            new_canonical_id = canonical_id2
+            old_canonical_id = canonical_id1
+        
+        # Update the canonical map for all entities in the old group
+        for entity_id in self.entity_groups[old_canonical_id]:
+            self.canonical_map[entity_id] = new_canonical_id
+        
+        # Merge the groups
+        self.entity_groups[new_canonical_id].extend(self.entity_groups[old_canonical_id])
+        del self.entity_groups[old_canonical_id]
+        
+        return True
+    
+    def get_canonical_entity(self, entity_id: str) -> Optional[Entity]:
+        """
+        Get the canonical entity for an entity ID.
+        
+        Args:
+            entity_id: ID of the entity
+            
+        Returns:
+            The canonical entity, or None if not found
+        """
+        if entity_id not in self.canonical_map:
+            return None
+        
+        canonical_id = self.canonical_map[entity_id]
+        return self.entities.get(canonical_id)
+    
+    def get_entity_group(self, entity_id: str) -> List[Entity]:
+        """
+        Get all entities in the same group as the given entity.
+        
+        Args:
+            entity_id: ID of the entity
+            
+        Returns:
+            List of entities in the same group
+        """
+        if entity_id not in self.canonical_map:
+            return []
+        
+        canonical_id = self.canonical_map[entity_id]
+        return [self.entities[eid] for eid in self.entity_groups[canonical_id]]
+    
+    def find_entities_by_name(self, name: str, threshold: float = 0.8) -> List[Entity]:
+        """
+        Find entities by name with fuzzy matching.
+        
+        Args:
+            name: Name to search for
+            threshold: Similarity threshold for fuzzy matching
+            
+        Returns:
+            List of matching entities
+        """
+        if not name:
+            return []
+        
+        normalized_name = self._normalize_name(name)
+        
+        # Exact match
+        exact_matches = []
+        for entity_id in self.name_index.get(normalized_name, []):
+            exact_matches.append(self.entities[entity_id])
+        
+        if exact_matches:
+            return exact_matches
+        
+        # Fuzzy match
+        fuzzy_matches = []
+        for indexed_name, entity_ids in self.name_index.items():
+            similarity = difflib.SequenceMatcher(None, normalized_name, indexed_name).ratio()
+            if similarity >= threshold:
+                for entity_id in entity_ids:
+                    fuzzy_matches.append((similarity, self.entities[entity_id]))
+        
+        # Sort by similarity (descending)
+        fuzzy_matches.sort(key=lambda x: x[0], reverse=True)
+        return [entity for _, entity in fuzzy_matches]
+    
+    def _normalize_name(self, name: str) -> str:
+        """Normalize an entity name for comparison."""
+        if not name:
+            return ""
+        return re.sub(r'\W+', ' ', name.lower()).strip()
 
 # Implement the missing functions
 async def link_entities(entities: List[Entity]) -> Dict[str, List[Entity]]:
@@ -39,62 +186,74 @@ async def link_entities(entities: List[Entity]) -> Dict[str, List[Entity]]:
     """
     logger.info(f"Linking {len(entities)} entities")
     
-    # Create a registry to track entity links
-    registry = EntityRegistry()
-    
-    # Add all entities to the registry
-    for entity in entities:
-        registry.add_entity(entity)
-    
-    # Compare all pairs of entities to find potential links
-    linked_groups = defaultdict(list)
-    processed_pairs = set()
-    
-    for i, entity1 in enumerate(entities):
-        linked_groups[entity1.entity_id].append(entity1)
+    try:
+        # Create a registry to track entity links
+        registry = EntityRegistry()
         
-        for j, entity2 in enumerate(entities[i+1:], i+1):
-            # Skip if already processed this pair
-            pair_key = tuple(sorted([entity1.entity_id, entity2.entity_id]))
-            if pair_key in processed_pairs:
-                continue
-            
-            processed_pairs.add(pair_key)
-            
-            # Calculate similarity between entities
-            similarity, confidence = registry.calculate_entity_similarity(entity1, entity2)
-            
-            # If similarity is above threshold, link the entities
-            if similarity >= 0.8 and confidence >= 0.7:
-                registry.link_entities(entity1.entity_id, entity2.entity_id, confidence)
+        # Add all entities to the registry
+        for entity in entities:
+            registry.add_entity(entity)
+        
+        # Compare all pairs of entities to find potential links
+        linked_groups = defaultdict(list)
+        
+        # First, link entities with exact name matches
+        name_groups = defaultdict(list)
+        for entity in entities:
+            if entity.name:
+                normalized_name = registry._normalize_name(entity.name)
+                name_groups[normalized_name].append(entity)
+        
+        for name, group in name_groups.items():
+            if len(group) > 1:
+                # Link all entities in this group
+                for i in range(len(group) - 1):
+                    registry.link_entities(group[i].entity_id, group[i+1].entity_id)
+        
+        # Next, use more sophisticated linking for remaining entities
+        # This could involve comparing metadata, sources, etc.
+        # For now, we'll use a simple approach based on name similarity
+        
+        # Get all unique entity names
+        all_names = [entity.name for entity in entities if entity.name]
+        if len(all_names) > 1:
+            # Create a TF-IDF vectorizer for name comparison
+            vectorizer = TfidfVectorizer(min_df=1, analyzer='char', ngram_range=(2, 3))
+            try:
+                name_vectors = vectorizer.fit_transform(all_names)
                 
-                # Update linked groups
-                group1 = None
-                group2 = None
+                # Compute pairwise similarities
+                similarities = cosine_similarity(name_vectors)
                 
-                # Find existing groups for these entities
-                for group_id, group in linked_groups.items():
-                    if entity1 in group:
-                        group1 = group_id
-                    if entity2 in group:
-                        group2 = group_id
-                
-                # Merge groups if both entities are in different groups
-                if group1 and group2 and group1 != group2:
-                    linked_groups[group1].extend(linked_groups[group2])
-                    del linked_groups[group2]
-                # Add entity2 to entity1's group
-                elif group1:
-                    linked_groups[group1].append(entity2)
-                # Add entity1 to entity2's group
-                elif group2:
-                    linked_groups[group2].append(entity1)
-                # Create a new group with both entities
-                else:
-                    linked_groups[entity1.entity_id].append(entity2)
-    
-    logger.info(f"Found {len(linked_groups)} entity groups")
-    return dict(linked_groups)
+                # Link entities with high name similarity
+                for i in range(len(all_names)):
+                    for j in range(i+1, len(all_names)):
+                        if similarities[i, j] >= 0.85:  # Threshold for name similarity
+                            # Find the entities with these names
+                            entities_i = [e for e in entities if e.name == all_names[i]]
+                            entities_j = [e for e in entities if e.name == all_names[j]]
+                            
+                            # Link the first entity from each group
+                            if entities_i and entities_j:
+                                registry.link_entities(entities_i[0].entity_id, entities_j[0].entity_id)
+            except Exception as e:
+                logger.error(f"Error in TF-IDF similarity calculation: {str(e)}")
+        
+        # Build the result dictionary
+        result = {}
+        for entity in entities:
+            canonical_id = registry.canonical_map.get(entity.entity_id)
+            if canonical_id:
+                if canonical_id not in result:
+                    result[canonical_id] = []
+                result[canonical_id].append(entity)
+        
+        logger.info(f"Entity linking complete: {len(result)} unique entities identified")
+        return result
+    except Exception as e:
+        logger.error(f"Error in entity linking: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {entity.entity_id: [entity] for entity in entities}
 
 async def merge_entities(entities: List[Entity]) -> Entity:
     """
