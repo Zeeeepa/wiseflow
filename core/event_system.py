@@ -12,6 +12,7 @@ import inspect
 import time
 import uuid
 import threading
+import weakref
 from typing import Dict, List, Any, Optional, Union, Callable, Awaitable, Set
 from datetime import datetime
 from enum import Enum, auto
@@ -135,6 +136,9 @@ class EventBus:
         self._overflow_policy = 'drop'  # or 'block'
         self._queues = {}
         
+        # Use weak references for callbacks to prevent memory leaks
+        self._callback_sources = weakref.WeakKeyDictionary()
+        
         # Register built-in subscribers
         self._register_built_in_subscribers()
         
@@ -164,7 +168,7 @@ class EventBus:
         with self._lock:
             # Store the source with the callback for later unsubscription
             if source:
-                setattr(callback, "__source__", source)
+                self._callback_sources[callback] = source
                 
             if event_type is None:
                 # Subscribe to all event types
@@ -212,16 +216,14 @@ class EventBus:
             return
         
         with self._lock:
-            # We need to track callbacks by source, so we'll add this information
-            # when subscribing and use it here to unsubscribe
             count = 0
             for event_type in list(self._subscribers.keys()):
                 # We can't modify the list while iterating, so create a new list
                 callbacks_to_keep = []
                 for callback in self._subscribers[event_type]:
                     # Check if this callback was registered by the source
-                    # This requires callbacks to have a __source__ attribute
-                    if hasattr(callback, "__source__") and callback.__source__ == source:
+                    callback_source = self._callback_sources.get(callback)
+                    if callback_source == source:
                         count += 1
                     else:
                         callbacks_to_keep.append(callback)
@@ -265,16 +267,42 @@ class EventBus:
             subscribers = self._subscribers.get(event.event_type, []).copy()
         
         # Call subscribers outside the lock to avoid deadlocks
+        tasks = []
         for callback in subscribers:
             try:
                 if asyncio.iscoroutinefunction(callback):
-                    await callback(event)
+                    # Create a task for each async callback
+                    task = asyncio.create_task(self._safe_call_async(callback, event))
+                    tasks.append(task)
                 else:
-                    callback(event)
+                    # Call synchronous callbacks directly
+                    self._safe_call_sync(callback, event)
             except Exception as e:
                 logger.error(f"Error in event subscriber {callback.__name__}: {e}")
                 if self._propagate_exceptions:
                     raise  # Re-raise the exception if propagation is enabled
+        
+        # Wait for all async tasks to complete
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=not self._propagate_exceptions)
+    
+    async def _safe_call_async(self, callback: Callable[[Event], Awaitable[Any]], event: Event) -> None:
+        """Safely call an async callback with error handling."""
+        try:
+            await callback(event)
+        except Exception as e:
+            logger.error(f"Error in async event subscriber {callback.__name__}: {e}")
+            if self._propagate_exceptions:
+                raise
+    
+    def _safe_call_sync(self, callback: Callable[[Event], Any], event: Event) -> None:
+        """Safely call a sync callback with error handling."""
+        try:
+            callback(event)
+        except Exception as e:
+            logger.error(f"Error in sync event subscriber {callback.__name__}: {e}")
+            if self._propagate_exceptions:
+                raise
     
     def publish_sync(self, event: Event) -> None:
         """
@@ -309,17 +337,18 @@ class EventBus:
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
                             # Create a future to run the callback
-                            asyncio.create_task(callback(event))
+                            asyncio.create_task(self._safe_call_async(callback, event))
                         else:
                             # Run the callback in the loop
-                            loop.run_until_complete(callback(event))
+                            loop.run_until_complete(self._safe_call_async(callback, event))
                     except RuntimeError:
                         # No event loop, create one
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
-                        loop.run_until_complete(callback(event))
+                        loop.run_until_complete(self._safe_call_async(callback, event))
+                        loop.close()
                 else:
-                    callback(event)
+                    self._safe_call_sync(callback, event)
             except Exception as e:
                 logger.error(f"Error in event subscriber {callback.__name__}: {e}")
                 if self._propagate_exceptions:
@@ -341,9 +370,10 @@ class EventBus:
         
         with self._lock:
             if event_type is None:
-                return self._event_history[-limit:]
+                return self._event_history[-limit:] if self._event_history else []
             else:
-                return [e for e in self._event_history if e.event_type == event_type][-limit:]
+                filtered = [e for e in self._event_history if e.event_type == event_type]
+                return filtered[-limit:] if filtered else []
     
     def clear_history(self) -> None:
         """Clear event history."""
@@ -512,4 +542,3 @@ def create_resource_event(event_type: EventType, resource_type: str, value: floa
         "timestamp": datetime.now().isoformat()
     }
     return Event(event_type, data, "resource_monitor")
-

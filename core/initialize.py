@@ -11,6 +11,7 @@ import asyncio
 import signal
 import logging
 import time
+import traceback
 from typing import Dict, Any, Optional, List, Callable, Awaitable
 
 from core.imports import (
@@ -58,10 +59,16 @@ class WiseflowSystem:
         self.logger = logger.bind(component="WiseflowSystem")
         self.plugin_manager = PluginManager()
         self.pb = PbTalker(self.logger)
+        
+        # Initialize resource monitor with proper configuration
         self.resource_monitor = ResourceMonitor(
-            check_interval=10.0,
-            warning_threshold=75.0,
-            critical_threshold=90.0
+            check_interval=config.get("RESOURCE_CHECK_INTERVAL", 10.0),
+            cpu_threshold=config.get("CPU_THRESHOLD", 90.0),
+            memory_threshold=config.get("MEMORY_THRESHOLD", 85.0),
+            disk_threshold=config.get("DISK_THRESHOLD", 90.0),
+            warning_threshold_factor=config.get("WARNING_THRESHOLD_FACTOR", 0.8),
+            history_size=config.get("RESOURCE_HISTORY_SIZE", 100),
+            callback=self._handle_resource_event
         )
         
         self.connectors = {}
@@ -70,6 +77,30 @@ class WiseflowSystem:
         self._initialized = True
         
         self.logger.info("Wiseflow system initialized")
+    
+    async def _handle_resource_event(self, resource_type: str, value: float, threshold: float):
+        """
+        Handle resource events.
+        
+        This method is called when a resource threshold is exceeded.
+        
+        Args:
+            resource_type: Type of resource (CPU, Memory, Disk)
+            value: Current resource usage value
+            threshold: Threshold that was exceeded
+        """
+        self.logger.warning(f"Resource threshold exceeded: {resource_type} at {value:.1f}% (threshold: {threshold:.1f}%)")
+        
+        # Take appropriate action based on resource type and severity
+        if resource_type == "CPU" and value > 95:
+            self.logger.error(f"Critical CPU usage detected: {value:.1f}%")
+            # Consider reducing workload or notifying administrators
+        elif resource_type == "Memory" and value > 95:
+            self.logger.error(f"Critical memory usage detected: {value:.1f}%")
+            # Consider freeing memory or notifying administrators
+        elif resource_type == "Disk" and value > 95:
+            self.logger.error(f"Critical disk usage detected: {value:.1f}%")
+            # Consider freeing disk space or notifying administrators
     
     @handle_exceptions(
         error_types=[Exception],
