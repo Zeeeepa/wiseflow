@@ -1,0 +1,67 @@
+{
+  "entities": [
+    {
+      "entity_id": "entity_1",
+      "name": "OpenAI GPT-4",
+      "entity_type": "ai_model",
+      "sources": ["web_source_1"],
+      "metadata": {
+        "developer": "OpenAI",
+        "release_date": "2023-03-14",
+        "type": "language_model"
+      }
+    },
+    {
+      "entity_id": "entity_2",
+      "name": "GPT-4 by OpenAI",
+      "entity_type": "ai_model",
+      "sources": ["academic_source_1"],
+      "metadata": {
+        "creator": "OpenAI",
+        "published": "March 2023",
+        "category": "language_model"
+      }
+    },
+    {
+      "entity_id": "entity_3",
+      "name": "Claude 2",
+      "entity_type": "ai_model",
+      "sources": ["web_source_2"],
+      "metadata": {
+        "developer": "Anthropic",
+        "release_date": "2023-07-11",
+        "type": "language_model"
+      }
+    },
+    {
+      "entity_id": "entity_4",
+      "name": "OpenAI",
+      "entity_type": "organization",
+      "sources": ["web_source_1"],
+      "metadata": {
+        "founded": "2015",
+        "location": "San Francisco, CA",
+        "industry": "AI research"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "relationship_id": "rel_1",
+      "source_id": "entity_4",
+      "target_id": "entity_1",
+      "relationship_type": "develops",
+      "metadata": {
+        "since": "2023"
+      }
+    },
+    {
+      "relationship_id": "rel_2",
+      "source_id": "entity_1",
+      "target_id": "entity_2",
+      "relationship_type": "same_as",
+      "metadata": {}
+    }
+  ]
+}
+
