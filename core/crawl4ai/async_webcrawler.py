@@ -108,7 +108,7 @@ class AsyncWebCrawler:
         self._memory_monitor_task = None
 
         # Initialize directories
-        self.crawl4ai_folder = os.path.join(base_directory, ".craw4ai-de")
+        self.crawl4ai_folder = os.path.join(base_directory, ".crawl4ai")
         os.makedirs(self.crawl4ai_folder, exist_ok=True)
 
         # Initialize robots.txt parser
@@ -122,6 +122,10 @@ class AsyncWebCrawler:
         # Track active crawl tasks
         self._active_tasks = set()
         self._task_lock = asyncio.Lock()
+        
+        # Connection pool management
+        self._connection_pool_size = self.browser_config.max_connections or 10
+        self._connection_semaphore = asyncio.Semaphore(self._connection_pool_size)
 
     async def _monitor_memory_usage(self):
         """
@@ -157,6 +161,14 @@ class AsyncWebCrawler:
                 if avg_memory > self.memory_warning_percent:
                     self.logger.warning("Triggering garbage collection due to high memory usage")
                     gc.collect()
+                    
+                    # If memory is still high after garbage collection, reduce connection pool size
+                    if psutil.virtual_memory().percent > self.memory_warning_percent:
+                        new_pool_size = max(1, self._connection_pool_size // 2)
+                        self.logger.warning(f"Reducing connection pool size from {self._connection_pool_size} to {new_pool_size}")
+                        self._connection_pool_size = new_pool_size
+                        # Create a new semaphore with reduced size
+                        self._connection_semaphore = asyncio.Semaphore(self._connection_pool_size)
         except asyncio.CancelledError:
             self.logger.info("Memory monitor task cancelled")
         except Exception as e:
@@ -228,7 +240,7 @@ class AsyncWebCrawler:
         return self
 
     async def nullcontext(self):
-        """异步空上下文管理器"""
+        """Async null context manager"""
         yield
 
     async def _check_and_handle_memory(self, url: str) -> bool:
@@ -332,184 +344,186 @@ class AsyncWebCrawler:
                 async with self._task_lock:
                     self._active_tasks.add(task)
 
-            try:
-                # Create cache context
-                cache_context = CacheContext(
-                    url=url,
-                    cache_mode=crawler_config.cache_mode,
-                    logger=self.logger,
-                )
+            # Use connection pool semaphore to limit concurrent connections
+            async with self._connection_semaphore:
+                try:
+                    # Create cache context
+                    cache_context = CacheContext(
+                        url=url,
+                        cache_mode=crawler_config.cache_mode,
+                        logger=self.logger,
+                    )
 
-                # Get the database manager
-                async_db_manager = self.async_db_manager
+                    # Get the database manager
+                    async_db_manager = self.async_db_manager
 
-                # Start timing
-                start_time = time.perf_counter()
+                    # Start timing
+                    start_time = time.perf_counter()
 
-                # Check cache first if enabled
-                html = ""
-                screenshot_data = None
-                pdf_data = None
-                cached_result = None
+                    # Check cache first if enabled
+                    html = ""
+                    screenshot_data = None
+                    pdf_data = None
+                    cached_result = None
 
-                if cache_context.should_read():
-                    cached_result = await async_db_manager.aget_url_cache(url)
-                    if cached_result:
-                        html = cached_result.html
-                        screenshot_data = cached_result.screenshot
-                        pdf_data = cached_result.pdf
-                        # if config.screenshot and not screenshot or config.pdf and not pdf:
-                        if crawler_config.screenshot and not screenshot_data:
-                            cached_result = None
-                
-                # Fetch fresh content if needed
-                if not cached_result or not html:
-                    t1 = time.perf_counter()
+                    if cache_context.should_read():
+                        cached_result = await async_db_manager.aget_url_cache(url)
+                        if cached_result:
+                            html = cached_result.html
+                            screenshot_data = cached_result.screenshot
+                            pdf_data = cached_result.pdf
+                            # if config.screenshot and not screenshot or config.pdf and not pdf:
+                            if crawler_config.screenshot and not screenshot_data:
+                                cached_result = None
                     
-                    # Check robots.txt if enabled
-                    if crawler_config and crawler_config.check_robots_txt:
-                        if not await self.robots_parser.can_fetch(url, self.browser_config.user_agent):
-                            self.logger.warning(
-                                f"URL {url} is disallowed by robots.txt"
-                            )
+                    # Fetch fresh content if needed
+                    if not cached_result or not html:
+                        t1 = time.perf_counter()
+                        
+                        # Check robots.txt if enabled
+                        if crawler_config and crawler_config.check_robots_txt:
+                            if not await self.robots_parser.can_fetch(url, self.browser_config.user_agent):
+                                self.logger.warning(
+                                    f"URL {url} is disallowed by robots.txt"
+                                )
+                                return CrawlResult(
+                                    url=url,
+                                    html="",
+                                    success=False,
+                                    error_message="URL is disallowed by robots.txt",
+                                )
+
+                        # Update domain last hit time
+                        domain = get_domain_from_url(url)
+                        self._domain_last_hit[domain] = time.time()
+
+                        ##############################
+                        # Call CrawlerStrategy.crawl #
+                        ##############################
+                        # Implement retry logic for network errors
+                        retry_count = 0
+                        last_error = None
+                        
+                        while retry_count <= self.max_retries:
+                            try:
+                                async_response = await self.crawler_strategy.crawl(
+                                    url,
+                                    config=crawler_config,  # Pass the entire config object
+                                )
+                                # If successful, break out of retry loop
+                                break
+                            except Exception as e:
+                                last_error = e
+                                retry_count += 1
+                                
+                                # Log the error
+                                self.logger.warning(
+                                    f"Error crawling {url} (attempt {retry_count}/{self.max_retries}): {str(e)}"
+                                )
+                                
+                                # If we've reached max retries, re-raise the exception
+                                if retry_count > self.max_retries:
+                                    raise
+                                
+                                # Exponential backoff for retries
+                                backoff_time = self.retry_delay * (2 ** (retry_count - 1))
+                                self.logger.info(f"Retrying in {backoff_time} seconds...")
+                                await asyncio.sleep(backoff_time)
+                        
+                        # If we got here without a response, it means all retries failed
+                        if not async_response:
+                            error_msg = f"Failed to crawl {url} after {self.max_retries} retries"
+                            self.logger.error(error_msg)
                             return CrawlResult(
                                 url=url,
                                 html="",
                                 success=False,
-                                error_message="URL is disallowed by robots.txt",
+                                error_message=error_msg,
+                                last_error=str(last_error) if last_error else "Unknown error"
                             )
 
-                    # Update domain last hit time
-                    domain = get_domain_from_url(url)
-                    self._domain_last_hit[domain] = time.time()
+                        html = sanitize_input_encode(async_response.html)
+                        screenshot_data = async_response.screenshot
+                        pdf_data = async_response.pdf
 
-                    ##############################
-                    # Call CrawlerStrategy.crawl #
-                    ##############################
-                    # Implement retry logic for network errors
-                    retry_count = 0
-                    last_error = None
-                    
-                    while retry_count <= self.max_retries:
-                        try:
-                            async_response = await self.crawler_strategy.crawl(
-                                url,
-                                config=crawler_config,  # Pass the entire config object
-                            )
-                            # If successful, break out of retry loop
-                            break
-                        except Exception as e:
-                            last_error = e
-                            retry_count += 1
-                            
-                            # Log the error
-                            self.logger.warning(
-                                f"Error crawling {url} (attempt {retry_count}/{self.max_retries}): {str(e)}"
-                            )
-                            
-                            # If we've reached max retries, re-raise the exception
-                            if retry_count > self.max_retries:
-                                raise
-                            
-                            # Exponential backoff for retries
-                            backoff_time = self.retry_delay * (2 ** (retry_count - 1))
-                            self.logger.info(f"Retrying in {backoff_time} seconds...")
-                            await asyncio.sleep(backoff_time)
-                    
-                    # If we got here without a response, it means all retries failed
-                    if not async_response:
-                        error_msg = f"Failed to crawl {url} after {self.max_retries} retries"
-                        self.logger.error(error_msg)
-                        return CrawlResult(
+                        # Create a CrawlResult
+                        crawl_result = CrawlResult(
                             url=url,
-                            html="",
-                            success=False,
-                            error_message=error_msg,
-                            last_error=str(last_error) if last_error else "Unknown error"
+                            html=html,
+                            markdown=async_response.markdown,
+                            screenshot=screenshot_data,
+                            pdf=pdf_data,
+                            media=async_response.media,
+                            metadata=async_response.metadata,
+                            redirected_url=async_response.redirected_url or url,
+                            timing=time.perf_counter() - t1,
                         )
 
-                    html = sanitize_input_encode(async_response.html)
-                    screenshot_data = async_response.screenshot
-                    pdf_data = async_response.pdf
+                        # Add SSL certificate
+                        crawl_result.ssl_certificate = await get_ssl_certificate(
+                            url=url, logger=self.logger
+                        )  # Add SSL certificate
 
-                    # Create a CrawlResult
-                    crawl_result = CrawlResult(
+                        crawl_result.success = bool(html)
+                        crawl_result.session_id = getattr(crawler_config, "session_id", None)
+
+                        self.logger.success(
+                            message="{url:.50}... | Status: {status} | Total: {timing}",
+                            url=url,
+                            status=crawl_result.success,
+                            timing=time.perf_counter() - start_time,
+                            tag="CRAWL",
+                        )
+
+                        # Cache the result if needed
+                        if cache_context.should_write() and not bool(cached_result):
+                            await async_db_manager.acache_url(crawl_result)
+
+                        # Remove this task from active tasks
+                        task = asyncio.current_task()
+                        if task:
+                            async with self._task_lock:
+                                self._active_tasks.discard(task)
+                                
+                        return crawl_result
+
+                    else:
+                        # Use cached result
+                        self.logger.success(
+                            message="{url:.50}... | Status: {status} | Total: {timing}",
+                            url=url,
+                            status=bool(html),
+                            timing=time.perf_counter() - start_time,
+                            tag="CACHE",
+                        )
+
+                        cached_result.success = bool(html)
+                        cached_result.session_id = getattr(crawler_config, "session_id", None)
+                        cached_result.redirected_url = cached_result.redirected_url or url
+                        
+                        # Remove this task from active tasks
+                        task = asyncio.current_task()
+                        if task:
+                            async with self._task_lock:
+                                self._active_tasks.discard(task)
+                                
+                        return cached_result
+
+                except Exception as e:
+                    error_message = f"Error crawling {url}: {str(e)}"
+                    self.logger.error(
+                        message="{url:.50}... | Error: {error}",
                         url=url,
-                        html=html,
-                        markdown=async_response.markdown,
-                        screenshot=screenshot_data,
-                        pdf=pdf_data,
-                        media=async_response.media,
-                        metadata=async_response.metadata,
-                        redirected_url=async_response.redirected_url or url,
-                        timing=time.perf_counter() - t1,
+                        error=create_box_message(error_message, type="error"),
+                        tag="ERROR",
                     )
-
-                    # Add SSL certificate
-                    crawl_result.ssl_certificate = await get_ssl_certificate(
-                        url=url, logger=self.logger
-                    )  # Add SSL certificate
-
-                    crawl_result.success = bool(html)
-                    crawl_result.session_id = getattr(crawler_config, "session_id", None)
-
-                    self.logger.success(
-                        message="{url:.50}... | Status: {status} | Total: {timing}",
-                        url=url,
-                        status=crawl_result.success,
-                        timing=time.perf_counter() - start_time,
-                        tag="CRAWL",
-                    )
-
-                    # Cache the result if needed
-                    if cache_context.should_write() and not bool(cached_result):
-                        await async_db_manager.acache_url(crawl_result)
-
-                    # Remove this task from active tasks
-                    task = asyncio.current_task()
-                    if task:
-                        async with self._task_lock:
-                            self._active_tasks.discard(task)
-                            
-                    return crawl_result
-
-                else:
-                    # Use cached result
-                    self.logger.success(
-                        message="{url:.50}... | Status: {status} | Total: {timing}",
-                        url=url,
-                        status=bool(html),
-                        timing=time.perf_counter() - start_time,
-                        tag="CACHE",
-                    )
-
-                    cached_result.success = bool(html)
-                    cached_result.session_id = getattr(crawler_config, "session_id", None)
-                    cached_result.redirected_url = cached_result.redirected_url or url
                     
                     # Remove this task from active tasks
                     task = asyncio.current_task()
                     if task:
                         async with self._task_lock:
                             self._active_tasks.discard(task)
-                            
-                    return cached_result
 
-            except Exception as e:
-                error_message = f"Error crawling {url}: {str(e)}"
-                self.logger.error(
-                    message="{url:.50}... | Error: {error}",
-                    url=url,
-                    error=create_box_message(error_message, type="error"),
-                    tag="ERROR",
-                )
-                
-                # Remove this task from active tasks
-                task = asyncio.current_task()
-                if task:
-                    async with self._task_lock:
-                        self._active_tasks.discard(task)
-
-                return CrawlResult(
-                    url=url, html="", success=False, error_message=error_message
-                )
+                    return CrawlResult(
+                        url=url, html="", success=False, error_message=error_message
+                    )
