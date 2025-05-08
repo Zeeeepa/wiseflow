@@ -16,7 +16,12 @@ try:
 except ImportError:
     raise ImportError("LiteLLM is not installed. Please install it with 'pip install litellm'.")
 
-logger = logging.getLogger(__name__)
+# Import custom error types
+from core.utils.error_handling import LLMError, handle_error
+from core.utils.logging_config import get_logger
+
+# Use the configured logger instead of the basic one
+logger = get_logger("litellm_wrapper")
 
 class LiteLLMWrapper:
     """Wrapper for the LiteLLM library."""
@@ -32,7 +37,10 @@ class LiteLLMWrapper:
         try:
             model = model or self.default_model
             if not model:
-                raise ValueError("No model specified for generation")
+                raise LLMError("No model specified for generation", details={
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
+                })
             
             messages = [
                 {"role": "system", "content": "You are an expert information extractor."},
@@ -47,9 +55,18 @@ class LiteLLMWrapper:
             )
             
             return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"Error generating text with LiteLLM: {e}")
+        except LLMError:
+            # Re-raise LLMError instances
             raise
+        except Exception as e:
+            # Convert other exceptions to LLMError
+            error_details = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            logger.error(f"Error generating text with LiteLLM: {e}", extra=error_details)
+            raise LLMError(f"Error generating text with LiteLLM: {str(e)}", details=error_details, cause=e)
 
 def litellm_llm(messages: List[Dict[str, str]], model: str, temperature: float = 0.7, max_tokens: int = 1000, logger=None) -> str:
     """Generate text using LiteLLM."""
@@ -63,9 +80,16 @@ def litellm_llm(messages: List[Dict[str, str]], model: str, temperature: float =
         
         return response.choices[0].message.content
     except Exception as e:
+        error_details = {
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
         if logger:
-            logger.error(f"Error generating text with LiteLLM: {e}")
-        raise
+            logger.error(f"Error generating text with LiteLLM: {e}", extra=error_details)
+        
+        raise LLMError(f"Error generating text with LiteLLM: {str(e)}", details=error_details, cause=e)
 
 async def litellm_llm_async(messages: List[Dict[str, str]], model: str, temperature: float = 0.7, max_tokens: int = 1000, logger=None) -> str:
     """Generate text using LiteLLM asynchronously."""
@@ -84,6 +108,14 @@ async def litellm_llm_async(messages: List[Dict[str, str]], model: str, temperat
         
         return response.choices[0].message.content
     except Exception as e:
+        error_details = {
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
         if logger:
-            logger.error(f"Error generating text with LiteLLM async: {e}")
-        raise
+            logger.error(f"Error generating text with LiteLLM async: {e}", extra=error_details)
+        
+        # Raise a custom error
+        raise LLMError(f"Error generating text with LiteLLM: {str(e)}", details=error_details, cause=e)

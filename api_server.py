@@ -7,7 +7,6 @@ This module provides a FastAPI server for WiseFlow, enabling integration with ot
 
 import os
 import json
-import logging
 import asyncio
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
@@ -16,6 +15,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from core.export.webhook import WebhookManager, get_webhook_manager
@@ -31,6 +32,17 @@ from core.llms.advanced.specialized_prompting import (
     TASK_EXTRACTION,
     TASK_REASONING
 )
+
+# Import custom error handling and logging
+from core.utils.error_handling import (
+    WiseflowError, APIError, ValidationError, LLMError, 
+    AuthenticationError, AuthorizationError, NotFoundError,
+    handle_error, log_error
+)
+from core.utils.logging_config import get_logger, configure_logging
+
+# Set up logging with the improved configuration
+logger = get_logger("api_server")
 
 # Set up logging
 logging.basicConfig(
@@ -75,10 +87,7 @@ def verify_api_key(x_api_key: str = Header(None)):
         HTTPException: If API key is invalid
     """
     if not x_api_key or x_api_key != API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
+        raise AuthenticationError("Invalid API key")
     return True
 
 # Pydantic models for request/response validation
@@ -246,12 +255,13 @@ async def health_check():
 
 # Content processing endpoints
 @app.post("/api/v1/process", dependencies=[Depends(verify_api_key)])
-async def process_content(request: ContentRequest):
+async def process_content(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Process content using specialized prompting strategies.
     
     Args:
         request: Content processing request
+        background_tasks: Background tasks for webhook triggers
         
     Returns:
         Dict[str, Any]: The processing result
@@ -269,8 +279,15 @@ async def process_content(request: ContentRequest):
             metadata=request.metadata
         )
         
+        # Check for errors in the result
+        if "error" in result:
+            raise LLMError(result["error"], details={
+                "content_type": request.content_type,
+                "focus_point": request.focus_point,
+                "metadata": result.get("metadata", {})
+            })
+        
         # Trigger webhook for content processing
-        background_tasks = BackgroundTasks()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "content.processed",
@@ -283,20 +300,40 @@ async def process_content(request: ContentRequest):
         )
         
         return result
-    except Exception as e:
-        logger.error(f"Error processing content: {str(e)}")
+    except LLMError as e:
+        # Handle LLM errors
+        e.log()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing content: {str(e)}"
+            detail=handle_error(e, logger)
+        )
+    except WiseflowError as e:
+        # Handle other Wiseflow errors
+        e.log()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=handle_error(e, logger)
+        )
+    except Exception as e:
+        # Handle unexpected errors
+        error = APIError(f"Error processing content: {str(e)}", cause=e, details={
+            "content_type": request.content_type,
+            "focus_point": request.focus_point
+        })
+        error.log()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=handle_error(error, logger)
         )
 
 @app.post("/api/v1/batch-process", dependencies=[Depends(verify_api_key)])
-async def batch_process_content(request: BatchContentRequest):
+async def batch_process_content(request: BatchContentRequest, background_tasks: BackgroundTasks):
     """
     Process multiple items concurrently.
     
     Args:
         request: Batch content processing request
+        background_tasks: Background tasks for webhook triggers
         
     Returns:
         List[Dict[str, Any]]: The processing results
@@ -312,8 +349,15 @@ async def batch_process_content(request: BatchContentRequest):
             max_concurrency=request.max_concurrency
         )
         
+        # Check for errors in the results
+        for result in results:
+            if isinstance(result, dict) and "error" in result:
+                raise LLMError(result["error"], details={
+                    "focus_point": request.focus_point,
+                    "metadata": result.get("metadata", {})
+                })
+        
         # Trigger webhook for batch processing
-        background_tasks = BackgroundTasks()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "content.batch_processed",
@@ -325,11 +369,30 @@ async def batch_process_content(request: BatchContentRequest):
         )
         
         return results
-    except Exception as e:
-        logger.error(f"Error batch processing content: {str(e)}")
+    except LLMError as e:
+        # Handle LLM errors
+        e.log()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error batch processing content: {str(e)}"
+            detail=handle_error(e, logger)
+        )
+    except WiseflowError as e:
+        # Handle other Wiseflow errors
+        e.log()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=handle_error(e, logger)
+        )
+    except Exception as e:
+        # Handle unexpected errors
+        error = APIError(f"Error batch processing content: {str(e)}", cause=e, details={
+            "focus_point": request.focus_point,
+            "item_count": len(request.items)
+        })
+        error.log()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=handle_error(error, logger)
         )
 
 # Webhook management endpoints
@@ -643,6 +706,63 @@ async def contextual_understanding(request: ContentRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error in contextual understanding: {str(e)}"
         )
+
+# Add global exception handlers
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors."""
+    error_details = {"errors": exc.errors()}
+    error = ValidationError("Request validation error", details=error_details)
+    error.log()
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=handle_error(error, logger)
+    )
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Handle HTTP exceptions."""
+    error = APIError(exc.detail)
+    error.log()
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=handle_error(error, logger)
+    )
+
+@app.exception_handler(WiseflowError)
+async def wiseflow_exception_handler(request: Request, exc: WiseflowError):
+    """Handle Wiseflow custom exceptions."""
+    exc.log()
+    
+    # Map error types to status codes
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    if isinstance(exc, ValidationError):
+        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    elif isinstance(exc, AuthenticationError):
+        status_code = status.HTTP_401_UNAUTHORIZED
+    elif isinstance(exc, AuthorizationError):
+        status_code = status.HTTP_403_FORBIDDEN
+    elif isinstance(exc, NotFoundError):
+        status_code = status.HTTP_404_NOT_FOUND
+    
+    return JSONResponse(
+        status_code=status_code,
+        content=handle_error(exc, logger)
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle general exceptions."""
+    # Convert to APIError for consistent handling
+    error = APIError(f"Unexpected error: {str(exc)}", cause=exc)
+    error.log(log_level="critical")
+    
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=handle_error(error, logger)
+    )
 
 if __name__ == "__main__":
     # Run the FastAPI app with uvicorn
