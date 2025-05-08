@@ -10,6 +10,9 @@ from typing import Dict, List, Any, Optional, Union
 import json
 import asyncio
 
+# Import the config system
+from core.config import config, get_str_config
+
 try:
     import litellm
     from litellm import completion
@@ -23,7 +26,7 @@ class LiteLLMWrapper:
     
     def __init__(self, default_model: Optional[str] = None):
         """Initialize the LiteLLM wrapper."""
-        self.default_model = default_model or os.environ.get("PRIMARY_MODEL", "")
+        self.default_model = default_model or get_str_config("PRIMARY_MODEL", "")
         if not self.default_model:
             logger.warning("No default model specified for LiteLLM wrapper")
     

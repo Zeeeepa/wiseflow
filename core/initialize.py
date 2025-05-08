@@ -11,6 +11,7 @@ import asyncio
 import signal
 import logging
 import time
+import traceback
 from typing import Dict, Any, Optional, List, Callable, Awaitable
 
 from core.imports import (
@@ -33,6 +34,9 @@ from core.imports import (
     initialize_all_connectors,
     ConnectorBase
 )
+
+# Import validate_config function directly
+from core.config import validate_config
 
 class WiseflowSystem:
     """
@@ -88,6 +92,15 @@ class WiseflowSystem:
         self.logger.info("Starting Wiseflow system...")
         
         try:
+            # Validate configuration first
+            try:
+                validate_config()
+                self.logger.info("Configuration validation successful")
+            except ConfigurationError as e:
+                self.logger.error(f"Configuration validation failed: {e}")
+                self.logger.error("Please check your environment variables or .env file")
+                return False
+            
             # Register signal handlers for graceful shutdown
             self._register_signal_handlers()
             
