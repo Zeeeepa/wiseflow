@@ -7,6 +7,7 @@ import asyncio
 import gc
 import logging
 import traceback
+import weakref
 
 # from contextlib import nullcontext, asynccontextmanager
 from contextlib import asynccontextmanager
@@ -41,6 +42,9 @@ class AsyncWebCrawler:
     _max_memory_history_size = 10
     # Domain-specific cooldown tracking
     _domain_cooldowns: Dict[str, float] = {}
+    # Domain-specific rate limiting
+    _domain_request_counts: Dict[str, int] = {}
+    _domain_rate_limits: Dict[str, Tuple[int, int]] = {}  # (requests, seconds)
 
     def __init__(
         self,
@@ -53,6 +57,7 @@ class AsyncWebCrawler:
         cooldown_period: int = 300,  # 5 minutes in seconds
         max_retries: int = 3,
         retry_delay: int = 5,
+        default_rate_limit: Tuple[int, int] = (10, 60),  # 10 requests per 60 seconds
         **kwargs,
     ):
         """
@@ -68,6 +73,7 @@ class AsyncWebCrawler:
             cooldown_period: How long to wait during cooldown (in seconds)
             max_retries: Maximum number of retries for failed requests
             retry_delay: Delay between retries (in seconds)
+            default_rate_limit: Default rate limit as (requests, seconds)
             **kwargs: Additional arguments for backwards compatibility
         """
 
@@ -77,6 +83,7 @@ class AsyncWebCrawler:
         self.cooldown_period = cooldown_period
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.default_rate_limit = default_rate_limit
         self.browser_config = config or BrowserConfig()
         
         # Initialize logger first since other components may need it
@@ -106,6 +113,7 @@ class AsyncWebCrawler:
         # Thread safety setup
         self._lock = asyncio.Lock() if thread_safe else None
         self._memory_monitor_task = None
+        self._rate_limit_locks = {}
 
         # Initialize directories
         self.crawl4ai_folder = os.path.join(base_directory, ".craw4ai-de")
@@ -120,7 +128,7 @@ class AsyncWebCrawler:
         self._memory_history = []
         
         # Track active crawl tasks
-        self._active_tasks = set()
+        self._active_tasks = weakref.WeakSet()
         self._task_lock = asyncio.Lock()
 
     async def _monitor_memory_usage(self):
@@ -157,11 +165,28 @@ class AsyncWebCrawler:
                 if avg_memory > self.memory_warning_percent:
                     self.logger.warning("Triggering garbage collection due to high memory usage")
                     gc.collect()
+                    
+                    # If memory is still high after GC, consider more aggressive cleanup
+                    if psutil.virtual_memory().percent > self.memory_threshold_percent:
+                        self.logger.warning("Memory still high after garbage collection, performing additional cleanup")
+                        # Clear caches and release resources
+                        self._domain_last_hit.clear()
+                        self._domain_cooldowns.clear()
+                        self._domain_request_counts.clear()
+                        await self._clear_browser_cache()
         except asyncio.CancelledError:
             self.logger.info("Memory monitor task cancelled")
         except Exception as e:
             self.logger.error(f"Error in memory monitor: {e}")
             traceback.print_exc()
+
+    async def _clear_browser_cache(self):
+        """Clear browser cache to free up memory"""
+        try:
+            await self.crawler_strategy.clear_cache()
+            self.logger.info("Browser cache cleared")
+        except Exception as e:
+            self.logger.error(f"Error clearing browser cache: {e}")
 
     async def start(self):
         """
@@ -201,13 +226,15 @@ class AsyncWebCrawler:
         
         # Cancel any active tasks
         async with self._task_lock:
-            for task in self._active_tasks:
+            for task in list(self._active_tasks):
                 if not task.done():
                     task.cancel()
             
             # Wait for all tasks to complete or be cancelled
             if self._active_tasks:
-                await asyncio.gather(*self._active_tasks, return_exceptions=True)
+                pending = [task for task in self._active_tasks if not task.done()]
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
             self._active_tasks.clear()
         
         # Close crawler strategy
@@ -275,7 +302,7 @@ class AsyncWebCrawler:
             # Try to free memory
             gc.collect()
             
-            # Restart crawler if memory is still high
+            # If memory is still high, try more aggressive cleanup
             if psutil.virtual_memory().percent >= self.memory_threshold_percent:
                 self.logger.warning("Memory still high after garbage collection, restarting crawler")
                 await self.close()
@@ -285,6 +312,55 @@ class AsyncWebCrawler:
             return False
             
         return True
+
+    async def _check_rate_limit(self, domain: str) -> bool:
+        """
+        Check if a domain has exceeded its rate limit.
+        
+        Args:
+            domain: The domain to check
+            
+        Returns:
+            bool: True if request can proceed, False if rate limited
+        """
+        # Get rate limit for this domain (or use default)
+        rate_limit = self._domain_rate_limits.get(domain, self.default_rate_limit)
+        max_requests, period = rate_limit
+        
+        # Get or create lock for this domain
+        if domain not in self._rate_limit_locks:
+            self._rate_limit_locks[domain] = asyncio.Lock()
+            
+        # Acquire lock to update request count
+        async with self._rate_limit_locks[domain]:
+            current_time = time.time()
+            
+            # Initialize or clean up old request counts
+            if domain not in self._domain_request_counts:
+                self._domain_request_counts[domain] = 1
+                self._domain_last_hit[domain] = current_time
+                return True
+                
+            # Check if we've exceeded the rate limit
+            if self._domain_request_counts[domain] >= max_requests:
+                # Calculate time to wait
+                time_since_first = current_time - self._domain_last_hit[domain]
+                if time_since_first < period:
+                    wait_time = period - time_since_first
+                    self.logger.warning(
+                        f"Rate limit exceeded for {domain}: {max_requests} requests per {period}s. "
+                        f"Waiting {wait_time:.1f}s"
+                    )
+                    return False
+                else:
+                    # Reset counter if period has passed
+                    self._domain_request_counts[domain] = 1
+                    self._domain_last_hit[domain] = current_time
+                    return True
+            else:
+                # Increment counter
+                self._domain_request_counts[domain] += 1
+                return True
 
     async def arun(
         self,
@@ -324,6 +400,22 @@ class AsyncWebCrawler:
                     html="",
                     success=False,
                     error_message="Crawler is in cooldown due to high memory usage"
+                )
+                
+            # Extract domain for rate limiting
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(url).netloc
+            except:
+                domain = "unknown"
+                
+            # Check rate limit
+            if not await self._check_rate_limit(domain):
+                return CrawlResult(
+                    url=url,
+                    html="",
+                    success=False,
+                    error_message=f"Rate limit exceeded for domain: {domain}"
                 )
 
             # Track this task
@@ -380,7 +472,6 @@ class AsyncWebCrawler:
                             )
 
                     # Update domain last hit time
-                    domain = get_domain_from_url(url)
                     self._domain_last_hit[domain] = time.time()
 
                     ##############################

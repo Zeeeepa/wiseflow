@@ -1,7 +1,7 @@
 import os
 import aiosqlite
 import asyncio
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from contextlib import asynccontextmanager
 import json  # Added for serialization/deserialization
 from .utils import ensure_content_dirs, generate_content_hash
@@ -9,6 +9,7 @@ from .models import CrawlResult
 import aiofiles
 from .async_logger import AsyncLogger
 from .utils import get_error_context, create_box_message
+import time
 
 # Set up logging
 # logging.basicConfig(level=logging.INFO)
@@ -23,7 +24,7 @@ DB_PATH = os.path.join(base_directory, "crawl4ai.db")
 
 
 class AsyncDatabaseManager:
-    def __init__(self, pool_size: int = 10, max_retries: int = 3):
+    def __init__(self, pool_size: int = 10, max_retries: int = 3, base_directory: str = base_directory, logger: Optional[AsyncLogger] = None):
         self.db_path = DB_PATH
         self.content_paths = ensure_content_dirs(os.path.dirname(DB_PATH))
         self.pool_size = pool_size
@@ -33,11 +34,21 @@ class AsyncDatabaseManager:
         self.init_lock = asyncio.Lock()
         self.connection_semaphore = asyncio.Semaphore(pool_size)
         self._initialized = False
-        self.logger = AsyncLogger(
+        self.logger = logger or AsyncLogger(
             log_file=os.path.join(base_directory, ".crawl4ai", "crawler_db.log"),
             verbose=False,
             tag_width=10,
         )
+        
+        # Cache for frequently accessed content
+        self.content_cache = {}
+        self.cache_size = 100  # Maximum number of items to cache
+        self.cache_lock = asyncio.Lock()
+        
+        # Query cache
+        self.query_cache = {}
+        self.query_cache_ttl = 300  # 5 minutes TTL for cached queries
+        self.query_cache_lock = asyncio.Lock()
 
     async def initialize(self):
         """Initialize the database and connection pool"""
@@ -51,6 +62,12 @@ class AsyncDatabaseManager:
 
             # Verify the table exists
             async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
+                await db.execute("PRAGMA journal_mode = WAL")
+                await db.execute("PRAGMA synchronous = NORMAL")
+                await db.execute("PRAGMA cache_size = 10000")
+                await db.execute("PRAGMA temp_store = MEMORY")
+                await db.execute("PRAGMA mmap_size = 30000000000")
+                
                 async with db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='crawled_data'"
                 ) as cursor:
@@ -58,6 +75,9 @@ class AsyncDatabaseManager:
                     if not result:
                         raise Exception("crawled_data table was not created")
 
+                # Create index for faster lookups
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_url ON crawled_data(url)")
+                await db.commit()
 
             self.logger.success(
                 "Database initialization completed successfully", tag="COMPLETE"
@@ -81,6 +101,13 @@ class AsyncDatabaseManager:
             for conn in self.connection_pool.values():
                 await conn.close()
             self.connection_pool.clear()
+        
+        # Clear caches
+        async with self.cache_lock:
+            self.content_cache.clear()
+        
+        async with self.query_cache_lock:
+            self.query_cache.clear()
 
     @asynccontextmanager
     async def get_connection(self):
@@ -116,7 +143,11 @@ class AsyncDatabaseManager:
                     try:
                         conn = await aiosqlite.connect(self.db_path, timeout=30.0)
                         await conn.execute("PRAGMA journal_mode = WAL")
+                        await conn.execute("PRAGMA synchronous = NORMAL")
                         await conn.execute("PRAGMA busy_timeout = 5000")
+                        await conn.execute("PRAGMA cache_size = 10000")
+                        await conn.execute("PRAGMA temp_store = MEMORY")
+                        await conn.execute("PRAGMA mmap_size = 30000000000")
 
                         # Verify database structure
                         async with conn.execute(
@@ -206,6 +237,12 @@ class AsyncDatabaseManager:
     async def ainit_db(self):
         """Initialize database schema"""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
+            await db.execute("PRAGMA journal_mode = WAL")
+            await db.execute("PRAGMA synchronous = NORMAL")
+            await db.execute("PRAGMA cache_size = 10000")
+            await db.execute("PRAGMA temp_store = MEMORY")
+            await db.execute("PRAGMA mmap_size = 30000000000")
+            
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS crawled_data (
@@ -224,11 +261,20 @@ class AsyncDatabaseManager:
                 )
             """
             )
+            
+            # Create index for faster lookups
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_url ON crawled_data(url)")
             await db.commit()
 
     async def update_db_schema(self):
         """Update database schema if needed"""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
+            await db.execute("PRAGMA journal_mode = WAL")
+            await db.execute("PRAGMA synchronous = NORMAL")
+            await db.execute("PRAGMA cache_size = 10000")
+            await db.execute("PRAGMA temp_store = MEMORY")
+            await db.execute("PRAGMA mmap_size = 30000000000")
+            
             cursor = await db.execute("PRAGMA table_info(crawled_data)")
             columns = await cursor.fetchall()
             column_names = [column[1] for column in columns]
@@ -264,8 +310,19 @@ class AsyncDatabaseManager:
             params={"column": new_column},
         )
 
-    async def aget_cached_url(self, url: str) -> Optional[CrawlResult]:
+    async def aget_url_cache(self, url: str) -> Optional[CrawlResult]:
         """Retrieve cached URL data as CrawlResult"""
+        # Check query cache first
+        cache_key = f"url_cache:{url}"
+        async with self.query_cache_lock:
+            if cache_key in self.query_cache:
+                cache_entry = self.query_cache[cache_key]
+                # Check if cache entry is still valid
+                if time.time() - cache_entry["timestamp"] < self.query_cache_ttl:
+                    return cache_entry["result"]
+                else:
+                    # Remove expired entry
+                    del self.query_cache[cache_key]
 
         async def _get(db):
             async with db.execute(
@@ -341,7 +398,26 @@ class AsyncDatabaseManager:
                 else:
                     filtered_dict["markdown"] = ""
 
-                return CrawlResult(**filtered_dict)
+                result = CrawlResult(**filtered_dict)
+                
+                # Cache the result
+                async with self.query_cache_lock:
+                    self.query_cache[cache_key] = {
+                        "result": result,
+                        "timestamp": time.time()
+                    }
+                    
+                    # Limit cache size
+                    if len(self.query_cache) > self.cache_size * 2:
+                        # Remove oldest entries
+                        sorted_cache = sorted(
+                            self.query_cache.items(),
+                            key=lambda x: x[1]["timestamp"]
+                        )
+                        for k, _ in sorted_cache[:len(sorted_cache) // 2]:
+                            del self.query_cache[k]
+                
+                return result
 
         try:
             return await self.execute_with_retry(_get)
@@ -406,6 +482,12 @@ class AsyncDatabaseManager:
                     json.dumps(result.downloaded_files or []),
                 ),
             )
+            
+            # Update query cache
+            cache_key = f"url_cache:{result.url}"
+            async with self.query_cache_lock:
+                if cache_key in self.query_cache:
+                    del self.query_cache[cache_key]
 
         try:
             await self.execute_with_retry(_cache)
@@ -419,11 +501,31 @@ class AsyncDatabaseManager:
 
     async def aget_total_count(self) -> int:
         """Get total number of cached URLs"""
+        # Check query cache first
+        cache_key = "total_count"
+        async with self.query_cache_lock:
+            if cache_key in self.query_cache:
+                cache_entry = self.query_cache[cache_key]
+                # Check if cache entry is still valid
+                if time.time() - cache_entry["timestamp"] < self.query_cache_ttl:
+                    return cache_entry["result"]
+                else:
+                    # Remove expired entry
+                    del self.query_cache[cache_key]
 
         async def _count(db):
             async with db.execute("SELECT COUNT(*) FROM crawled_data") as cursor:
                 result = await cursor.fetchone()
-                return result[0] if result else 0
+                count = result[0] if result else 0
+                
+                # Cache the result
+                async with self.query_cache_lock:
+                    self.query_cache[cache_key] = {
+                        "result": count,
+                        "timestamp": time.time()
+                    }
+                
+                return count
 
         try:
             return await self.execute_with_retry(_count)
@@ -441,6 +543,13 @@ class AsyncDatabaseManager:
 
         async def _clear(db):
             await db.execute("DELETE FROM crawled_data")
+            
+            # Clear caches
+            async with self.cache_lock:
+                self.content_cache.clear()
+            
+            async with self.query_cache_lock:
+                self.query_cache.clear()
 
         try:
             await self.execute_with_retry(_clear)
@@ -457,6 +566,13 @@ class AsyncDatabaseManager:
 
         async def _flush(db):
             await db.execute("DROP TABLE IF EXISTS crawled_data")
+            
+            # Clear caches
+            async with self.cache_lock:
+                self.content_cache.clear()
+            
+            async with self.query_cache_lock:
+                self.query_cache.clear()
 
         try:
             await self.execute_with_retry(_flush)
@@ -480,6 +596,18 @@ class AsyncDatabaseManager:
         if not os.path.exists(file_path):
             async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
                 await f.write(content)
+                
+            # Update content cache
+            async with self.cache_lock:
+                cache_key = f"{content_type}:{content_hash}"
+                self.content_cache[cache_key] = content
+                
+                # Limit cache size
+                if len(self.content_cache) > self.cache_size:
+                    # Remove random entries to avoid cache thrashing
+                    keys_to_remove = list(self.content_cache.keys())[:len(self.content_cache) // 4]
+                    for k in keys_to_remove:
+                        del self.content_cache[k]
 
         return content_hash
 
@@ -489,11 +617,30 @@ class AsyncDatabaseManager:
         """Load content from filesystem by hash"""
         if not content_hash:
             return None
+            
+        # Check cache first
+        cache_key = f"{content_type}:{content_hash}"
+        async with self.cache_lock:
+            if cache_key in self.content_cache:
+                return self.content_cache[cache_key]
 
         file_path = os.path.join(self.content_paths[content_type], content_hash)
         try:
             async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
-                return await f.read()
+                content = await f.read()
+                
+                # Update cache
+                async with self.cache_lock:
+                    self.content_cache[cache_key] = content
+                    
+                    # Limit cache size
+                    if len(self.content_cache) > self.cache_size:
+                        # Remove random entries to avoid cache thrashing
+                        keys_to_remove = list(self.content_cache.keys())[:len(self.content_cache) // 4]
+                        for k in keys_remove:
+                            del self.content_cache[k]
+                
+                return content
         except:
             self.logger.error(
                 message="Failed to load content: {file_path}",
@@ -502,6 +649,42 @@ class AsyncDatabaseManager:
                 params={"file_path": file_path},
             )
             return None
+
+    async def get_cached_urls_batch(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """Get a batch of cached URLs with pagination support"""
+        async def _get_batch(db):
+            async with db.execute(
+                "SELECT url, success, metadata FROM crawled_data LIMIT ? OFFSET ?",
+                (limit, offset)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                
+                result = []
+                for row in rows:
+                    url, success, metadata_str = row
+                    try:
+                        metadata = json.loads(metadata_str) if metadata_str else {}
+                    except json.JSONDecodeError:
+                        metadata = {}
+                        
+                    result.append({
+                        "url": url,
+                        "success": bool(success),
+                        "metadata": metadata
+                    })
+                
+                return result
+                
+        try:
+            return await self.execute_with_retry(_get_batch)
+        except Exception as e:
+            self.logger.error(
+                message="Error getting cached URLs batch: {error}",
+                tag="ERROR",
+                force_verbose=True,
+                params={"error": str(e)},
+            )
+            return []
 
 
 # Create a singleton instance
