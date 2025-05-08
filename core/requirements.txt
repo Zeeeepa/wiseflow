@@ -4,6 +4,6 @@
 # Include base requirements
 -r ../requirements-base.txt
 
-# For optional features, install with:
-# pip install -r ../requirements-optional.txt
+# No additional core-specific dependencies at this time
+# If core-specific dependencies are needed in the future, add them here
 

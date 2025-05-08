@@ -1,3 +1,6 @@
+# Development dependencies for WiseFlow
+# These are not required for running the application but are useful for development
+
 # Include base requirements
 -r requirements-base.txt
 

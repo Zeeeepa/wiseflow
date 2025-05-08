@@ -10,3 +10,7 @@
 # For development, install with:
 # pip install -r requirements-dev.txt
 
+# For specific modules, see their respective requirements files:
+# - core/requirements.txt
+# - weixin_mp/requirements.txt
+
