@@ -154,10 +154,15 @@ from core.event_system import (
     EventType,
     subscribe,
     unsubscribe,
+    unsubscribe_by_source,
     publish,
     publish_sync,
     get_history,
-    clear_history
+    clear_history,
+    prune_history,
+    set_max_history_size,
+    set_history_retention_period,
+    shutdown
 )
 
 # Resource monitoring
