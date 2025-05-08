@@ -10,11 +10,14 @@ from typing import Dict, List, Any, Optional, Union
 import json
 import asyncio
 
+# Try to import litellm, but provide a fallback if it's not available
 try:
     import litellm
     from litellm import completion
+    LITELLM_AVAILABLE = True
 except ImportError:
-    raise ImportError("LiteLLM is not installed. Please install it with 'pip install litellm'.")
+    LITELLM_AVAILABLE = False
+    logging.warning("LiteLLM is not installed. Some functionality will be limited.")
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +26,20 @@ class LiteLLMWrapper:
     
     def __init__(self, default_model: Optional[str] = None):
         """Initialize the LiteLLM wrapper."""
+        if not LITELLM_AVAILABLE:
+            logger.warning("LiteLLM is not available. Please install it with 'pip install litellm'.")
+        
         self.default_model = default_model or os.environ.get("PRIMARY_MODEL", "")
         if not self.default_model:
             logger.warning("No default model specified for LiteLLM wrapper")
     
     def generate(self, prompt: str, model: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 1000) -> str:
         """Generate text using LiteLLM."""
+        if not LITELLM_AVAILABLE:
+            error_msg = "LiteLLM is not installed. Please install it with 'pip install litellm'."
+            logger.error(error_msg)
+            raise ImportError(error_msg)
+        
         try:
             model = model or self.default_model
             if not model:
@@ -53,6 +64,12 @@ class LiteLLMWrapper:
 
 def litellm_llm(messages: List[Dict[str, str]], model: str, temperature: float = 0.7, max_tokens: int = 1000, logger=None) -> str:
     """Generate text using LiteLLM."""
+    if not LITELLM_AVAILABLE:
+        error_msg = "LiteLLM is not installed. Please install it with 'pip install litellm'."
+        if logger:
+            logger.error(error_msg)
+        raise ImportError(error_msg)
+    
     try:
         response = completion(
             model=model,
@@ -69,6 +86,12 @@ def litellm_llm(messages: List[Dict[str, str]], model: str, temperature: float =
 
 async def litellm_llm_async(messages: List[Dict[str, str]], model: str, temperature: float = 0.7, max_tokens: int = 1000, logger=None) -> str:
     """Generate text using LiteLLM asynchronously."""
+    if not LITELLM_AVAILABLE:
+        error_msg = "LiteLLM is not installed. Please install it with 'pip install litellm'."
+        if logger:
+            logger.error(error_msg)
+        raise ImportError(error_msg)
+    
     try:
         # Run in a thread to avoid blocking the event loop
         loop = asyncio.get_event_loop()

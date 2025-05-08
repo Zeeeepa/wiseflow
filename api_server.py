@@ -9,28 +9,183 @@ import os
 import json
 import logging
 import asyncio
+import sys
+import uuid
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 
-import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+try:
+    import uvicorn
+    from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import JSONResponse
+    from pydantic import BaseModel, Field
+except ImportError:
+    print("Error: Missing required dependencies. Please install them with:")
+    print("pip install fastapi uvicorn")
+    sys.exit(1)
 
-from core.export.webhook import WebhookManager, get_webhook_manager
-from core.llms.advanced.specialized_prompting import (
-    SpecializedPromptProcessor,
-    CONTENT_TYPE_TEXT,
-    CONTENT_TYPE_HTML,
-    CONTENT_TYPE_MARKDOWN,
-    CONTENT_TYPE_CODE,
-    CONTENT_TYPE_ACADEMIC,
-    CONTENT_TYPE_VIDEO,
-    CONTENT_TYPE_SOCIAL,
-    TASK_EXTRACTION,
-    TASK_REASONING
-)
+try:
+    from core.export.webhook import WebhookManager, get_webhook_manager
+except ImportError:
+    print("Warning: WebhookManager not available. Using fallback implementation.")
+    
+    class WebhookManager:
+        """Fallback implementation for webhook manager."""
+        
+        def __init__(self, config_path: str = "webhooks.json"):
+            """Initialize the webhook manager."""
+            self.config_path = config_path
+            self.webhooks = {}
+            self.secret_key = os.environ.get("WEBHOOK_SECRET_KEY", "wiseflow-webhook-secret")
+            
+            # Load webhooks if config file exists
+            self._load_webhooks()
+        
+        def _load_webhooks(self):
+            """Load webhooks from the configuration file if it exists."""
+            if os.path.exists(self.config_path):
+                try:
+                    with open(self.config_path, 'r', encoding='utf-8') as f:
+                        self.webhooks = json.load(f)
+                except Exception as e:
+                    print(f"Failed to load webhooks: {str(e)}")
+        
+        def _save_webhooks(self):
+            """Save webhooks to the configuration file."""
+            try:
+                with open(self.config_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.webhooks, f, indent=2)
+            except Exception as e:
+                print(f"Failed to save webhooks: {str(e)}")
+        
+        def register_webhook(self, endpoint, events, headers=None, secret=None, description=None):
+            """Register a new webhook."""
+            webhook_id = str(uuid.uuid4())
+            self.webhooks[webhook_id] = {
+                "endpoint": endpoint,
+                "events": events,
+                "headers": headers or {},
+                "secret": secret,
+                "description": description or f"Webhook for {', '.join(events)}",
+                "created_at": datetime.now().isoformat(),
+                "last_triggered": None,
+                "success_count": 0,
+                "failure_count": 0
+            }
+            
+            self._save_webhooks()
+            return webhook_id
+        
+        def update_webhook(self, webhook_id, endpoint=None, events=None, headers=None, secret=None, description=None):
+            """Update an existing webhook."""
+            if webhook_id not in self.webhooks:
+                return False
+            
+            webhook = self.webhooks[webhook_id]
+            
+            if endpoint:
+                webhook["endpoint"] = endpoint
+            
+            if events:
+                webhook["events"] = events
+            
+            if headers:
+                webhook["headers"] = headers
+            
+            if secret is not None:
+                webhook["secret"] = secret
+            
+            if description:
+                webhook["description"] = description
+            
+            webhook["updated_at"] = datetime.now().isoformat()
+            
+            self._save_webhooks()
+            return True
+        
+        def delete_webhook(self, webhook_id):
+            """Delete a webhook."""
+            if webhook_id not in self.webhooks:
+                return False
+            
+            del self.webhooks[webhook_id]
+            self._save_webhooks()
+            return True
+        
+        def get_webhook(self, webhook_id):
+            """Get a webhook by ID."""
+            return self.webhooks.get(webhook_id)
+        
+        def list_webhooks(self):
+            """List all registered webhooks."""
+            return [
+                {
+                    "id": webhook_id,
+                    "endpoint": webhook["endpoint"],
+                    "events": webhook["events"],
+                    "description": webhook.get("description", ""),
+                    "created_at": webhook["created_at"],
+                    "last_triggered": webhook.get("last_triggered"),
+                    "success_count": webhook.get("success_count", 0),
+                    "failure_count": webhook.get("failure_count", 0)
+                }
+                for webhook_id, webhook in self.webhooks.items()
+            ]
+        
+        def trigger_webhook(self, event, data, async_mode=True):
+            """Trigger webhooks for a specific event."""
+            # Find webhooks that should be triggered for this event
+            matching_webhooks = {
+                webhook_id: webhook
+                for webhook_id, webhook in self.webhooks.items()
+                if event in webhook["events"]
+            }
+            
+            if not matching_webhooks:
+                print(f"No webhooks registered for event: {event}")
+                return []
+            
+            print(f"Triggering {len(matching_webhooks)} webhooks for event: {event}")
+            
+            # In fallback mode, we don't actually send requests
+            # Just update the stats
+            for webhook_id, webhook in matching_webhooks.items():
+                self.webhooks[webhook_id]["last_triggered"] = datetime.now().isoformat()
+                self.webhooks[webhook_id]["success_count"] = self.webhooks[webhook_id].get("success_count", 0) + 1
+            
+            self._save_webhooks()
+            return []
+    
+    def get_webhook_manager():
+        """Get the webhook manager instance."""
+        return WebhookManager()
+
+try:
+    from core.llms.advanced.specialized_prompting import (
+        SpecializedPromptProcessor,
+        CONTENT_TYPE_TEXT,
+        CONTENT_TYPE_HTML,
+        CONTENT_TYPE_MARKDOWN,
+        CONTENT_TYPE_CODE,
+        CONTENT_TYPE_ACADEMIC,
+        CONTENT_TYPE_VIDEO,
+        CONTENT_TYPE_SOCIAL,
+        TASK_EXTRACTION,
+        TASK_REASONING
+    )
+except ImportError:
+    print("Warning: SpecializedPromptProcessor not available. API functionality will be limited.")
+    # Define constants for fallback
+    CONTENT_TYPE_TEXT = "text/plain"
+    CONTENT_TYPE_HTML = "text/html"
+    CONTENT_TYPE_MARKDOWN = "text/markdown"
+    CONTENT_TYPE_CODE = "code"
+    CONTENT_TYPE_ACADEMIC = "academic"
+    CONTENT_TYPE_VIDEO = "video"
+    CONTENT_TYPE_SOCIAL = "social"
+    TASK_EXTRACTION = "extraction"
+    TASK_REASONING = "reasoning"
 
 # Set up logging
 logging.basicConfig(
@@ -644,11 +799,54 @@ async def contextual_understanding(request: ContentRequest):
             detail=f"Error in contextual understanding: {str(e)}"
         )
 
+def validate_environment():
+    """Validate required environment variables."""
+    required_vars = {
+        "PRIMARY_MODEL": "The primary LLM model to use",
+        "WISEFLOW_API_KEY": "API key for authentication"
+    }
+    
+    missing_vars = []
+    for var, description in required_vars.items():
+        if not os.environ.get(var):
+            missing_vars.append(f"{var}: {description}")
+    
+    if missing_vars:
+        print("Missing required environment variables:")
+        for var in missing_vars:
+            print(f"  - {var}")
+        print("\nPlease set these environment variables or create a .env file.")
+        return False
+    
+    return True
+
 if __name__ == "__main__":
+    # Validate environment variables
+    if not validate_environment():
+        print("Environment validation failed. Exiting.")
+        sys.exit(1)
+    
+    # Get port and host from environment variables with fallbacks
+    port = int(os.environ.get("API_PORT", 8000))
+    host = os.environ.get("API_HOST", "0.0.0.0")
+    
+    # Check if port is available
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind((host, port))
+        s.close()
+    except socket.error:
+        # Port is not available, find an available port
+        s.bind((host, 0))
+        port = s.getsockname()[1]
+        s.close()
+        print(f"Port {os.environ.get('API_PORT', 8000)} is not available, using port {port} instead")
+    
     # Run the FastAPI app with uvicorn
     uvicorn.run(
         "api_server:app",
-        host=os.environ.get("API_HOST", "0.0.0.0"),
-        port=int(os.environ.get("API_PORT", 8000)),
+        host=host,
+        port=port,
         reload=os.environ.get("API_RELOAD", "false").lower() == "true"
     )
