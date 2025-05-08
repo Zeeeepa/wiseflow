@@ -1,37 +1,9 @@
-loguru
-openai
-pocketbase
-pydantic
-#json_repair==0.*
-requests
-feedparser==6.0.11
-aiosqlite~=0.20
-lxml~=5.3
-pillow~=10.4
-playwright>=1.49.0
-python-dotenv~=1.0
-requests~=2.26
-beautifulsoup4~=4.12
-tf-playwright-stealth>=1.1.0
-xxhash~=3.4
-aiofiles>=24.1.0
-colorama~=0.4
-snowballstemmer~=2.2
-pydantic>=2.10
-pyOpenSSL>=24.3.0
-psutil>=6.1.1
-rich>=13.9.4
-cssselect>=1.2.0
-faust-cchardet>=2.1.19
-pdf2image
-aiohttp>=3.11.11
-packaging
-fake-useragent>=2.0.3
-# Dependencies for multimodal analysis
-scikit-learn>=1.3.0
-matplotlib>=3.7.0
-networkx>=3.0
-scipy>=1.10.0
-numpy>=1.24.0
-pandas>=2.0.0
-seaborn>=0.12.0
+# Core module specific dependencies
+# These are in addition to the base requirements
+
+# Include base requirements
+-r ../requirements-base.txt
+
+# For optional features, install with:
+# pip install -r ../requirements-optional.txt
+

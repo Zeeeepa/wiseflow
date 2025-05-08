@@ -1,0 +1,22 @@
+# Include base requirements
+-r requirements-base.txt
+
+# Optional LLM integrations
+litellm>=1.0.0,<2.0.0  # For multiple LLM provider support
+langchain>=0.1.0,<1.0.0  # For advanced LLM workflows
+langchain-core>=0.1.0,<1.0.0  # Core components for langchain
+langgraph>=0.1.0,<1.0.0  # For graph-based LLM workflows
+
+# Optional document export
+reportlab>=4.0.0,<5.0.0  # For PDF generation
+weasyprint>=60.0,<61.0  # For HTML to PDF conversion
+
+# Optional API integrations
+googleapiclient>=2.0.0,<3.0.0  # For Google API integration
+
+# Optional messaging
+websockets>=12.0,<13.0  # For WebSocket support
+
+# Optional database connectors
+# Add any database connectors here
+

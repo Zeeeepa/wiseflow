@@ -100,99 +100,40 @@ wiseflow/
 - Python 3.8 or higher
 - Required Python packages (see `requirements.txt`)
 
+## Dependencies
+
+WiseFlow uses a modular dependency management approach to ensure compatibility and prevent runtime errors:
+
+- `requirements.txt`: Main entry point that includes base requirements
+- `requirements-base.txt`: Core dependencies required for basic functionality
+- `requirements-optional.txt`: Optional dependencies for extended features
+- `requirements-dev.txt`: Dependencies needed for development and testing
+
+Module-specific requirements:
+- `weixin_mp/requirements.txt`: Dependencies specific to the WeChat Mini Program module
+- `core/requirements.txt`: Dependencies specific to the core module
+
+For detailed information about dependencies, see [DEPENDENCIES.md](DEPENDENCIES.md).
+
+### Dependency Management
+
+WiseFlow includes a dependency management script to help maintain dependencies:
+
+```bash
+# Check for outdated packages
+python scripts/dependency_check.py --check-outdated
+
+# Find unused dependencies
+python scripts/dependency_check.py --find-unused
+
+# Find missing dependencies
+python scripts/dependency_check.py --find-missing
+
+# Validate version constraints
+python scripts/dependency_check.py --validate-versions
+
+# Run all checks
+python scripts/dependency_check.py --all
+```
+
 ### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Zeeeepa/wiseflow.git
-   cd wiseflow
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Set up environment variables:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-### Running the System
-
-1. Start the API server:
-   ```bash
-   python api_server.py
-   ```
-
-2. Start the task processor:
-   ```bash
-   python core/run_task.py
-   ```
-
-3. Start the dashboard:
-   ```bash
-   python dashboard/main.py
-   ```
-
-## API Usage
-
-The WiseFlow API provides endpoints for processing content, managing webhooks, and integrating with other systems.
-
-Example API request:
-
-```python
-import requests
-import json
-
-url = "http://localhost:8000/api/v1/process"
-headers = {
-    "Content-Type": "application/json",
-    "X-API-Key": "your-api-key"
-}
-data = {
-    "content": "Your content here...",
-    "focus_point": "What information to extract",
-    "explanation": "Additional context",
-    "content_type": "text/plain",
-    "use_multi_step_reasoning": True
-}
-
-response = requests.post(url, headers=headers, data=json.dumps(data))
-result = response.json()
-print(result)
-```
-
-## Plugin Development
-
-WiseFlow can be extended with custom plugins for connectors, processors, and analyzers.
-
-Example connector plugin:
-
-```python
-from core.connectors import ConnectorBase, DataItem
-
-class CustomConnector(ConnectorBase):
-    name = "custom_connector"
-    description = "Custom data source connector"
-    source_type = "custom"
-    
-    def initialize(self) -> bool:
-        # Initialize the connector
-        return True
-    
-    def collect(self, params=None) -> List[DataItem]:
-        # Collect data from the source
-        # ...
-        return data_items
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
