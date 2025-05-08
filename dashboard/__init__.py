@@ -2,10 +2,37 @@ import os
 import time
 import json
 import uuid
-from get_report import get_report, logger, pb
-from get_search import search_insight
-from tranlsation_volcengine import text_translate
+import sys
 
+# Add the parent directory to the path to allow importing from core
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import PbTalker first
+try:
+    from dashboard.pb_api import PbTalker
+except ImportError:
+    try:
+        from core.utils.pb_api import PbTalker
+    except ImportError:
+        # Fallback implementation
+        class PbTalker:
+            def __init__(self, logger):
+                self.logger = logger
+                self.logger.warning("Using fallback implementation for PbTalker")
+            
+            def read(self, *args, **kwargs):
+                return []
+            
+            def add(self, *args, **kwargs):
+                return ""
+            
+            def update(self, *args, **kwargs):
+                return ""
+
+# Now import get_report
+from dashboard.get_report import get_report, logger, pb
+from dashboard.get_search import search_insight
+from dashboard.tranlsation_volcengine import text_translate
 
 class BackendService:
     def __init__(self):
