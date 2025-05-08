@@ -34,6 +34,12 @@ from core.imports import (
     ConnectorBase
 )
 
+# Import plugin system components
+from core.plugins.security import security_manager
+from core.plugins.compatibility import compatibility_manager
+from core.plugins.lifecycle import lifecycle_manager
+from core.plugins.resources import resource_manager
+
 class WiseflowSystem:
     """
     Main system class for Wiseflow.
@@ -69,8 +75,39 @@ class WiseflowSystem:
         self.is_shutting_down = False
         self._initialized = True
         
+        # Configure plugin system components
+        self._configure_plugin_system()
+        
         self.logger.info("Wiseflow system initialized")
     
+    def _configure_plugin_system(self) -> None:
+        """Configure the plugin system components."""
+        # Set system version for compatibility checks
+        compatibility_manager.set_system_version(config.get("SYSTEM_VERSION", "4.0.0"))
+        
+        # Configure security manager
+        security_manager.set_security_enabled(config.get("PLUGIN_SECURITY_ENABLED", True))
+        
+        # Start resource monitoring
+        if config.get("PLUGIN_RESOURCE_MONITORING_ENABLED", True):
+            resource_manager.start_monitoring()
+        
+        # Register shutdown handler for plugin system
+        self.register_shutdown_handler(self._shutdown_plugin_system)
+    
+    def _shutdown_plugin_system(self) -> None:
+        """Shutdown the plugin system."""
+        try:
+            # Stop resource monitoring
+            resource_manager.stop_monitoring()
+            
+            # Shutdown all plugins
+            self.plugin_manager.shutdown_all_plugins()
+            
+            self.logger.info("Plugin system shutdown complete")
+        except Exception as e:
+            self.logger.error(f"Error shutting down plugin system: {e}")
+
     @handle_exceptions(
         error_types=[Exception],
         default_message="Failed to start Wiseflow system",
@@ -220,7 +257,7 @@ class WiseflowSystem:
         self.logger.info("Initializing connectors...")
         
         # Get connector plugins
-        connector_plugins = self.plugin_manager.get_plugins_by_base(ConnectorBase)
+        connector_plugins = self.plugin_manager.get_plugins_by_type("connectors")
         
         # Add them to our connectors dictionary
         for name, plugin in connector_plugins.items():

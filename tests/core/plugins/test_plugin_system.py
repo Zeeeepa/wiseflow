@@ -6,6 +6,8 @@ import unittest
 import os
 import tempfile
 import json
+import threading
+import time
 from unittest.mock import patch, MagicMock
 
 from core.plugins.base import (
@@ -13,8 +15,18 @@ from core.plugins.base import (
     ConnectorPlugin,
     ProcessorPlugin,
     AnalyzerPlugin,
-    PluginManager
+    PluginManager,
+    PluginState,
+    PluginSecurityLevel,
+    PluginMetadata
 )
+from core.plugins.security import security_manager
+from core.plugins.compatibility import compatibility_manager
+from core.plugins.lifecycle import lifecycle_manager, LifecycleEvent
+from core.plugins.resources import resource_manager, ResourceLimit
+from core.plugins.isolation import isolation_manager
+from core.plugins.validation import validation_manager
+from core.event_system import EventType, Event
 
 class TestBasePlugin(unittest.TestCase):
     """Tests for the BasePlugin class."""
@@ -414,6 +426,262 @@ class TestPluginManager(unittest.TestCase):
         self.assertFalse(result)
 
 
+class TestEnhancedPluginFeatures(unittest.TestCase):
+    """Tests for the enhanced plugin features."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Create a temporary directory for plugins
+        self.plugins_dir = tempfile.mkdtemp()
+        
+        # Create a temporary config file
+        self.config_file = os.path.join(self.plugins_dir, "config.json")
+        with open(self.config_file, "w") as f:
+            json.dump({
+                "test_plugin": {
+                    "param1": "value1",
+                    "param2": 42
+                }
+            }, f)
+        
+        # Create a plugin manager
+        self.plugin_manager = PluginManager(self.plugins_dir, self.config_file)
+        
+        # Create test plugin class
+        class TestEnhancedPlugin(BasePlugin):
+            name = "test_enhanced_plugin"
+            description = "Test enhanced plugin"
+            version = "1.0.0"
+            
+            def __init__(self, config=None):
+                super().__init__(config)
+                self.metadata = PluginMetadata(
+                    name=self.name,
+                    version=self.version,
+                    description=self.description,
+                    author="Test Author",
+                    website="https://example.com",
+                    license="MIT",
+                    min_system_version="4.0.0",
+                    max_system_version="5.0.0",
+                    dependencies={},
+                    security_level=PluginSecurityLevel.MEDIUM
+                )
+                self.file_resource = None
+                self.event_received = False
+            
+            def initialize(self) -> bool:
+                self.initialized = True
+                self.state = PluginState.INITIALIZED
+                
+                # Create a resource
+                self.file_resource = open(os.path.join(self.plugins_dir, "test.log"), "w")
+                self._register_resource("file", self.file_resource)
+                
+                # Subscribe to events
+                self._subscribe_to_event(EventType.SYSTEM_STARTUP, self._handle_system_startup)
+                
+                return True
+            
+            def _handle_system_startup(self, event: Event) -> None:
+                self.event_received = True
+            
+            def process_data(self, data):
+                return f"Processed: {data}"
+        
+        # Store test plugin class
+        self.TestEnhancedPlugin = TestEnhancedPlugin
+        
+        # Configure plugin system components
+        security_manager.set_security_enabled(True)
+        compatibility_manager.set_system_version("4.0.0")
+        isolation_manager.set_isolation_enabled(True)
+        validation_manager.set_validation_enabled(True)
+    
+    def tearDown(self):
+        """Tear down test fixtures."""
+        # Remove temporary directory
+        import shutil
+        shutil.rmtree(self.plugins_dir)
+    
+    def test_plugin_lifecycle(self):
+        """Test plugin lifecycle management."""
+        # Register lifecycle event handler
+        events_received = []
+        
+        def lifecycle_hook(plugin):
+            events_received.append(plugin.name)
+        
+        lifecycle_manager.register_hook(LifecycleEvent.INITIALIZE, lifecycle_hook)
+        
+        # Register the plugin
+        self.plugin_manager.plugin_classes[self.TestEnhancedPlugin.name] = self.TestEnhancedPlugin
+        
+        # Initialize the plugin
+        success = self.plugin_manager.initialize_plugin(self.TestEnhancedPlugin.name)
+        self.assertTrue(success)
+        
+        # Check that lifecycle event was received
+        self.assertIn(self.TestEnhancedPlugin.name, events_received)
+        
+        # Get the plugin
+        plugin = self.plugin_manager.get_plugin(self.TestEnhancedPlugin.name)
+        self.assertIsNotNone(plugin)
+        
+        # Check plugin state
+        self.assertEqual(plugin.state, PluginState.INITIALIZED)
+        
+        # Enable the plugin
+        self.plugin_manager.enable_plugin(self.TestEnhancedPlugin.name)
+        self.assertEqual(plugin.state, PluginState.ACTIVE)
+        
+        # Disable the plugin
+        self.plugin_manager.disable_plugin(self.TestEnhancedPlugin.name)
+        self.assertEqual(plugin.state, PluginState.DISABLED)
+        
+        # Shutdown the plugin
+        success = self.plugin_manager.shutdown_plugin(self.TestEnhancedPlugin.name)
+        self.assertTrue(success)
+        
+        # Unregister lifecycle event handler
+        lifecycle_manager.unregister_hook(LifecycleEvent.INITIALIZE, lifecycle_hook)
+    
+    def test_resource_management(self):
+        """Test plugin resource management."""
+        # Set resource limit
+        resource_manager.set_resource_limit(
+            self.TestEnhancedPlugin.name,
+            ResourceLimit(
+                max_memory=1024 * 1024 * 10,  # 10 MB
+                max_cpu_percent=10.0,
+                max_file_handles=5,
+                max_threads=2
+            )
+        )
+        
+        # Register the plugin
+        self.plugin_manager.plugin_classes[self.TestEnhancedPlugin.name] = self.TestEnhancedPlugin
+        
+        # Initialize the plugin
+        success = self.plugin_manager.initialize_plugin(self.TestEnhancedPlugin.name)
+        self.assertTrue(success)
+        
+        # Get the plugin
+        plugin = self.plugin_manager.get_plugin(self.TestEnhancedPlugin.name)
+        self.assertIsNotNone(plugin)
+        
+        # Check that resource was registered
+        resources = resource_manager.get_registered_resources(self.TestEnhancedPlugin.name)
+        self.assertIn("file", resources)
+        self.assertEqual(len(resources["file"]), 1)
+        
+        # Check that resource limit was set
+        limit = resource_manager.get_resource_limit(self.TestEnhancedPlugin.name)
+        self.assertIsNotNone(limit)
+        self.assertEqual(limit.max_cpu_percent, 10.0)
+        
+        # Shutdown the plugin
+        success = self.plugin_manager.shutdown_plugin(self.TestEnhancedPlugin.name)
+        self.assertTrue(success)
+        
+        # Check that resources were released
+        resources = resource_manager.get_registered_resources(self.TestEnhancedPlugin.name)
+        self.assertEqual(len(resources), 0)
+    
+    def test_error_isolation(self):
+        """Test plugin error isolation."""
+        # Create a plugin class with an error
+        class ErrorPlugin(BasePlugin):
+            name = "error_plugin"
+            
+            def initialize(self) -> bool:
+                raise ValueError("Test error")
+        
+        # Register the plugin
+        self.plugin_manager.plugin_classes[ErrorPlugin.name] = ErrorPlugin
+        
+        # Initialize the plugin with isolation
+        success = self.plugin_manager.initialize_plugin(ErrorPlugin.name)
+        self.assertFalse(success)
+        
+        # Test isolation decorator
+        @isolation_manager.isolate("test_isolation")
+        def test_function(value):
+            if value == "error":
+                raise ValueError("Test error")
+            return f"Success: {value}"
+        
+        # Test successful execution
+        result = test_function("test")
+        self.assertEqual(result, "Success: test")
+        
+        # Test error handling
+        with self.assertRaises(Exception):
+            test_function("error")
+    
+    def test_event_integration(self):
+        """Test plugin event integration."""
+        # Register the plugin
+        self.plugin_manager.plugin_classes[self.TestEnhancedPlugin.name] = self.TestEnhancedPlugin
+        
+        # Initialize the plugin
+        success = self.plugin_manager.initialize_plugin(self.TestEnhancedPlugin.name)
+        self.assertTrue(success)
+        
+        # Get the plugin
+        plugin = self.plugin_manager.get_plugin(self.TestEnhancedPlugin.name)
+        self.assertIsNotNone(plugin)
+        
+        # Publish an event
+        event = Event(
+            EventType.SYSTEM_STARTUP,
+            {"test": "data"},
+            "test"
+        )
+        from core.event_system import publish_sync
+        publish_sync(event)
+        
+        # Check that the plugin received the event
+        self.assertTrue(plugin.event_received)
+        
+        # Shutdown the plugin
+        success = self.plugin_manager.shutdown_plugin(self.TestEnhancedPlugin.name)
+        self.assertTrue(success)
+    
+    def test_validation(self):
+        """Test plugin validation."""
+        # Create an invalid plugin class
+        class InvalidPlugin(BasePlugin):
+            name = "invalid_plugin"
+            
+            # Missing required initialize method
+            pass
+        
+        # Validate the plugin class
+        is_valid, errors = validation_manager.validate_plugin_class(InvalidPlugin)
+        self.assertFalse(is_valid)
+        self.assertGreater(len(errors), 0)
+        
+        # Create a valid plugin class
+        class ValidPlugin(BasePlugin):
+            name = "valid_plugin"
+            version = "1.0.0"
+            description = "Valid plugin"
+            
+            def initialize(self) -> bool:
+                return True
+            
+            def shutdown(self) -> bool:
+                return True
+            
+            def validate_config(self) -> bool:
+                return True
+        
+        # Validate the plugin class
+        is_valid, errors = validation_manager.validate_plugin_class(ValidPlugin)
+        self.assertTrue(is_valid)
+        self.assertEqual(len(errors), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
-
