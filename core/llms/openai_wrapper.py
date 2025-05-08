@@ -2,7 +2,7 @@ import os
 from openai import AsyncOpenAI as OpenAI
 from openai import RateLimitError, APIError
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 base_url = os.environ.get('LLM_API_BASE', "")
 token = os.environ.get('LLM_API_KEY', "")
@@ -16,33 +16,40 @@ elif not base_url and token:
 else:
     client = OpenAI(api_key=token, base_url=base_url)
 
-# 设置最大并发数为3
+# Set maximum concurrency based on environment variable
 concurrent_number = os.environ.get('LLM_CONCURRENT_NUMBER', 1)
 semaphore = asyncio.Semaphore(int(concurrent_number))
 
 
-async def openai_llm(messages: List, model: str, logger=None, **kwargs) -> str:
+async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **kwargs) -> str:
     """
-    使用OpenAI API异步调用
+    Make an asynchronous call to the OpenAI API.
+    
+    This function makes an asynchronous call to the OpenAI API, handling rate
+    limiting, error handling, and retries. It uses a semaphore to limit the
+    number of concurrent API calls.
     
     Args:
-        messages: 消息列表
-        model: 模型名称
-        logger: 日志记录器
-        **kwargs: 其他参数
+        messages: List of message dictionaries to send to the API
+        model: Model name to use for the API call
+        logger: Optional logger for logging API calls and errors
+        **kwargs: Additional keyword arguments to pass to the API
         
     Returns:
-        str: API返回的内容
+        The content of the API response
+        
+    Raises:
+        Exception: If all retries fail
     """
     if logger:
         logger.debug(f'messages:\n {messages}')
         logger.debug(f'model: {model}')
         logger.debug(f'kwargs:\n {kwargs}')
 
-    async with semaphore:  # 使用信号量控制并发
-        # 最大重试次数
+    async with semaphore:  # Use semaphore to control concurrency
+        # Maximum number of retries
         max_retries = 3
-        # 初始等待时间（秒）
+        # Initial wait time (seconds)
         wait_time = 30
         
         for retry in range(max_retries):
@@ -59,7 +66,7 @@ async def openai_llm(messages: List, model: str, logger=None, **kwargs) -> str:
                 return response.choices[0].message.content
                 
             except RateLimitError as e:
-                # 速率限制错误需要重试
+                # Rate limit error needs to be retried
                 error_msg = f"Rate limit error: {str(e)}. Retry {retry+1}/{max_retries}."
                 if logger:
                     logger.warning(error_msg)
@@ -68,7 +75,7 @@ async def openai_llm(messages: List, model: str, logger=None, **kwargs) -> str:
             except APIError as e:
                 if hasattr(e, 'status_code'):
                     if e.status_code in [400, 401]:
-                        # 客户端错误不需要重试
+                        # Client errors don't need to be retried
                         error_msg = f"Client error: {e.status_code}. Detail: {str(e)}"
                         if logger:
                             logger.error(error_msg)
@@ -76,21 +83,21 @@ async def openai_llm(messages: List, model: str, logger=None, **kwargs) -> str:
                             print(error_msg)
                         return ''
                     else:
-                        # 其他API错误需要重试
+                        # Other API errors need to be retried
                         error_msg = f"API error: {e.status_code}. Retry {retry+1}/{max_retries}."
                         if logger:
                             logger.warning(error_msg)
                         else:
                             print(error_msg)
                 else:
-                    # 未知API错误需要重试
+                    # Unknown API errors need to be retried
                     error_msg = f"Unknown API error: {str(e)}. Retry {retry+1}/{max_retries}."
                     if logger:
                         logger.warning(error_msg)
                     else:
                         print(error_msg)
             except Exception as e:
-                # 其他异常需要重试
+                # Other exceptions need to be retried
                 error_msg = f"Unexpected error: {str(e)}. Retry {retry+1}/{max_retries}."
                 if logger:
                     logger.error(error_msg)
@@ -98,13 +105,13 @@ async def openai_llm(messages: List, model: str, logger=None, **kwargs) -> str:
                     print(error_msg)
 
             if retry < max_retries - 1:
-                # 指数退避策略
+                # Exponential backoff strategy
                 await asyncio.sleep(wait_time)
-                # 下次等待时间翻倍
+                # Double the wait time for the next retry
                 wait_time *= 2
 
-    # 如果所有重试都失败
-    error_msg = "达到最大重试次数，仍然无法获取有效响应。"
+    # If all retries fail
+    error_msg = "Maximum retries reached, still unable to get a valid response."
     if logger:
         logger.error(error_msg)
     else:

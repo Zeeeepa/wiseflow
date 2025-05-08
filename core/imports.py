@@ -27,14 +27,15 @@ from collections import Counter, defaultdict
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-from loguru import logger
 
 # Core configuration
 from core.config import config
 
+# Logging configuration - import this before other modules
+from core.utils.logging_config import logger, get_logger, with_context, LogContext, configure_logging
+
 # Utility modules
 from core.utils.general_utils import (
-    get_logger,
     normalize_url,
     url_pattern,
     extract_and_convert_dates,
@@ -44,8 +45,20 @@ from core.utils.general_utils import (
 from core.utils.error_handling import (
     handle_exceptions,
     WiseflowError,
+    ConnectionError,
+    DataProcessingError,
+    ConfigurationError,
+    ResourceError,
+    TaskError,
+    PluginError,
+    ValidationError,
+    AuthenticationError,
+    AuthorizationError,
+    NotFoundError,
     log_error,
-    save_error_to_file
+    save_error_to_file,
+    ErrorHandler,
+    async_error_handler
 )
 from core.utils.pb_api import PbTalker
 
@@ -163,6 +176,5 @@ project_dir = config.get("PROJECT_DIR", "")
 if project_dir:
     os.makedirs(project_dir, exist_ok=True)
 
-# Initialize global logger
-wiseflow_logger = get_logger('wiseflow', project_dir)
-
+# Initialize global logger with our new logging system
+wiseflow_logger = get_logger('wiseflow')

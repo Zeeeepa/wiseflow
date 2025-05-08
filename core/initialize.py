@@ -15,7 +15,14 @@ from typing import Dict, Any, Optional, List, Callable, Awaitable
 
 from core.imports import (
     config,
-    wiseflow_logger,
+    logger,
+    with_context,
+    handle_exceptions,
+    ErrorHandler,
+    async_error_handler,
+    WiseflowError,
+    ConfigurationError,
+    ResourceError,
     EventType,
     Event,
     publish,
@@ -48,7 +55,7 @@ class WiseflowSystem:
         if self._initialized:
             return
             
-        self.logger = wiseflow_logger
+        self.logger = logger.bind(component="WiseflowSystem")
         self.plugin_manager = PluginManager()
         self.pb = PbTalker(self.logger)
         self.resource_monitor = ResourceMonitor(
@@ -64,6 +71,13 @@ class WiseflowSystem:
         
         self.logger.info("Wiseflow system initialized")
     
+    @handle_exceptions(
+        error_types=[Exception],
+        default_message="Failed to start Wiseflow system",
+        log_error=True,
+        reraise=False,
+        save_to_file=True
+    )
     async def start(self) -> bool:
         """
         Start the Wiseflow system.
@@ -89,7 +103,11 @@ class WiseflowSystem:
             # Publish system startup event
             startup_event = Event(
                 EventType.SYSTEM_STARTUP,
-                data={"version": "4.0.0", "config": config.get("PROJECT_DIR", "")},
+                data={
+                    "version": "4.0.0", 
+                    "config": config.get("PROJECT_DIR", ""),
+                    "timestamp": time.time()
+                },
                 source="system"
             )
             await publish(startup_event)
@@ -98,7 +116,13 @@ class WiseflowSystem:
             return True
             
         except Exception as e:
-            self.logger.error(f"Error starting Wiseflow system: {e}")
+            error_context = {
+                "component": "WiseflowSystem",
+                "method": "start",
+                "error": str(e)
+            }
+            with_context(**error_context).error(f"Error starting Wiseflow system: {e}")
+            with_context(**error_context).debug(f"Traceback:\n{traceback.format_exc()}")
             return False
     
     async def shutdown(self, reason: str = "normal") -> None:
@@ -114,26 +138,35 @@ class WiseflowSystem:
         self.is_shutting_down = True
         self.logger.info(f"Shutting down Wiseflow system (reason: {reason})...")
         
-        # Publish system shutdown event
-        shutdown_event = Event(
-            EventType.SYSTEM_SHUTDOWN,
-            data={"reason": reason},
-            source="system"
-        )
-        await publish(shutdown_event)
-        
-        # Execute all registered shutdown handlers
-        for handler in self.shutdown_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    await handler()
-                else:
-                    handler()
-            except Exception as e:
-                self.logger.error(f"Error in shutdown handler: {e}")
-        
-        # Stop resource monitoring
-        await self.resource_monitor.stop()
+        # Use error handler to catch and log any exceptions during shutdown
+        async with ErrorHandler(
+            error_types=[Exception],
+            log_error=True,
+            context={"component": "WiseflowSystem", "method": "shutdown", "reason": reason}
+        ) as handler:
+            # Publish system shutdown event
+            shutdown_event = Event(
+                EventType.SYSTEM_SHUTDOWN,
+                data={
+                    "reason": reason,
+                    "timestamp": time.time()
+                },
+                source="system"
+            )
+            await publish(shutdown_event)
+            
+            # Execute all registered shutdown handlers
+            for handler in self.shutdown_handlers:
+                try:
+                    if asyncio.iscoroutinefunction(handler):
+                        await handler()
+                    else:
+                        handler()
+                except Exception as e:
+                    self.logger.error(f"Error in shutdown handler: {e}")
+            
+            # Stop resource monitoring
+            await self.resource_monitor.stop()
         
         self.logger.info("Wiseflow system shutdown complete")
     
@@ -156,6 +189,11 @@ class WiseflowSystem:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
     
+    @handle_exceptions(
+        error_types=[Exception],
+        default_message="Failed to load plugins",
+        log_error=True
+    )
     def _load_plugins(self) -> None:
         """Load and initialize plugins."""
         self.logger.info("Loading plugins...")
@@ -172,6 +210,11 @@ class WiseflowSystem:
             else:
                 self.logger.warning(f"Failed to initialize plugin: {name}")
     
+    @handle_exceptions(
+        error_types=[Exception],
+        default_message="Failed to initialize connectors",
+        log_error=True
+    )
     async def _initialize_connectors(self) -> None:
         """Initialize data source connectors."""
         self.logger.info("Initializing connectors...")
@@ -225,4 +268,3 @@ def register_shutdown_handler(handler: Callable[[], Any]) -> None:
         handler: Function to call during shutdown
     """
     wiseflow_system.register_shutdown_handler(handler)
-
