@@ -138,8 +138,8 @@ class ContentProcessorManager:
         """Initialize the content processor manager."""
         self.prompt_processor = SpecializedPromptProcessor(
             default_model=os.environ.get("PRIMARY_MODEL", "gpt-3.5-turbo"),
-            default_temperature=0.7,
-            default_max_tokens=1000,
+            default_temperature=float(os.environ.get("DEFAULT_TEMPERATURE", "0.7")),
+            default_max_tokens=int(os.environ.get("DEFAULT_MAX_TOKENS", "1000")),
         )
     
     async def process_content(
@@ -169,36 +169,46 @@ class ContentProcessorManager:
         """
         metadata = metadata or {}
         
-        # Determine the appropriate processing method based on the parameters
-        if references:
-            logger.info(f"Processing content with contextual understanding: {content_type}")
-            return await self.prompt_processor.contextual_understanding(
-                content=content,
-                focus_point=focus_point,
-                references=references,
-                explanation=explanation,
-                content_type=content_type,
-                metadata=metadata
-            )
-        elif use_multi_step_reasoning:
-            logger.info(f"Processing content with multi-step reasoning: {content_type}")
-            return await self.prompt_processor.multi_step_reasoning(
-                content=content,
-                focus_point=focus_point,
-                explanation=explanation,
-                content_type=content_type,
-                metadata=metadata
-            )
-        else:
-            logger.info(f"Processing content with basic extraction: {content_type}")
-            return await self.prompt_processor.process(
-                content=content,
-                focus_point=focus_point,
-                explanation=explanation,
-                content_type=content_type,
-                task=TASK_EXTRACTION,
-                metadata=metadata
-            )
+        try:
+            # Determine the appropriate processing method based on the parameters
+            if references:
+                logger.info(f"Processing content with contextual understanding: {content_type}")
+                return await self.prompt_processor.contextual_understanding(
+                    content=content,
+                    focus_point=focus_point,
+                    references=references,
+                    explanation=explanation,
+                    content_type=content_type,
+                    metadata=metadata
+                )
+            elif use_multi_step_reasoning:
+                logger.info(f"Processing content with multi-step reasoning: {content_type}")
+                return await self.prompt_processor.multi_step_reasoning(
+                    content=content,
+                    focus_point=focus_point,
+                    explanation=explanation,
+                    content_type=content_type,
+                    metadata=metadata
+                )
+            else:
+                logger.info(f"Processing content with basic extraction: {content_type}")
+                return await self.prompt_processor.process(
+                    content=content,
+                    focus_point=focus_point,
+                    explanation=explanation,
+                    content_type=content_type,
+                    task=TASK_EXTRACTION,
+                    metadata=metadata
+                )
+        except Exception as e:
+            logger.error(f"Error processing content: {str(e)}")
+            return {
+                "error": str(e),
+                "metadata": {
+                    "content_type": content_type,
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
     
     async def batch_process(
         self,
@@ -225,13 +235,22 @@ class ContentProcessorManager:
         
         logger.info(f"Batch processing {len(items)} items with task: {task}")
         
-        return await self.prompt_processor.batch_process(
-            items=items,
-            focus_point=focus_point,
-            explanation=explanation,
-            task=task,
-            max_concurrency=max_concurrency
-        )
+        try:
+            return await self.prompt_processor.batch_process(
+                items=items,
+                focus_point=focus_point,
+                explanation=explanation,
+                task=task,
+                max_concurrency=max_concurrency
+            )
+        except Exception as e:
+            logger.error(f"Error batch processing content: {str(e)}")
+            return [{
+                "error": str(e),
+                "metadata": {
+                    "timestamp": datetime.now().isoformat()
+                }
+            }]
 
 # API routes
 @app.get("/")
@@ -246,7 +265,7 @@ async def health_check():
 
 # Content processing endpoints
 @app.post("/api/v1/process", dependencies=[Depends(verify_api_key)])
-async def process_content(request: ContentRequest):
+async def process_content(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Process content using specialized prompting strategies.
     
@@ -270,7 +289,6 @@ async def process_content(request: ContentRequest):
         )
         
         # Trigger webhook for content processing
-        background_tasks = BackgroundTasks()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "content.processed",
@@ -290,10 +308,10 @@ async def process_content(request: ContentRequest):
             detail=f"Error processing content: {str(e)}"
         )
 
-@app.post("/api/v1/batch-process", dependencies=[Depends(verify_api_key)])
-async def batch_process_content(request: BatchContentRequest):
+@app.post("/api/v1/batch", dependencies=[Depends(verify_api_key)])
+async def batch_process_content(request: BatchContentRequest, background_tasks: BackgroundTasks):
     """
-    Process multiple items concurrently.
+    Process multiple content items concurrently.
     
     Args:
         request: Batch content processing request
@@ -313,7 +331,6 @@ async def batch_process_content(request: BatchContentRequest):
         )
         
         # Trigger webhook for batch processing
-        background_tasks = BackgroundTasks()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "content.batch_processed",

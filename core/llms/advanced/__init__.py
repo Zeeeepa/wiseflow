@@ -11,10 +11,32 @@ import json
 import asyncio
 from datetime import datetime
 import re
+import os
 
 from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
 
 logger = logging.getLogger(__name__)
+
+# Content type constants
+CONTENT_TYPE_TEXT = "text/plain"
+CONTENT_TYPE_HTML = "text/html"
+CONTENT_TYPE_MARKDOWN = "text/markdown"
+CONTENT_TYPE_CODE = "code"
+CONTENT_TYPE_ACADEMIC = "academic"
+CONTENT_TYPE_VIDEO = "video"
+CONTENT_TYPE_SOCIAL = "social"
+
+# Task type constants
+TASK_EXTRACTION = "extraction"
+TASK_SUMMARIZATION = "summarization"
+TASK_ANALYSIS = "analysis"
+TASK_REASONING = "reasoning"
+TASK_COMPARISON = "comparison"
+
+# Default model settings
+DEFAULT_MODEL = os.environ.get("PRIMARY_MODEL", "gpt-3.5-turbo")
+DEFAULT_TEMPERATURE = float(os.environ.get("DEFAULT_TEMPERATURE", "0.7"))
+DEFAULT_MAX_TOKENS = int(os.environ.get("DEFAULT_MAX_TOKENS", "1000"))
 
 class PromptTemplate:
     """Template for generating prompts."""
@@ -225,90 +247,114 @@ class PromptStrategy:
                 "    \"conclusion 1\",\n"
                 "    \"conclusion 2\"\n"
                 "  ],\n"
-                "  \"overall_relevance\": \"high|medium|low\",\n"
+                "  \"relevance\": \"high|medium|low\",\n"
                 "  \"summary\": \"brief summary of the analysis\"\n"
                 "}}\n"
                 "```\n"
             ),
             input_variables=["focus_point", "explanation", "content"]
         )
-    
-    def add_template(self, name: str, template: PromptTemplate) -> None:
-        """Add a prompt template."""
-        self.templates[name] = template
-    
-    def get_template(self, name: str) -> Optional[PromptTemplate]:
-        """Get a prompt template by name."""
-        return self.templates.get(name)
-    
-    def generate_prompt(self, template_name: str, **kwargs) -> str:
-        """Generate a prompt using a template."""
-        template = self.get_template(template_name)
-        if not template:
-            raise ValueError(f"Template not found: {template_name}")
         
-        return template.format(**kwargs)
+        # Contextual understanding
+        self.templates["contextual_understanding"] = PromptTemplate(
+            template=(
+                "You are an expert analytical system with contextual understanding capabilities. "
+                "Your task is to analyze the provided content "
+                "based on the focus point: {focus_point}.\n\n"
+                "Additional context: {explanation}\n\n"
+                "Content:\n{content}\n\n"
+                "Reference materials:\n{references}\n\n"
+                "Analyze the content in the context of the reference materials. "
+                "Format your response as a JSON object with the following structure:\n"
+                "```json\n"
+                "{{\n"
+                "  \"contextual_analysis\": [\n"
+                "    {{\n"
+                "      \"point\": \"key point from content\",\n"
+                "      \"context\": \"relevant context from references\",\n"
+                "      \"significance\": \"significance of this connection\"\n"
+                "    }}\n"
+                "  ],\n"
+                "  \"relevance\": \"high|medium|low\",\n"
+                "  \"summary\": \"brief summary of the contextual analysis\"\n"
+                "}}\n"
+                "```\n"
+            ),
+            input_variables=["focus_point", "explanation", "content", "references"]
+        )
     
-    def get_strategy_for_content(self, content_type: str, task: str = "extraction") -> str:
-        """Get the appropriate template name for a content type and task."""
+    def get_strategy_for_content(self, content_type: str, task: str) -> str:
+        """
+        Get the appropriate prompt template name for the content type and task.
+        
+        Args:
+            content_type: The type of content
+            task: The task to perform
+            
+        Returns:
+            str: The name of the prompt template to use
+        """
         # Map content types to template names
-        content_type_map = {
-            "text/plain": "general_extraction",
-            "text/markdown": "general_extraction",
-            "text/html": "general_extraction",
-            "text/python": "code_analysis",
-            "text/javascript": "code_analysis",
-            "text/java": "code_analysis",
-            "text/cpp": "code_analysis",
-            "text/c": "code_analysis",
-            "text/go": "code_analysis",
-            "text/rust": "code_analysis",
-            "text/ruby": "code_analysis",
-            "text/php": "code_analysis",
-            "application/pdf": "academic_paper",
-            "video/transcript": "video_content"
-        }
+        if task == TASK_REASONING:
+            return "multi_step_reasoning"
+        elif task == "contextual":
+            return "contextual_understanding"
+        elif task == "chain_of_thought":
+            return "chain_of_thought"
         
-        # Map tasks to template names
-        task_map = {
-            "extraction": {
-                "default": "general_extraction"
-            },
-            "analysis": {
-                "default": "multi_step_reasoning"
-            },
-            "reasoning": {
-                "default": "multi_step_reasoning"
-            }
-        }
-        
-        # Get the template name based on content type and task
-        if task in task_map and content_type in content_type_map:
-            return content_type_map[content_type]
-        elif task in task_map:
-            return task_map[task]["default"]
+        if content_type == CONTENT_TYPE_ACADEMIC:
+            return "academic_paper"
+        elif content_type == CONTENT_TYPE_VIDEO:
+            return "video_content"
+        elif content_type == CONTENT_TYPE_CODE or content_type.startswith("code/"):
+            return "code_analysis"
         else:
             return "general_extraction"
+    
+    def generate_prompt(self, template_name: str, **kwargs) -> str:
+        """
+        Generate a prompt using the specified template.
+        
+        Args:
+            template_name: The name of the template to use
+            **kwargs: Values for the template variables
+            
+        Returns:
+            str: The formatted prompt
+            
+        Raises:
+            ValueError: If the template is not found or if required variables are missing
+        """
+        if template_name not in self.templates:
+            raise ValueError(f"Template not found: {template_name}")
+        
+        return self.templates[template_name].format(**kwargs)
 
 
 class AdvancedLLMProcessor:
-    """Advanced LLM processor with specialized prompting strategies and multi-step reasoning."""
+    """Advanced LLM processor with specialized prompting strategies."""
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize an advanced LLM processor."""
+    def __init__(
+        self,
+        default_model: Optional[str] = None,
+        default_temperature: Optional[float] = None,
+        default_max_tokens: Optional[int] = None,
+        config: Optional[Dict[str, Any]] = None
+    ):
+        """Initialize the advanced LLM processor."""
+        self.default_model = default_model or DEFAULT_MODEL
+        self.default_temperature = default_temperature if default_temperature is not None else DEFAULT_TEMPERATURE
+        self.default_max_tokens = default_max_tokens or DEFAULT_MAX_TOKENS
         self.config = config or {}
         self.prompt_strategy = PromptStrategy(self.config.get("prompt_strategy"))
-        self.default_model = self.config.get("default_model", "gpt-4")
-        self.default_temperature = self.config.get("default_temperature", 0.7)
-        self.default_max_tokens = self.config.get("default_max_tokens", 1000)
     
     async def process(
         self,
         content: str,
         focus_point: str,
         explanation: str = "",
-        content_type: str = "text/plain",
-        task: str = "extraction",
+        content_type: str = CONTENT_TYPE_TEXT,
+        task: str = TASK_EXTRACTION,
         metadata: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
@@ -331,13 +377,16 @@ class AdvancedLLMProcessor:
         }
         
         # Add additional variables based on content type
-        if content_type.startswith("text/") and content_type != "text/plain" and content_type != "text/markdown" and content_type != "text/html":
+        if content_type.startswith("text/") and content_type != CONTENT_TYPE_TEXT and content_type != CONTENT_TYPE_MARKDOWN and content_type != CONTENT_TYPE_HTML:
             template_vars["language"] = content_type.split("/")[1]
             template_vars["file_path"] = metadata.get("path", "unknown")
         
-        if content_type == "video/transcript":
+        if content_type == CONTENT_TYPE_VIDEO or content_type == "video/transcript":
             template_vars["title"] = metadata.get("title", "")
             template_vars["channel"] = metadata.get("channel", "")
+        
+        if task == "contextual":
+            template_vars["references"] = metadata.get("references", "")
         
         # Generate the prompt
         try:
@@ -354,7 +403,7 @@ class AdvancedLLMProcessor:
                 {"role": "user", "content": prompt}
             ]
             
-            response = await litellm_llm_async(messages, model, temperature, max_tokens)
+            response = await litellm_llm_async(messages, model, temperature, max_tokens, logger)
             
             # Parse the response
             result = self._parse_llm_response(response)
@@ -417,7 +466,7 @@ class AdvancedLLMProcessor:
         content: str,
         focus_point: str,
         explanation: str = "",
-        content_type: str = "text/plain",
+        content_type: str = CONTENT_TYPE_TEXT,
         metadata: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
@@ -429,7 +478,7 @@ class AdvancedLLMProcessor:
             focus_point=focus_point,
             explanation=explanation,
             content_type=content_type,
-            task="reasoning",
+            task=TASK_REASONING,
             metadata=metadata,
             model=model,
             temperature=temperature,
@@ -442,7 +491,7 @@ class AdvancedLLMProcessor:
         focus_point: str,
         steps: List[str],
         explanation: str = "",
-        content_type: str = "text/plain",
+        content_type: str = CONTENT_TYPE_TEXT,
         metadata: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
@@ -489,7 +538,7 @@ class AdvancedLLMProcessor:
                 {"role": "user", "content": prompt}
             ]
             
-            response = await litellm_llm_async(messages, model, temperature, max_tokens)
+            response = await litellm_llm_async(messages, model, temperature, max_tokens, logger)
             
             # Parse the response
             result = self._parse_llm_response(response)
@@ -519,12 +568,56 @@ class AdvancedLLMProcessor:
                 }
             }
     
+    async def contextual_understanding(
+        self,
+        content: str,
+        focus_point: str,
+        references: str,
+        explanation: str = "",
+        content_type: str = CONTENT_TYPE_TEXT,
+        metadata: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Perform contextual understanding with references.
+        
+        Args:
+            content: The content to process
+            focus_point: The focus point for extraction
+            references: Reference materials for context
+            explanation: Additional explanation or context
+            content_type: The type of content
+            metadata: Additional metadata
+            model: The LLM model to use
+            temperature: The temperature for LLM generation
+            max_tokens: The maximum tokens for LLM generation
+            
+        Returns:
+            Dict[str, Any]: The contextual understanding result
+        """
+        metadata = metadata or {}
+        metadata["references"] = references
+        
+        return await self.process(
+            content=content,
+            focus_point=focus_point,
+            explanation=explanation,
+            content_type=content_type,
+            task="contextual",
+            metadata=metadata,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+    
     async def batch_process(
         self,
         items: List[Dict[str, Any]],
         focus_point: str,
         explanation: str = "",
-        task: str = "extraction",
+        task: str = TASK_EXTRACTION,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -544,7 +637,7 @@ class AdvancedLLMProcessor:
                     content=item.get("content", ""),
                     focus_point=focus_point,
                     explanation=explanation,
-                    content_type=item.get("content_type", "text/plain"),
+                    content_type=item.get("content_type", CONTENT_TYPE_TEXT),
                     task=task,
                     metadata=item.get("metadata"),
                     model=model,
@@ -557,3 +650,25 @@ class AdvancedLLMProcessor:
         results = await asyncio.gather(*tasks)
         
         return results
+
+# Export constants and classes
+__all__ = [
+    "PromptTemplate",
+    "PromptStrategy",
+    "AdvancedLLMProcessor",
+    "CONTENT_TYPE_TEXT",
+    "CONTENT_TYPE_HTML",
+    "CONTENT_TYPE_MARKDOWN",
+    "CONTENT_TYPE_CODE",
+    "CONTENT_TYPE_ACADEMIC",
+    "CONTENT_TYPE_VIDEO",
+    "CONTENT_TYPE_SOCIAL",
+    "TASK_EXTRACTION",
+    "TASK_SUMMARIZATION",
+    "TASK_ANALYSIS",
+    "TASK_REASONING",
+    "TASK_COMPARISON",
+    "DEFAULT_MODEL",
+    "DEFAULT_TEMPERATURE",
+    "DEFAULT_MAX_TOKENS"
+]
