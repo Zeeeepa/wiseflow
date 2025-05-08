@@ -99,6 +99,44 @@ wiseflow/
 
 - Python 3.8 or higher
 - Required Python packages (see `requirements.txt`)
+- Access to an LLM API (OpenAI, Anthropic, etc.)
+- PocketBase for database storage (optional, can be replaced with other storage solutions)
+
+## Dependencies
+
+WiseFlow uses a modular dependency management approach to ensure compatibility and prevent runtime errors:
+
+- `requirements.txt`: Main entry point that includes base requirements
+- `requirements-base.txt`: Core dependencies required for basic functionality
+- `requirements-optional.txt`: Optional dependencies for extended features
+- `requirements-dev.txt`: Dependencies needed for development and testing
+
+Module-specific requirements:
+- `weixin_mp/requirements.txt`: Dependencies specific to the WeChat Mini Program module
+- `core/requirements.txt`: Dependencies specific to the core module
+
+For detailed information about dependencies, see [DEPENDENCIES.md](DEPENDENCIES.md).
+
+### Dependency Management
+
+WiseFlow includes a dependency management script to help maintain dependencies:
+
+```bash
+# Check for outdated packages
+python scripts/dependency_check.py --check-outdated
+
+# Find unused dependencies
+python scripts/dependency_check.py --find-unused
+
+# Find missing dependencies
+python scripts/dependency_check.py --find-missing
+
+# Validate version constraints
+python scripts/dependency_check.py --validate-versions
+
+# Run all checks
+python scripts/dependency_check.py --all
+```
 
 ### Installation
 
@@ -119,6 +157,25 @@ wiseflow/
    # Edit .env with your configuration
    ```
 
+   Key environment variables to configure:
+   - `LLM_API_KEY`: Your API key for the LLM provider
+   - `LLM_API_BASE`: Base URL for the LLM API (if using a custom endpoint)
+   - `PRIMARY_MODEL`: Primary LLM model to use
+   - `SECONDARY_MODEL`: Secondary LLM model for specific tasks
+   - `VL_MODEL`: Vision-language model for multimodal analysis
+   - `LLM_CONCURRENT_NUMBER`: Maximum number of concurrent LLM requests
+   - `PROJECT_DIR`: Directory for storing project files
+   - `VERBOSE`: Enable verbose logging
+   - `MAX_CONCURRENT_TASKS`: Maximum number of concurrent tasks
+   - `AUTO_SHUTDOWN_ENABLED`: Enable automatic shutdown when idle
+   - `AUTO_SHUTDOWN_IDLE_TIME`: Idle time before automatic shutdown (seconds)
+   - `ENABLE_MULTIMODAL`: Enable multimodal analysis
+   - `ENABLE_KNOWLEDGE_GRAPH`: Enable knowledge graph construction
+   - `ENABLE_INSIGHTS`: Enable insight generation
+   - `ENABLE_REFERENCES`: Enable reference support
+   - `ENABLE_EVENT_SYSTEM`: Enable event system
+   - `WISEFLOW_API_KEY`: API key for the WiseFlow API
+
 ### Running the System
 
 1. Start the API server:
@@ -135,6 +192,32 @@ wiseflow/
    ```bash
    python dashboard/main.py
    ```
+
+### Configuration Options
+
+WiseFlow can be configured through environment variables or a configuration file. Key configuration options include:
+
+#### LLM Configuration
+- `LLM_API_KEY`: API key for the LLM provider
+- `LLM_API_BASE`: Base URL for the LLM API
+- `PRIMARY_MODEL`: Primary LLM model to use
+- `SECONDARY_MODEL`: Secondary LLM model for specific tasks
+- `VL_MODEL`: Vision-language model for multimodal analysis
+- `LLM_CONCURRENT_NUMBER`: Maximum number of concurrent LLM requests
+
+#### System Configuration
+- `PROJECT_DIR`: Directory for storing project files
+- `VERBOSE`: Enable verbose logging
+- `MAX_CONCURRENT_TASKS`: Maximum number of concurrent tasks
+- `AUTO_SHUTDOWN_ENABLED`: Enable automatic shutdown when idle
+- `AUTO_SHUTDOWN_IDLE_TIME`: Idle time before automatic shutdown (seconds)
+
+#### Feature Flags
+- `ENABLE_MULTIMODAL`: Enable multimodal analysis
+- `ENABLE_KNOWLEDGE_GRAPH`: Enable knowledge graph construction
+- `ENABLE_INSIGHTS`: Enable insight generation
+- `ENABLE_REFERENCES`: Enable reference support
+- `ENABLE_EVENT_SYSTEM`: Enable event system
 
 ## API Usage
 
@@ -164,14 +247,23 @@ result = response.json()
 print(result)
 ```
 
+For more detailed API documentation, see the [API Integration Guide](docs/api_integration.md).
+
 ## Plugin Development
 
 WiseFlow can be extended with custom plugins for connectors, processors, and analyzers.
 
-Example connector plugin:
+### Plugin Types
+
+- **Connectors**: Connect to data sources (web, GitHub, academic papers, etc.)
+- **Processors**: Process content from different sources
+- **Analyzers**: Analyze processed content to extract insights
+
+### Example Connector Plugin
 
 ```python
 from core.connectors import ConnectorBase, DataItem
+from typing import List, Dict, Any, Optional
 
 class CustomConnector(ConnectorBase):
     name = "custom_connector"
@@ -188,9 +280,85 @@ class CustomConnector(ConnectorBase):
         return data_items
 ```
 
+### Example Processor Plugin
+
+```python
+from core.plugins.processors import ProcessorBase, ProcessedData
+from core.connectors import DataItem
+from typing import Dict, Any, Optional
+
+class CustomProcessor(ProcessorBase):
+    name = "custom_processor"
+    description = "Custom content processor"
+    content_types = ["text/plain", "text/html"]
+    
+    def process(self, data_item: DataItem, params: Dict[str, Any]) -> Optional[ProcessedData]:
+        # Process the data item
+        # ...
+        return ProcessedData(
+            processed_content=processed_content,
+            metadata=metadata
+        )
+```
+
+For more information on plugin development, see the [Plugin Development Guide](docs/plugin_development.md).
+
+## Advanced Features
+
+### Knowledge Graph
+
+WiseFlow can build and maintain knowledge graphs from extracted information. The knowledge graph can be used to:
+
+- Identify relationships between entities
+- Discover patterns and trends
+- Provide contextual understanding
+- Visualize connections
+
+### Reference Support
+
+WiseFlow supports using reference materials to provide contextual understanding when processing content. References can be:
+
+- Documents
+- Websites
+- Code repositories
+- Academic papers
+
+### Multimodal Analysis
+
+WiseFlow supports multimodal analysis, allowing it to process:
+
+- Text
+- Images
+- Videos
+- Code
+- Structured data
+
+## Troubleshooting
+
+For common issues and solutions, see the [Troubleshooting Guide](TROUBLESHOOTING.md).
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Development Setup
+
+1. Clone the repository
+2. Install development dependencies:
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
+3. Run tests:
+   ```bash
+   pytest
+   ```
+
+### Coding Standards
+
+- Follow PEP 8 style guidelines
+- Write docstrings for all functions, classes, and modules
+- Add type hints to function signatures
+- Write unit tests for new functionality
 
 ## License
 
