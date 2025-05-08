@@ -1,20 +1,35 @@
 import os
 from openai import AsyncOpenAI as OpenAI
-from openai import RateLimitError, APIError
+from openai import RateLimitError, APIError, AuthenticationError, BadRequestError
 import asyncio
 from typing import List, Dict, Any, Optional
 
-base_url = os.environ.get('LLM_API_BASE', "")
-token = os.environ.get('LLM_API_KEY', "")
+from core.llms.auth import get_auth_manager, AuthenticationError as AuthError
 
-if not base_url and not token:
-    raise ValueError("LLM_API_BASE or LLM_API_KEY must be set")
-elif base_url and not token:
-    client = OpenAI(base_url=base_url, api_key="not_use")
-elif not base_url and token:
-    client = OpenAI(api_key=token)
-else:
-    client = OpenAI(api_key=token, base_url=base_url)
+# Get authentication manager
+auth_manager = get_auth_manager()
+
+try:
+    # Get OpenAI authentication configuration
+    auth_config = auth_manager.get_auth_config("openai")
+    
+    if "api_base" in auth_config and "api_key" in auth_config:
+        client = OpenAI(api_key=auth_config["api_key"], base_url=auth_config["api_base"])
+    else:
+        client = OpenAI(api_key=auth_config["api_key"])
+except AuthError as e:
+    # Fall back to environment variables for backward compatibility
+    base_url = os.environ.get('LLM_API_BASE', "")
+    token = os.environ.get('LLM_API_KEY', "")
+
+    if not base_url and not token:
+        raise ValueError("LLM_API_BASE or LLM_API_KEY must be set")
+    elif base_url and not token:
+        client = OpenAI(base_url=base_url, api_key="not_use")
+    elif not base_url and token:
+        client = OpenAI(api_key=token)
+    else:
+        client = OpenAI(api_key=token, base_url=base_url)
 
 # Set maximum concurrency based on environment variable
 concurrent_number = os.environ.get('LLM_CONCURRENT_NUMBER', 1)
@@ -72,6 +87,31 @@ async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **
                     logger.warning(error_msg)
                 else:
                     print(error_msg)
+            except AuthenticationError as e:
+                # Authentication errors don't need to be retried
+                error_msg = f"Authentication error: {str(e)}"
+                if logger:
+                    logger.error(error_msg)
+                else:
+                    print(error_msg)
+                # Try to use fallback provider if available
+                fallback_provider = auth_manager.get_fallback_provider("openai")
+                if fallback_provider:
+                    if logger:
+                        logger.info(f"Attempting to use fallback provider: {fallback_provider}")
+                    else:
+                        print(f"Attempting to use fallback provider: {fallback_provider}")
+                    # This would need to be implemented to actually use the fallback
+                    # For now, we'll just raise the error
+                raise
+            except BadRequestError as e:
+                # Client errors don't need to be retried
+                error_msg = f"Client error: {str(e)}"
+                if logger:
+                    logger.error(error_msg)
+                else:
+                    print(error_msg)
+                return ''
             except APIError as e:
                 if hasattr(e, 'status_code'):
                     if e.status_code in [400, 401]:
