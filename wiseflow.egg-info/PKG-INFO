@@ -1,0 +1,46 @@
+Metadata-Version: 2.4
+Name: wiseflow
+Version: 0.1.0
+Summary: AI-powered information extraction tool
+Home-page: https://github.com/Zeeeepa/wiseflow
+Author: Wiseflow Team
+Author-email: info@wiseflow.example.com
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Requires-Python: >=3.8
+License-File: LICENSE
+Requires-Dist: requests<3.0.0,>=2.25.0
+Requires-Dist: python-dotenv<1.0.0,>=0.15.0
+Requires-Dist: asyncio<4.0.0,>=3.4.3
+Requires-Dist: psutil<6.0.0,>=5.8.0
+Requires-Dist: pocketbase<1.0.0,>=0.8.0
+Requires-Dist: beautifulsoup4<5.0.0,>=4.9.3
+Requires-Dist: html2text<2023.0.0,>=2020.1.16
+Requires-Dist: httpx<1.0.0,>=0.16.1
+Requires-Dist: aiohttp<4.0.0,>=3.7.3
+Requires-Dist: nltk<4.0.0,>=3.6.2
+Requires-Dist: chardet<5.0.0,>=4.0.0
+Requires-Dist: PyPDF2<3.0.0,>=2.0.0
+Requires-Dist: python-docx<1.0.0,>=0.8.11
+Requires-Dist: numpy<2.0.0,>=1.19.5
+Requires-Dist: pandas<2.0.0,>=1.2.0
+Requires-Dist: tqdm<5.0.0,>=4.56.0
+Requires-Dist: concurrent-futures-extra<2.0.0,>=1.0.0
+Requires-Dist: structlog<22.0.0,>=21.1.0
+Requires-Dist: rich<11.0.0,>=10.0.0
+Requires-Dist: fastapi<1.0.0,>=0.68.0
+Requires-Dist: uvicorn<1.0.0,>=0.15.0
+Requires-Dist: feedparser<7.0.0,>=6.0.0
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
