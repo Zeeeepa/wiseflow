@@ -11,6 +11,7 @@ import asyncio
 import signal
 import logging
 import time
+import traceback
 from typing import Dict, Any, Optional, List, Callable, Awaitable
 
 from core.imports import (
@@ -56,20 +57,31 @@ class WiseflowSystem:
             return
             
         self.logger = logger.bind(component="WiseflowSystem")
-        self.plugin_manager = PluginManager()
-        self.pb = PbTalker(self.logger)
-        self.resource_monitor = ResourceMonitor(
-            check_interval=10.0,
-            warning_threshold=75.0,
-            critical_threshold=90.0
-        )
+        self.plugin_manager = None
+        self.pb = None
+        self.resource_monitor = None
         
         self.connectors = {}
         self.shutdown_handlers = []
         self.is_shutting_down = False
         self._initialized = True
         
-        self.logger.info("Wiseflow system initialized")
+        try:
+            # Initialize components that might fail
+            self.plugin_manager = PluginManager()
+            self.pb = PbTalker(self.logger)
+            self.resource_monitor = ResourceMonitor(
+                check_interval=10.0,
+                warning_threshold=75.0,
+                critical_threshold=90.0
+            )
+            self.logger.info("Wiseflow system initialized")
+        except Exception as e:
+            self.logger.error(f"Error initializing Wiseflow system: {e}")
+            self.logger.debug(f"Traceback:\n{traceback.format_exc()}")
+            # Still mark as initialized to prevent re-initialization attempts
+            self._initialized = True
+            raise
     
     @handle_exceptions(
         error_types=[Exception],
@@ -153,7 +165,10 @@ class WiseflowSystem:
                 },
                 source="system"
             )
-            await publish(shutdown_event)
+            try:
+                await publish(shutdown_event)
+            except Exception as e:
+                self.logger.error(f"Error publishing shutdown event: {e}")
             
             # Execute all registered shutdown handlers
             for handler in self.shutdown_handlers:
@@ -166,7 +181,11 @@ class WiseflowSystem:
                     self.logger.error(f"Error in shutdown handler: {e}")
             
             # Stop resource monitoring
-            await self.resource_monitor.stop()
+            if self.resource_monitor:
+                try:
+                    await self.resource_monitor.stop()
+                except Exception as e:
+                    self.logger.error(f"Error stopping resource monitor: {e}")
         
         self.logger.info("Wiseflow system shutdown complete")
     
@@ -196,6 +215,10 @@ class WiseflowSystem:
     )
     def _load_plugins(self) -> None:
         """Load and initialize plugins."""
+        if not self.plugin_manager:
+            self.logger.error("Plugin manager not initialized")
+            return
+            
         self.logger.info("Loading plugins...")
         plugins = self.plugin_manager.load_all_plugins()
         self.logger.info(f"Loaded {len(plugins)} plugins")
@@ -217,6 +240,10 @@ class WiseflowSystem:
     )
     async def _initialize_connectors(self) -> None:
         """Initialize data source connectors."""
+        if not self.plugin_manager:
+            self.logger.error("Plugin manager not initialized")
+            return
+            
         self.logger.info("Initializing connectors...")
         
         # Get connector plugins

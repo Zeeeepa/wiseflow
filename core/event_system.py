@@ -12,6 +12,7 @@ import inspect
 import time
 import uuid
 import threading
+import traceback
 from typing import Dict, List, Any, Optional, Union, Callable, Awaitable, Set
 from datetime import datetime
 from enum import Enum, auto
@@ -273,6 +274,7 @@ class EventBus:
                     callback(event)
             except Exception as e:
                 logger.error(f"Error in event subscriber {callback.__name__}: {e}")
+                logger.debug(f"Traceback: {traceback.format_exc()}")
                 if self._propagate_exceptions:
                     raise  # Re-raise the exception if propagation is enabled
     
@@ -322,6 +324,7 @@ class EventBus:
                     callback(event)
             except Exception as e:
                 logger.error(f"Error in event subscriber {callback.__name__}: {e}")
+                logger.debug(f"Traceback: {traceback.format_exc()}")
                 if self._propagate_exceptions:
                     raise  # Re-raise the exception if propagation is enabled
     
@@ -424,12 +427,42 @@ def unsubscribe_by_source(source: str) -> None:
     event_bus.unsubscribe_by_source(source)
 
 async def publish(event: Event) -> None:
-    """Publish an event."""
-    await event_bus.publish(event)
+    """
+    Publish an event.
+    
+    Args:
+        event: The event to publish
+        
+    Raises:
+        Exception: If an error occurs during publishing and propagate_exceptions is True
+    """
+    try:
+        await event_bus.publish(event)
+    except Exception as e:
+        logger.error(f"Error publishing event {event}: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
+        # Re-raise if propagate_exceptions is True
+        if event_bus._propagate_exceptions:
+            raise
 
 def publish_sync(event: Event) -> None:
-    """Publish an event synchronously."""
-    event_bus.publish_sync(event)
+    """
+    Publish an event synchronously.
+    
+    Args:
+        event: The event to publish
+        
+    Raises:
+        Exception: If an error occurs during publishing and propagate_exceptions is True
+    """
+    try:
+        event_bus.publish_sync(event)
+    except Exception as e:
+        logger.error(f"Error publishing event {event} synchronously: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
+        # Re-raise if propagate_exceptions is True
+        if event_bus._propagate_exceptions:
+            raise
 
 def get_history(event_type: Optional[EventType] = None, limit: int = 100) -> List[Event]:
     """Get event history."""
@@ -512,4 +545,3 @@ def create_resource_event(event_type: EventType, resource_type: str, value: floa
         "timestamp": datetime.now().isoformat()
     }
     return Event(event_type, data, "resource_monitor")
-
