@@ -4,8 +4,20 @@ This module defines the base classes for all plugin types in the system.
 """
 
 import abc
+import inspect
 import logging
-from typing import Any, Dict, List, Optional, Union, Set, Type
+import weakref
+from typing import Any, Dict, List, Optional, Union, Set, Type, Callable
+
+from core.plugins.exceptions import (
+    PluginError,
+    PluginInitializationError,
+    PluginValidationError,
+    PluginInterfaceError,
+    PluginLoadError,
+    PluginDependencyError,
+    PluginResourceError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +27,7 @@ class BasePlugin(abc.ABC):
     name: str = "base_plugin"
     description: str = "Base plugin class"
     version: str = "0.1.0"
+    required_methods: List[str] = ["initialize"]
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize the plugin with optional configuration.
@@ -26,6 +39,8 @@ class BasePlugin(abc.ABC):
         self.name = self.__class__.__name__ if not hasattr(self, 'name') or not self.name else self.name
         self.initialized = False
         self.is_enabled = True
+        self._resources = {}  # Track resources used by the plugin
+        self._resource_refs = weakref.WeakValueDictionary()  # Weak references to shared resources
     
     @abc.abstractmethod
     def initialize(self) -> bool:
@@ -33,6 +48,9 @@ class BasePlugin(abc.ABC):
         
         Returns:
             bool: True if initialization was successful, False otherwise
+        
+        Raises:
+            PluginInitializationError: If initialization fails
         """
         pass
     
@@ -42,6 +60,9 @@ class BasePlugin(abc.ABC):
         Returns:
             bool: True if shutdown was successful, False otherwise
         """
+        # Release all resources
+        self._release_all_resources()
+        
         self.initialized = False
         return True
     
@@ -50,6 +71,9 @@ class BasePlugin(abc.ABC):
         
         Returns:
             bool: True if configuration is valid, False otherwise
+        
+        Raises:
+            PluginValidationError: If validation fails
         """
         return True
     
@@ -73,12 +97,101 @@ class BasePlugin(abc.ABC):
             "description": self.description,
             "version": self.version,
             "is_enabled": self.is_enabled,
-            "initialized": self.initialized
+            "initialized": self.initialized,
+            "resource_count": len(self._resources)
         }
+    
+    def _register_resource(self, resource_name: str, resource: Any, shared: bool = False) -> None:
+        """Register a resource used by the plugin.
+        
+        Args:
+            resource_name: Name of the resource
+            resource: The resource object
+            shared: Whether the resource is shared with other plugins
+        """
+        self._resources[resource_name] = resource
+        
+        if shared:
+            self._resource_refs[resource_name] = resource
+            logger.debug(f"Registered shared resource '{resource_name}' for plugin '{self.name}'")
+        else:
+            logger.debug(f"Registered resource '{resource_name}' for plugin '{self.name}'")
+    
+    def _release_resource(self, resource_name: str) -> bool:
+        """Release a resource used by the plugin.
+        
+        Args:
+            resource_name: Name of the resource to release
+            
+        Returns:
+            bool: True if resource was released, False otherwise
+        """
+        if resource_name not in self._resources:
+            logger.warning(f"Resource '{resource_name}' not found for plugin '{self.name}'")
+            return False
+        
+        resource = self._resources.pop(resource_name)
+        
+        # If resource has a close or cleanup method, call it
+        if hasattr(resource, 'close') and callable(getattr(resource, 'close')):
+            try:
+                resource.close()
+            except Exception as e:
+                logger.error(f"Error closing resource '{resource_name}' for plugin '{self.name}': {e}")
+                return False
+        elif hasattr(resource, 'cleanup') and callable(getattr(resource, 'cleanup')):
+            try:
+                resource.cleanup()
+            except Exception as e:
+                logger.error(f"Error cleaning up resource '{resource_name}' for plugin '{self.name}': {e}")
+                return False
+        
+        logger.debug(f"Released resource '{resource_name}' for plugin '{self.name}'")
+        return True
+    
+    def _release_all_resources(self) -> bool:
+        """Release all resources used by the plugin.
+        
+        Returns:
+            bool: True if all resources were released, False otherwise
+        """
+        success = True
+        
+        # Make a copy of the keys since we'll be modifying the dictionary
+        resource_names = list(self._resources.keys())
+        
+        for resource_name in resource_names:
+            if not self._release_resource(resource_name):
+                success = False
+        
+        return success
+    
+    @classmethod
+    def validate_implementation(cls) -> bool:
+        """Validate that the plugin implementation meets the requirements.
+        
+        Returns:
+            bool: True if implementation is valid, False otherwise
+        
+        Raises:
+            PluginInterfaceError: If implementation is invalid
+        """
+        missing_methods = []
+        
+        for method_name in cls.required_methods:
+            if not hasattr(cls, method_name) or not callable(getattr(cls, method_name)):
+                missing_methods.append(method_name)
+        
+        if missing_methods:
+            raise PluginInterfaceError(cls.__name__, missing_methods)
+        
+        return True
 
 
 class ConnectorPlugin(BasePlugin):
     """Base class for data source connector plugins."""
+    
+    required_methods = ["initialize", "connect", "fetch_data", "disconnect"]
     
     @abc.abstractmethod
     def connect(self) -> bool:
@@ -86,6 +199,9 @@ class ConnectorPlugin(BasePlugin):
         
         Returns:
             bool: True if connection was successful, False otherwise
+        
+        Raises:
+            PluginError: If connection fails
         """
         pass
     
@@ -99,6 +215,9 @@ class ConnectorPlugin(BasePlugin):
             
         Returns:
             Dict[str, Any]: Dictionary containing the fetched data
+        
+        Raises:
+            PluginError: If data fetching fails
         """
         pass
     
@@ -108,12 +227,17 @@ class ConnectorPlugin(BasePlugin):
         
         Returns:
             bool: True if disconnection was successful, False otherwise
+        
+        Raises:
+            PluginError: If disconnection fails
         """
         pass
 
 
 class ProcessorPlugin(BasePlugin):
     """Base class for data processor plugins."""
+    
+    required_methods = ["initialize", "process"]
     
     @abc.abstractmethod
     def process(self, data: Any, **kwargs) -> Any:
@@ -125,12 +249,17 @@ class ProcessorPlugin(BasePlugin):
             
         Returns:
             Any: Processed data
+        
+        Raises:
+            PluginError: If processing fails
         """
         pass
 
 
 class AnalyzerPlugin(BasePlugin):
     """Base class for data analyzer plugins."""
+    
+    required_methods = ["initialize", "analyze"]
     
     @abc.abstractmethod
     def analyze(self, data: Any, **kwargs) -> Dict[str, Any]:
@@ -142,6 +271,9 @@ class AnalyzerPlugin(BasePlugin):
             
         Returns:
             Dict[str, Any]: Analysis results
+        
+        Raises:
+            PluginError: If analysis fails
         """
         pass
 
@@ -172,6 +304,14 @@ class PluginManager:
         self.connectors: Dict[str, Type[ConnectorPlugin]] = {}
         self.processors: Dict[str, Type[ProcessorPlugin]] = {}
         self.analyzers: Dict[str, Type[AnalyzerPlugin]] = {}
+        
+        # Plugin dependency tracking
+        self.plugin_dependencies: Dict[str, List[str]] = {}
+        self.plugin_dependents: Dict[str, List[str]] = {}
+        
+        # Resource tracking
+        self.shared_resources: Dict[str, Any] = {}
+        self.resource_reference_counts: Dict[str, int] = {}
         
         # Load plugin configurations if config file is provided
         self.plugin_configs: Dict[str, Dict[str, Any]] = {}
@@ -234,9 +374,21 @@ class PluginManager:
         Args:
             name: Name of the connector
             connector_class: Class of the connector
+            
+        Raises:
+            TypeError: If connector_class is not a subclass of ConnectorPlugin
+            PluginInterfaceError: If connector implementation is invalid
         """
         if not issubclass(connector_class, ConnectorPlugin):
             raise TypeError(f"Connector {name} must be a subclass of ConnectorPlugin")
+        
+        # Validate the connector implementation
+        try:
+            connector_class.validate_implementation()
+        except PluginInterfaceError as e:
+            logger.error(f"Invalid connector implementation: {e}")
+            raise
+        
         self.connectors[name] = connector_class
         self.plugin_classes[name] = connector_class
         logger.debug(f"Registered connector plugin: {name}")
@@ -247,9 +399,21 @@ class PluginManager:
         Args:
             name: Name of the processor
             processor_class: Class of the processor
+            
+        Raises:
+            TypeError: If processor_class is not a subclass of ProcessorPlugin
+            PluginInterfaceError: If processor implementation is invalid
         """
         if not issubclass(processor_class, ProcessorPlugin):
             raise TypeError(f"Processor {name} must be a subclass of ProcessorPlugin")
+        
+        # Validate the processor implementation
+        try:
+            processor_class.validate_implementation()
+        except PluginInterfaceError as e:
+            logger.error(f"Invalid processor implementation: {e}")
+            raise
+        
         self.processors[name] = processor_class
         self.plugin_classes[name] = processor_class
         logger.debug(f"Registered processor plugin: {name}")
@@ -260,12 +424,110 @@ class PluginManager:
         Args:
             name: Name of the analyzer
             analyzer_class: Class of the analyzer
+            
+        Raises:
+            TypeError: If analyzer_class is not a subclass of AnalyzerPlugin
+            PluginInterfaceError: If analyzer implementation is invalid
         """
         if not issubclass(analyzer_class, AnalyzerPlugin):
             raise TypeError(f"Analyzer {name} must be a subclass of AnalyzerPlugin")
+        
+        # Validate the analyzer implementation
+        try:
+            analyzer_class.validate_implementation()
+        except PluginInterfaceError as e:
+            logger.error(f"Invalid analyzer implementation: {e}")
+            raise
+        
         self.analyzers[name] = analyzer_class
         self.plugin_classes[name] = analyzer_class
         logger.debug(f"Registered analyzer plugin: {name}")
+    
+    def register_dependency(self, plugin_name: str, dependency_name: str) -> None:
+        """Register a dependency between plugins.
+        
+        Args:
+            plugin_name: Name of the plugin that depends on another
+            dependency_name: Name of the plugin that is depended upon
+        """
+        if plugin_name not in self.plugin_dependencies:
+            self.plugin_dependencies[plugin_name] = []
+        
+        if dependency_name not in self.plugin_dependencies[plugin_name]:
+            self.plugin_dependencies[plugin_name].append(dependency_name)
+        
+        if dependency_name not in self.plugin_dependents:
+            self.plugin_dependents[dependency_name] = []
+        
+        if plugin_name not in self.plugin_dependents[dependency_name]:
+            self.plugin_dependents[dependency_name].append(plugin_name)
+        
+        logger.debug(f"Registered dependency: {plugin_name} depends on {dependency_name}")
+    
+    def register_shared_resource(self, resource_name: str, resource: Any) -> None:
+        """Register a shared resource.
+        
+        Args:
+            resource_name: Name of the resource
+            resource: The resource object
+        """
+        self.shared_resources[resource_name] = resource
+        self.resource_reference_counts[resource_name] = 0
+        logger.debug(f"Registered shared resource: {resource_name}")
+    
+    def get_shared_resource(self, resource_name: str) -> Optional[Any]:
+        """Get a shared resource.
+        
+        Args:
+            resource_name: Name of the resource
+            
+        Returns:
+            The resource object or None if not found
+        """
+        if resource_name in self.shared_resources:
+            self.resource_reference_counts[resource_name] += 1
+            return self.shared_resources[resource_name]
+        
+        return None
+    
+    def release_shared_resource(self, resource_name: str) -> bool:
+        """Release a reference to a shared resource.
+        
+        Args:
+            resource_name: Name of the resource
+            
+        Returns:
+            True if resource was released, False otherwise
+        """
+        if resource_name not in self.shared_resources:
+            logger.warning(f"Shared resource '{resource_name}' not found")
+            return False
+        
+        if resource_name in self.resource_reference_counts:
+            self.resource_reference_counts[resource_name] -= 1
+            
+            # If no more references, clean up the resource
+            if self.resource_reference_counts[resource_name] <= 0:
+                resource = self.shared_resources.pop(resource_name)
+                del self.resource_reference_counts[resource_name]
+                
+                # If resource has a close or cleanup method, call it
+                if hasattr(resource, 'close') and callable(getattr(resource, 'close')):
+                    try:
+                        resource.close()
+                    except Exception as e:
+                        logger.error(f"Error closing shared resource '{resource_name}': {e}")
+                        return False
+                elif hasattr(resource, 'cleanup') and callable(getattr(resource, 'cleanup')):
+                    try:
+                        resource.cleanup()
+                    except Exception as e:
+                        logger.error(f"Error cleaning up shared resource '{resource_name}': {e}")
+                        return False
+                
+                logger.debug(f"Cleaned up shared resource: {resource_name}")
+        
+        return True
     
     def discover_plugins(self) -> List[str]:
         """
@@ -310,6 +572,9 @@ class PluginManager:
             
         Returns:
             Plugin class or None if not found
+            
+        Raises:
+            PluginLoadError: If plugin loading fails
         """
         try:
             import importlib
@@ -320,6 +585,7 @@ class PluginManager:
             self.plugin_modules[plugin_name] = module
             
             # Find plugin classes in the module
+            plugin_class = None
             for name, obj in inspect.getmembers(module):
                 if (inspect.isclass(obj) and 
                     issubclass(obj, BasePlugin) and 
@@ -332,6 +598,14 @@ class PluginManager:
                     # Register the plugin class
                     plugin_class = obj
                     plugin_name = plugin_class.name
+                    
+                    # Validate the plugin implementation
+                    try:
+                        plugin_class.validate_implementation()
+                    except PluginInterfaceError as e:
+                        logger.error(f"Invalid plugin implementation: {e}")
+                        continue
+                    
                     self.plugin_classes[plugin_name] = plugin_class
                     
                     # Register by type
@@ -345,11 +619,15 @@ class PluginManager:
                     logger.info(f"Loaded plugin class: {plugin_name} from {plugin_name}")
                     return plugin_class
             
-            logger.warning(f"No plugin class found in {plugin_name}")
-            return None
+            if not plugin_class:
+                logger.warning(f"No plugin class found in {plugin_name}")
+                return None
+            
+            return plugin_class
+            
         except Exception as e:
             logger.error(f"Error loading plugin {plugin_name}: {e}")
-            return None
+            raise PluginLoadError(plugin_name, cause=e)
     
     def load_all_plugins(self) -> Dict[str, Type[BasePlugin]]:
         """
@@ -357,14 +635,94 @@ class PluginManager:
         
         Returns:
             Dictionary of plugin classes
+            
+        Raises:
+            PluginLoadError: If plugin loading fails
         """
         plugin_names = self.discover_plugins()
+        load_errors = []
         
         for plugin_name in plugin_names:
-            self.load_plugin(plugin_name)
+            try:
+                self.load_plugin(plugin_name)
+            except PluginLoadError as e:
+                load_errors.append(e)
+                logger.error(f"Failed to load plugin {plugin_name}: {e}")
+        
+        if load_errors:
+            logger.warning(f"Failed to load {len(load_errors)} plugins")
         
         logger.info(f"Loaded {len(self.plugin_classes)} plugin classes")
         return self.plugin_classes
+    
+    def resolve_dependencies(self, plugin_name: str) -> List[str]:
+        """
+        Resolve dependencies for a plugin.
+        
+        Args:
+            plugin_name: Name of the plugin
+            
+        Returns:
+            List of plugin names that need to be initialized before this plugin
+            
+        Raises:
+            PluginDependencyError: If dependencies cannot be resolved
+        """
+        if plugin_name not in self.plugin_dependencies:
+            return []
+        
+        # Check for circular dependencies
+        visited = set()
+        path = []
+        
+        def check_circular(current, path):
+            if current in visited:
+                if current in path:
+                    # Circular dependency detected
+                    cycle_start = path.index(current)
+                    cycle = path[cycle_start:] + [current]
+                    raise PluginDependencyError(
+                        plugin_name,
+                        message=f"Circular dependency detected: {' -> '.join(cycle)}"
+                    )
+                return
+            
+            visited.add(current)
+            path.append(current)
+            
+            if current in self.plugin_dependencies:
+                for dep in self.plugin_dependencies[current]:
+                    check_circular(dep, path.copy())
+        
+        # Check for circular dependencies
+        check_circular(plugin_name, path)
+        
+        # Resolve dependencies in order
+        resolved = []
+        
+        def resolve(current):
+            if current in resolved:
+                return
+            
+            if current in self.plugin_dependencies:
+                for dep in self.plugin_dependencies[current]:
+                    if dep not in self.plugin_classes:
+                        raise PluginDependencyError(
+                            current,
+                            [dep],
+                            f"Plugin {current} depends on {dep}, but {dep} is not loaded"
+                        )
+                    resolve(dep)
+            
+            resolved.append(current)
+        
+        resolve(plugin_name)
+        
+        # Remove the plugin itself from the list
+        if plugin_name in resolved:
+            resolved.remove(plugin_name)
+        
+        return resolved
     
     def initialize_plugin(self, plugin_name: str, config: Optional[Dict[str, Any]] = None) -> bool:
         """
@@ -376,6 +734,10 @@ class PluginManager:
             
         Returns:
             True if initialization was successful, False otherwise
+            
+        Raises:
+            PluginInitializationError: If initialization fails
+            PluginDependencyError: If dependencies cannot be resolved
         """
         # Check if plugin is already initialized
         if plugin_name in self.plugins:
@@ -389,6 +751,19 @@ class PluginManager:
             return False
         
         try:
+            # Resolve dependencies
+            dependencies = self.resolve_dependencies(plugin_name)
+            
+            # Initialize dependencies first
+            for dependency in dependencies:
+                if dependency not in self.plugins:
+                    if not self.initialize_plugin(dependency):
+                        raise PluginDependencyError(
+                            plugin_name,
+                            [dependency],
+                            f"Failed to initialize dependency {dependency} for plugin {plugin_name}"
+                        )
+            
             # Get configuration
             if config is None:
                 config = self.plugin_configs.get(plugin_name, {})
@@ -396,18 +771,25 @@ class PluginManager:
             # Create plugin instance
             plugin = plugin_class(config)
             
+            # Validate configuration
+            if not plugin.validate_config():
+                raise PluginValidationError(plugin_name, "Plugin configuration validation failed")
+            
             # Initialize plugin
-            if plugin.initialize():
-                plugin.initialized = True
-                self.plugins[plugin_name] = plugin
-                logger.info(f"Initialized plugin: {plugin_name}")
-                return True
-            else:
-                logger.warning(f"Failed to initialize plugin: {plugin_name}")
-                return False
-        except Exception as e:
+            if not plugin.initialize():
+                raise PluginInitializationError(plugin_name, "Plugin initialization failed")
+            
+            plugin.initialized = True
+            self.plugins[plugin_name] = plugin
+            logger.info(f"Initialized plugin: {plugin_name}")
+            return True
+            
+        except (PluginInitializationError, PluginValidationError, PluginDependencyError) as e:
             logger.error(f"Error initializing plugin {plugin_name}: {e}")
-            return False
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error initializing plugin {plugin_name}: {e}")
+            raise PluginInitializationError(plugin_name, str(e))
     
     def initialize_all_plugins(self, configs: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, bool]:
         """
@@ -422,11 +804,25 @@ class PluginManager:
         configs = configs or {}
         results = {}
         
-        for plugin_name, plugin_class in self.plugin_classes.items():
-            config = configs.get(plugin_name, self.plugin_configs.get(plugin_name, {}))
-            results[plugin_name] = self.initialize_plugin(plugin_name, config)
+        # Sort plugins by dependencies
+        plugin_names = list(self.plugin_classes.keys())
         
-        logger.info(f"Initialized {sum(1 for success in results.values() if success)} out of {len(results)} plugins")
+        for plugin_name in plugin_names:
+            try:
+                config = configs.get(plugin_name, self.plugin_configs.get(plugin_name, {}))
+                results[plugin_name] = self.initialize_plugin(plugin_name, config)
+            except Exception as e:
+                logger.error(f"Failed to initialize plugin {plugin_name}: {e}")
+                results[plugin_name] = False
+        
+        success_count = sum(1 for success in results.values() if success)
+        logger.info(f"Initialized {success_count} out of {len(results)} plugins")
+        
+        # Log failed plugins
+        failed_plugins = [name for name, success in results.items() if not success]
+        if failed_plugins:
+            logger.warning(f"Failed to initialize plugins: {', '.join(failed_plugins)}")
+        
         return results
     
     def get_plugin(self, plugin_name: str) -> Optional[BasePlugin]:
@@ -488,6 +884,13 @@ class PluginManager:
             logger.warning(f"Plugin {plugin_name} not found")
             return False
         
+        # Check if other plugins depend on this one
+        if plugin_name in self.plugin_dependents:
+            dependent_plugins = [dep for dep in self.plugin_dependents[plugin_name] if dep in self.plugins]
+            if dependent_plugins:
+                logger.warning(f"Cannot shutdown plugin {plugin_name} because it is depended upon by: {', '.join(dependent_plugins)}")
+                return False
+        
         try:
             # Shutdown plugin
             if plugin.shutdown():
@@ -510,8 +913,47 @@ class PluginManager:
         """
         results = {}
         
-        for plugin_name in list(self.plugins.keys()):
-            results[plugin_name] = self.shutdown_plugin(plugin_name)
+        # Shutdown plugins in reverse dependency order
+        plugin_names = list(self.plugins.keys())
+        
+        # First, build a dependency graph
+        dependency_graph = {}
+        for name in plugin_names:
+            dependency_graph[name] = []
+            if name in self.plugin_dependents:
+                for dep in self.plugin_dependents[name]:
+                    if dep in plugin_names:
+                        dependency_graph[name].append(dep)
+        
+        # Topological sort to get shutdown order
+        shutdown_order = []
+        visited = set()
+        temp_visited = set()
+        
+        def visit(name):
+            if name in visited:
+                return
+            if name in temp_visited:
+                # Circular dependency, but we'll handle it
+                return
+            
+            temp_visited.add(name)
+            
+            for dep in dependency_graph.get(name, []):
+                visit(dep)
+            
+            temp_visited.remove(name)
+            visited.add(name)
+            shutdown_order.append(name)
+        
+        for name in plugin_names:
+            if name not in visited:
+                visit(name)
+        
+        # Shutdown plugins in order
+        for plugin_name in shutdown_order:
+            if plugin_name in self.plugins:
+                results[plugin_name] = self.shutdown_plugin(plugin_name)
         
         return results
     
@@ -545,13 +987,21 @@ class PluginManager:
                 return False
         
         # Re-load plugin class
-        plugin_class = self.load_plugin(plugin_name)
-        if not plugin_class:
-            logger.warning(f"Failed to load plugin class {plugin_name} for reload")
+        try:
+            plugin_class = self.load_plugin(plugin_name)
+            if not plugin_class:
+                logger.warning(f"Failed to load plugin class {plugin_name} for reload")
+                return False
+        except PluginLoadError as e:
+            logger.error(f"Failed to load plugin {plugin_name} for reload: {e}")
             return False
         
         # Initialize plugin
-        return self.initialize_plugin(plugin_name, config)
+        try:
+            return self.initialize_plugin(plugin_name, config)
+        except Exception as e:
+            logger.error(f"Failed to initialize plugin {plugin_name} after reload: {e}")
+            return False
 
 # Global plugin manager instance
 plugin_manager = PluginManager("core/plugins", "core/plugins/config.json")
