@@ -6,8 +6,8 @@
  */
 
 const ApiClient = (function() {
-    // Base API URL - can be configured for different environments
-    const BASE_URL = '';
+    // Base API URL - standardized to match ApiService
+    const BASE_URL = '/api';
     
     // Default request options
     const defaultOptions = {
@@ -187,4 +187,3 @@ const ApiClient = (function() {
 
 // Make ApiClient available globally
 window.ApiClient = ApiClient;
-
