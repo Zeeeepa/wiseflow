@@ -4,7 +4,37 @@
 Central configuration module for WiseFlow.
 
 This module provides a centralized way to access all configuration settings
-from environment variables, with proper defaults and validation.
+from environment variables, with proper defaults and validation. It handles
+loading configuration from environment variables or a configuration file,
+validating configuration values, and providing access to configuration
+settings throughout the application.
+
+The configuration system supports:
+- Loading from environment variables
+- Loading from a JSON configuration file
+- Validation of configuration values
+- Encryption of sensitive values
+- Default values for missing settings
+- Derived values based on other settings
+
+Key configuration categories include:
+- LLM settings (API keys, models, etc.)
+- System settings (directories, logging, etc.)
+- Feature flags (enabling/disabling features)
+- API settings (host, port, etc.)
+- Database settings (PocketBase connection)
+
+Example usage:
+    from core.config import config
+    
+    # Get a configuration value
+    api_key = config.get("LLM_API_KEY")
+    
+    # Get a configuration value with a default
+    verbose = config.get("VERBOSE", False)
+    
+    # Set a configuration value
+    config.set("MAX_CONCURRENT_TASKS", 4)
 """
 
 import os
@@ -31,16 +61,25 @@ from cryptography.fernet import Fernet
 from base64 import b64encode
 
 class ConfigValidationError(Exception):
-    """Exception raised for configuration validation errors."""
+    """
+    Exception raised for configuration validation errors.
+    
+    This exception is raised when a configuration value fails validation,
+    such as when a numeric value is out of range or a required value is missing.
+    """
     pass
 
 def validate_config_value(key: str, value: Any) -> Any:
     """
     Validate configuration values based on their keys.
     
+    This function validates configuration values based on their keys and
+    converts them to the appropriate type if necessary. It raises a
+    ConfigValidationError if validation fails.
+    
     Args:
-        key: Configuration key
-        value: Configuration value
+        key: Configuration key to validate
+        value: Configuration value to validate
         
     Returns:
         Validated value (possibly converted to appropriate type)
@@ -103,25 +142,60 @@ def validate_config_value(key: str, value: Any) -> Any:
     return value
 
 class Config:
+    """
+    Configuration manager for WiseFlow.
+    
+    This class manages configuration settings for WiseFlow, including loading
+    from environment variables or a configuration file, validating configuration
+    values, and providing access to configuration settings throughout the
+    application.
+    
+    Attributes:
+        SENSITIVE_KEYS: Set of keys that contain sensitive values (e.g., API keys)
+        DEFAULT_CONFIG: Dictionary of default configuration values
+    """
+    
     SENSITIVE_KEYS = {
         'LLM_API_KEY', 'PB_API_AUTH', 'ZHIPU_API_KEY',
         'EXA_API_KEY', 'WISEFLOW_API_KEY'
     }
     
     def __init__(self):
+        """Initialize the configuration manager with empty configuration."""
         self._config = {}
         self._encrypted_values = {}
         self._cipher = Fernet(Fernet.generate_key())
     
     def _encrypt_value(self, value: str) -> bytes:
+        """
+        Encrypt a sensitive value.
+        
+        Args:
+            value: Value to encrypt
+            
+        Returns:
+            Encrypted value as bytes
+        """
         return self._cipher.encrypt(value.encode())
         
     def _decrypt_value(self, encrypted: bytes) -> str:
+        """
+        Decrypt a sensitive value.
+        
+        Args:
+            encrypted: Encrypted value as bytes
+            
+        Returns:
+            Decrypted value as string
+        """
         return self._cipher.decrypt(encrypted).decode()
         
     def set(self, key: str, value: Any) -> None:
         """
         Set a configuration value with validation.
+        
+        This method validates the configuration value and encrypts it if it's
+        a sensitive value.
         
         Args:
             key: Configuration key
@@ -143,6 +217,20 @@ class Config:
             raise
     
     def get(self, key: str, default: Any = None) -> Any:
+        """
+        Get a configuration value.
+        
+        This method returns the configuration value for the given key, or the
+        default value if the key is not found. If the key is a sensitive key,
+        the value is decrypted before being returned.
+        
+        Args:
+            key: Configuration key
+            default: Default value if key is not found
+            
+        Returns:
+            Configuration value, or default if key is not found
+        """
         if key in self.SENSITIVE_KEYS:
             encrypted = self._encrypted_values.get(key)
             return self._decrypt_value(encrypted) if encrypted else default
@@ -203,6 +291,10 @@ class Config:
         """
         Initialize the configuration.
         
+        This method initializes the configuration with default values, then
+        loads configuration from a file if provided, and finally overrides
+        with environment variables.
+        
         Args:
             config_file: Optional path to a JSON configuration file
         """
@@ -228,6 +320,9 @@ class Config:
         """
         Load configuration from a JSON file.
         
+        This method loads configuration from a JSON file and updates the
+        current configuration with the values from the file.
+        
         Args:
             config_file: Path to the JSON configuration file
         """
@@ -240,7 +335,12 @@ class Config:
             logger.error(f"Error loading configuration from {config_file}: {e}")
     
     def _load_from_env(self) -> None:
-        """Load configuration from environment variables."""
+        """
+        Load configuration from environment variables.
+        
+        This method loads configuration from environment variables and updates
+        the current configuration with the values from the environment.
+        """
         for key in self._config.keys():
             env_value = os.environ.get(key)
             if env_value is not None:
@@ -261,7 +361,12 @@ class Config:
                     self._config[key] = env_value
     
     def _validate(self) -> None:
-        """Validate the configuration and set derived values."""
+        """
+        Validate the configuration and set derived values.
+        
+        This method validates the configuration and sets derived values based
+        on other configuration values.
+        """
         # Check required values
         if not self._config["PRIMARY_MODEL"]:
             logger.warning("PRIMARY_MODEL not set, this may cause issues with LLM functionality")
@@ -284,12 +389,22 @@ class Config:
             self._config["LOG_LEVEL"] = "INFO"
     
     def _setup_project_dir(self) -> None:
-        """Create project directory if it doesn't exist."""
+        """
+        Create project directory if it doesn't exist.
+        
+        This method creates the project directory if it doesn't exist, based
+        on the PROJECT_DIR configuration value.
+        """
         if self._config["PROJECT_DIR"]:
             os.makedirs(self._config["PROJECT_DIR"], exist_ok=True)
     
     def _log_config(self) -> None:
-        """Log the configuration (excluding sensitive values)."""
+        """
+        Log the configuration (excluding sensitive values).
+        
+        This method logs the configuration, excluding sensitive values, if
+        verbose logging is enabled.
+        """
         if self._config.get("VERBOSE", False):
             # Create a copy with sensitive values masked
             safe_config = self._config.copy()
@@ -303,18 +418,23 @@ class Config:
         """
         Get a configuration value.
         
+        This method returns the configuration value for the given key, or the
+        default value if the key is not found.
+        
         Args:
             key: Configuration key
             default: Default value if key is not found
             
         Returns:
-            Configuration value
+            Configuration value, or default if key is not found
         """
         return self._config.get(key, default)
     
     def set(self, key: str, value: Any) -> None:
         """
         Set a configuration value.
+        
+        This method sets the configuration value for the given key.
         
         Args:
             key: Configuration key
@@ -326,6 +446,8 @@ class Config:
         """
         Get the configuration as a dictionary.
         
+        This method returns a copy of the configuration as a dictionary.
+        
         Returns:
             Configuration dictionary
         """
@@ -334,6 +456,8 @@ class Config:
     def save_to_file(self, filepath: str) -> bool:
         """
         Save the configuration to a JSON file.
+        
+        This method saves the configuration to a JSON file.
         
         Args:
             filepath: Path to save the configuration to
@@ -351,7 +475,15 @@ class Config:
             return False
 
 def validate_config():
-    """Validate all critical configuration settings."""
+    """
+    Validate all critical configuration settings.
+    
+    This function validates all critical configuration settings and raises
+    a ValueError if any required settings are missing or invalid.
+    
+    Raises:
+        ValueError: If any required settings are missing or invalid
+    """
     if not config.get("PRIMARY_MODEL"):
         raise ValueError("PRIMARY_MODEL not set")
     if not config.get("PB_API_AUTH"):
@@ -365,12 +497,15 @@ def get_int_config(key: str, default: int) -> int:
     """
     Get an integer configuration value with validation.
     
+    This function gets an integer configuration value with validation, returning
+    the default value if the key is not found or the value is invalid.
+    
     Args:
         key: Configuration key
         default: Default value if key is not found or invalid
         
     Returns:
-        Integer configuration value
+        Integer configuration value, or default if key is not found or invalid
     """
     try:
         value = config.get(key)
@@ -385,12 +520,15 @@ def get_bool_config(key: str, default: bool) -> bool:
     """
     Get a boolean configuration value with validation.
     
+    This function gets a boolean configuration value with validation, returning
+    the default value if the key is not found or the value is invalid.
+    
     Args:
         key: Configuration key
         default: Default value if key is not found or invalid
         
     Returns:
-        Boolean configuration value
+        Boolean configuration value, or default if key is not found or invalid
     """
     value = config.get(key)
     if value is None:
