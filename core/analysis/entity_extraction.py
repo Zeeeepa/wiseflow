@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple, Set, Union
 import re
+import traceback
 from collections import Counter, defaultdict
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -92,68 +93,81 @@ Format your response as a JSON array of objects with the following structure:
 Only include relationships that are clearly mentioned in the text. Aim for precision over recall.
 """
 
-async def extract_entities(text: str) -> List[Dict[str, Any]]:
+async def extract_entities(text: str, max_retries: int = 3, retry_delay: float = 1.0) -> List[Dict[str, Any]]:
     """
-    Extract named entities from text using LLM.
+    Extract entities from text using LLM.
     
     Args:
         text: Text to extract entities from
+        max_retries: Maximum number of retries on failure
+        retry_delay: Delay between retries in seconds
         
     Returns:
         List of extracted entities with their types and metadata
     """
-    if not text:
+    if not text or not isinstance(text, str):
+        entity_logger.warning("Invalid text provided for entity extraction")
         return []
     
-    # Truncate text if it's too long
-    max_text_length = 8000
-    if len(text) > max_text_length:
-        entity_logger.warning(f"Text too long ({len(text)} chars), truncating to {max_text_length} chars")
-        text = text[:max_text_length]
-    
     try:
+        # Truncate very long texts to avoid token limits
+        if len(text) > 10000:
+            entity_logger.warning(f"Text too long ({len(text)} chars), truncating to 10000 chars")
+            text = text[:10000] + "..."
+        
         # Format the prompt with the text
         prompt = ENTITY_EXTRACTION_PROMPT.format(text=text)
         
-        # Call the LLM to extract entities
-        response = await llm.agenerate(prompt, model=model, temperature=0.1, max_tokens=2000)
+        for attempt in range(max_retries):
+            try:
+                # Call the LLM to extract entities
+                result = await llm.generate(prompt, model=model)
+                
+                # Parse the JSON response
+                json_match = re.search(r'\[.*\]', result, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    entities_data = json.loads(json_str)
+                    
+                    # Process and validate the extracted entities
+                    entities = []
+                    for entity_data in entities_data:
+                        # Validate required fields
+                        if not entity_data.get("name") or not entity_data.get("type"):
+                            continue
+                        
+                        # Create a standardized entity object
+                        entity = {
+                            "name": entity_data["name"],
+                            "type": entity_data["type"],
+                            "confidence": entity_data.get("confidence", 0.5),
+                            "metadata": entity_data.get("metadata", {}),
+                            "source": "llm_extraction",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        entities.append(entity)
+                    
+                    entity_logger.info(f"Extracted {len(entities)} entities from text")
+                    return entities
+                else:
+                    entity_logger.warning(f"Failed to parse JSON from LLM response (attempt {attempt+1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+            except json.JSONDecodeError as e:
+                entity_logger.error(f"JSON decode error in entity extraction (attempt {attempt+1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (2 ** attempt))
+            except Exception as e:
+                entity_logger.error(f"Error in entity extraction (attempt {attempt+1}/{max_retries}): {str(e)}")
+                entity_logger.error(traceback.format_exc())
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (2 ** attempt))
         
-        # Parse the response
-        try:
-            # Extract JSON from the response
-            json_match = re.search(r'\[\s*\{.*\}\s*\]', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                entities = json.loads(json_str)
-            else:
-                # Try to parse the entire response as JSON
-                entities = json.loads(response)
-            
-            # Validate the entities
-            valid_entities = []
-            for entity in entities:
-                if isinstance(entity, dict) and 'name' in entity and 'type' in entity:
-                    # Ensure confidence is a float between 0 and 1
-                    if 'confidence' not in entity:
-                        entity['confidence'] = 0.8
-                    else:
-                        entity['confidence'] = float(entity['confidence'])
-                        entity['confidence'] = max(0, min(1, entity['confidence']))
-                    
-                    # Ensure description exists
-                    if 'description' not in entity:
-                        entity['description'] = ""
-                    
-                    valid_entities.append(entity)
-            
-            return valid_entities
-        except Exception as e:
-            entity_logger.error(f"Error parsing entity extraction response: {e}")
-            entity_logger.debug(f"Response: {response}")
-            return []
-    
+        entity_logger.error(f"Failed to extract entities after {max_retries} attempts")
+        return []
     except Exception as e:
-        entity_logger.error(f"Error extracting entities: {e}")
+        entity_logger.error(f"Unexpected error in entity extraction: {str(e)}")
+        entity_logger.error(traceback.format_exc())
         return []
 
 async def extract_relationships(text: str, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -16,6 +16,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from loguru import logger
 import numpy as np
+import threading
 from ..utils.general_utils import get_logger
 from ..utils.pb_api import PbTalker
 from ..llms.openai_wrapper import openai_llm as llm
@@ -73,6 +74,7 @@ class KnowledgeGraphBuilder:
         """Initialize the knowledge graph builder."""
         self.graph = KnowledgeGraph(name=name, description=description)
         self.cache = {}
+        self.lock = threading.RLock()  # Reentrant lock for thread safety
         knowledge_graph_logger.info(f"Initialized knowledge graph builder for '{name}'")
     
     async def build_knowledge_graph(self, entities: List[Entity], relationships: List[Relationship]) -> KnowledgeGraph:
@@ -88,16 +90,36 @@ class KnowledgeGraphBuilder:
         """
         knowledge_graph_logger.info(f"Building knowledge graph with {len(entities)} entities and {len(relationships)} relationships")
         
-        # Add entities to the graph
-        for entity in entities:
-            self.graph.add_entity(entity)
-        
-        # Add relationships to the graph
-        for relationship in relationships:
-            self.graph.add_relationship(relationship)
-        
-        knowledge_graph_logger.info(f"Knowledge graph built with {len(self.graph.entities)} entities")
-        return self.graph
+        try:
+            with self.lock:
+                # Add entities to the graph
+                for entity in entities:
+                    if not entity or not isinstance(entity, Entity):
+                        knowledge_graph_logger.warning(f"Skipping invalid entity: {entity}")
+                        continue
+                    self.graph.add_entity(entity)
+                
+                # Add relationships to the graph
+                for relationship in relationships:
+                    if not relationship or not isinstance(relationship, Relationship):
+                        knowledge_graph_logger.warning(f"Skipping invalid relationship: {relationship}")
+                        continue
+                    
+                    # Verify that source and target entities exist
+                    if relationship.source_id not in self.graph.entities:
+                        knowledge_graph_logger.warning(f"Skipping relationship with missing source entity: {relationship.source_id}")
+                        continue
+                    if relationship.target_id not in self.graph.entities:
+                        knowledge_graph_logger.warning(f"Skipping relationship with missing target entity: {relationship.target_id}")
+                        continue
+                    
+                    self.graph.add_relationship(relationship)
+            
+            knowledge_graph_logger.info(f"Knowledge graph built with {len(self.graph.entities)} entities")
+            return self.graph
+        except Exception as e:
+            knowledge_graph_logger.error(f"Error building knowledge graph: {str(e)}")
+            raise
     
     async def enrich_knowledge_graph(self, new_data: Dict[str, Any]) -> KnowledgeGraph:
         """
@@ -154,67 +176,91 @@ class KnowledgeGraphBuilder:
         """
         knowledge_graph_logger.info(f"Querying knowledge graph: {query}")
         
-        query_type = query.get("type", "entity")
-        results = []
-        
-        if query_type == "entity":
-            # Query for entities
-            entity_id = query.get("entity_id")
-            entity_name = query.get("entity_name")
-            entity_type = query.get("entity_type")
-            
-            if entity_id:
-                entity = self.graph.get_entity(entity_id)
-                if entity:
-                    results.append(entity.to_dict())
-            elif entity_name:
-                entities = get_entities_by_name(
-                    list(self.graph.entities.values()),
-                    entity_name,
-                    fuzzy_match=query.get("fuzzy_match", False)
-                )
-                results = [entity.to_dict() for entity in entities]
+        try:
+            with self.lock:
+                query_type = query.get("type", "entity")
+                results = []
                 
-                if entity_type:
-                    results = [r for r in results if r.get("entity_type") == entity_type]
-            elif entity_type:
-                entities = [e for e in self.graph.entities.values() if e.entity_type == entity_type]
-                results = [entity.to_dict() for entity in entities]
-        
-        elif query_type == "relationship":
-            # Query for relationships
-            source_id = query.get("source_id")
-            target_id = query.get("target_id")
-            relationship_type = query.get("relationship_type")
-            
-            if source_id:
-                relationships = self.graph.get_relationships(source_id)
-                if target_id:
-                    relationships = [r for r in relationships if r.target_id == target_id]
-                if relationship_type:
-                    relationships = [r for r in relationships if r.relationship_type == relationship_type]
-                results = [rel.to_dict() for rel in relationships]
-            elif target_id:
-                # Find relationships where target_id is the target
-                for entity in self.graph.entities.values():
-                    for rel in entity.relationships:
-                        if rel.target_id == target_id:
-                            if relationship_type and rel.relationship_type != relationship_type:
-                                continue
-                            results.append(rel.to_dict())
-        
-        elif query_type == "path":
-            # Find paths between entities
-            source_id = query.get("source_id")
-            target_id = query.get("target_id")
-            max_length = query.get("max_length", 3)
-            
-            if source_id and target_id:
-                paths = self.find_paths(source_id, target_id, max_length)
-                results = paths
-        
-        knowledge_graph_logger.info(f"Query returned {len(results)} results")
-        return results
+                if query_type == "entity":
+                    # Query for entities
+                    entity_id = query.get("entity_id")
+                    entity_name = query.get("entity_name")
+                    entity_type = query.get("entity_type")
+                    
+                    # Create an index for faster lookups if needed
+                    if entity_name and not hasattr(self, '_entity_name_index'):
+                        self._build_entity_name_index()
+                    
+                    if entity_id:
+                        # Direct lookup by ID (O(1) operation)
+                        entity = self.graph.get_entity(entity_id)
+                        if entity:
+                            results.append(entity.to_dict())
+                    elif entity_name and hasattr(self, '_entity_name_index'):
+                        # Use the name index for faster lookup
+                        entity_ids = self._entity_name_index.get(entity_name.lower(), [])
+                        for eid in entity_ids:
+                            entity = self.graph.get_entity(eid)
+                            if entity and (not entity_type or entity.entity_type == entity_type):
+                                results.append(entity.to_dict())
+                    else:
+                        # Filter entities based on criteria
+                        for entity_id, entity in self.graph.entities.items():
+                            if (not entity_name or entity.name.lower() == entity_name.lower()) and \
+                               (not entity_type or entity.entity_type == entity_type):
+                                results.append(entity.to_dict())
+                
+                elif query_type == "relationship":
+                    # Query for relationships
+                    source_id = query.get("source_id")
+                    target_id = query.get("target_id")
+                    relationship_type = query.get("relationship_type")
+                    
+                    if source_id:
+                        # Get relationships from a specific source
+                        relationships = self.graph.get_relationships(source_id)
+                        for rel in relationships:
+                            if (not target_id or rel.target_id == target_id) and \
+                               (not relationship_type or rel.relationship_type == relationship_type):
+                                results.append(rel.to_dict())
+                    elif target_id:
+                        # Find relationships targeting a specific entity
+                        # This is more expensive as we need to check all relationships
+                        for entity_id, entity in self.graph.entities.items():
+                            for rel in entity.relationships:
+                                if rel.target_id == target_id and \
+                                   (not relationship_type or rel.relationship_type == relationship_type):
+                                    results.append(rel.to_dict())
+                    else:
+                        # Get all relationships of a specific type
+                        for entity_id, entity in self.graph.entities.items():
+                            for rel in entity.relationships:
+                                if not relationship_type or rel.relationship_type == relationship_type:
+                                    results.append(rel.to_dict())
+                
+                elif query_type == "path":
+                    # Find paths between entities
+                    source_id = query.get("source_id")
+                    target_id = query.get("target_id")
+                    max_length = query.get("max_length", 3)
+                    
+                    if source_id and target_id:
+                        paths = self._find_paths(source_id, target_id, max_length)
+                        results = paths
+                
+                knowledge_graph_logger.info(f"Query returned {len(results)} results")
+                return results
+        except Exception as e:
+            knowledge_graph_logger.error(f"Error querying knowledge graph: {str(e)}")
+            return []
+    
+    def _build_entity_name_index(self):
+        """Build an index of entity names for faster lookups."""
+        self._entity_name_index = defaultdict(list)
+        for entity_id, entity in self.graph.entities.items():
+            if entity.name:
+                self._entity_name_index[entity.name.lower()].append(entity_id)
+        knowledge_graph_logger.info(f"Built entity name index with {len(self._entity_name_index)} unique names")
     
     async def infer_relationships(self) -> List[Relationship]:
         """
@@ -297,7 +343,7 @@ class KnowledgeGraphBuilder:
             knowledge_graph_logger.error(f"Error parsing relationship inference response: {e}")
             return []
     
-    def find_paths(self, source_id: str, target_id: str, max_length: int = 3) -> List[List[Dict[str, Any]]]:
+    def _find_paths(self, source_id: str, target_id: str, max_length: int = 3) -> List[List[Dict[str, Any]]]:
         """
         Find paths between two entities in the knowledge graph.
         
@@ -457,56 +503,88 @@ class KnowledgeGraphBuilder:
         """
         knowledge_graph_logger.info("Validating knowledge graph")
         
-        validation_results = {
-            "is_valid": True,
-            "issues": [],
-            "stats": {
-                "entity_count": len(self.graph.entities),
-                "relationship_count": sum(len(e.relationships) for e in self.graph.entities.values()),
-                "entity_types": Counter(e.entity_type for e in self.graph.entities.values()),
-                "relationship_types": Counter(r.relationship_type for e in self.graph.entities.values() for r in e.relationships)
-            }
-        }
-        
-        # Check for relationships with missing entities
-        for entity in self.graph.entities.values():
-            for rel in entity.relationships:
-                if rel.source_id not in self.graph.entities:
+        try:
+            with self.lock:
+                validation_results = {
+                    "is_valid": True,
+                    "issues": [],
+                    "stats": {
+                        "entity_count": len(self.graph.entities),
+                        "relationship_count": sum(len(e.relationships) for e in self.graph.entities.values()),
+                        "entity_types": Counter(e.entity_type for e in self.graph.entities.values()),
+                        "relationship_types": Counter(r.relationship_type for e in self.graph.entities.values() for r in e.relationships)
+                    }
+                }
+                
+                # Check for relationships with missing entities
+                missing_entities = set()
+                invalid_relationships = []
+                
+                for entity_id, entity in self.graph.entities.items():
+                    for relationship in entity.relationships:
+                        if relationship.target_id not in self.graph.entities:
+                            missing_entities.add(relationship.target_id)
+                            invalid_relationships.append(relationship.relationship_id)
+                            validation_results["is_valid"] = False
+                            validation_results["issues"].append({
+                                "type": "missing_target_entity",
+                                "entity_id": relationship.target_id,
+                                "relationship_id": relationship.relationship_id
+                            })
+                
+                # Check for duplicate entity IDs (should not happen with proper implementation)
+                entity_ids = list(self.graph.entities.keys())
+                if len(entity_ids) != len(set(entity_ids)):
                     validation_results["is_valid"] = False
                     validation_results["issues"].append({
-                        "type": "missing_source_entity",
-                        "relationship_id": rel.relationship_id,
-                        "source_id": rel.source_id,
-                        "target_id": rel.target_id
+                        "type": "duplicate_entity_ids",
+                        "details": "There are duplicate entity IDs in the graph"
                     })
                 
-                if rel.target_id not in self.graph.entities:
+                # Check for duplicate relationship IDs
+                relationship_ids = []
+                for entity in self.graph.entities.values():
+                    for relationship in entity.relationships:
+                        relationship_ids.append(relationship.relationship_id)
+                
+                if len(relationship_ids) != len(set(relationship_ids)):
                     validation_results["is_valid"] = False
                     validation_results["issues"].append({
-                        "type": "missing_target_entity",
-                        "relationship_id": rel.relationship_id,
-                        "source_id": rel.source_id,
-                        "target_id": rel.target_id
+                        "type": "duplicate_relationship_ids",
+                        "details": "There are duplicate relationship IDs in the graph"
                     })
-        
-        # Check for duplicate relationships
-        relationship_set = set()
-        for entity in self.graph.entities.values():
-            for rel in entity.relationships:
-                rel_key = (rel.source_id, rel.target_id, rel.relationship_type)
-                if rel_key in relationship_set:
+                
+                # Check for self-referential relationships
+                self_refs = []
+                for entity_id, entity in self.graph.entities.items():
+                    for relationship in entity.relationships:
+                        if relationship.source_id == relationship.target_id:
+                            self_refs.append(relationship.relationship_id)
+                
+                if self_refs and not query.get("allow_self_references", False):
+                    validation_results["is_valid"] = False
                     validation_results["issues"].append({
-                        "type": "duplicate_relationship",
-                        "relationship_id": rel.relationship_id,
-                        "source_id": rel.source_id,
-                        "target_id": rel.target_id,
-                        "relationship_type": rel.relationship_type
+                        "type": "self_referential_relationships",
+                        "relationship_ids": self_refs
                     })
-                else:
-                    relationship_set.add(rel_key)
-        
-        knowledge_graph_logger.info(f"Validation completed: {len(validation_results['issues'])} issues found")
-        return validation_results
+                
+                # Add additional validation statistics
+                validation_results["stats"]["missing_entity_count"] = len(missing_entities)
+                validation_results["stats"]["invalid_relationship_count"] = len(invalid_relationships)
+                validation_results["stats"]["self_referential_count"] = len(self_refs)
+                
+                knowledge_graph_logger.info(f"Knowledge graph validation completed: valid={validation_results['is_valid']}, issues={len(validation_results['issues'])}")
+                return validation_results
+        except Exception as e:
+            knowledge_graph_logger.error(f"Error validating knowledge graph: {str(e)}")
+            return {
+                "is_valid": False,
+                "issues": [{
+                    "type": "validation_error",
+                    "details": str(e)
+                }],
+                "stats": {}
+            }
     
     def export_knowledge_graph(self, format: str = "json", output_path: Optional[str] = None) -> str:
         """

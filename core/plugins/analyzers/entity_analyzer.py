@@ -4,6 +4,7 @@ Entity analyzer plugin for extracting and analyzing entities from text.
 
 import re
 import logging
+import traceback
 from typing import Any, Dict, List, Optional, Union, Set, Tuple
 import nltk
 from nltk.tokenize import word_tokenize
@@ -12,6 +13,7 @@ from nltk.tag import pos_tag
 import networkx as nx
 
 from core.plugins.base import AnalyzerPlugin
+from core.analysis import Entity, Relationship
 
 logger = logging.getLogger(__name__)
 
@@ -48,223 +50,222 @@ class EntityAnalyzer(AnalyzerPlugin):
         self.min_relationship_confidence = self.config.get('min_relationship_confidence', 0.5)
         self.max_entities = self.config.get('max_entities', 100)
         self.entity_types = self.config.get('entity_types', ['PERSON', 'ORGANIZATION', 'LOCATION', 'GPE', 'FACILITY', 'DATE', 'TIME', 'MONEY', 'PERCENT'])
-        
+        self.entity_cache = {}
+        self.relationship_cache = {}
+    
     def initialize(self) -> bool:
         """Initialize the entity analyzer.
         
         Returns:
             bool: True if initialization was successful, False otherwise
         """
-        self.initialized = True
-        return True
-        
-    def analyze(self, data: Any, **kwargs) -> Dict[str, Any]:
-        """Analyze text data for entities.
+        try:
+            # Verify NLTK resources are available
+            nltk.data.find('punkt')
+            nltk.data.find('averaged_perceptron_tagger')
+            nltk.data.find('maxent_ne_chunker')
+            nltk.data.find('words')
+            
+            self.initialized = True
+            return True
+        except LookupError as e:
+            logger.error(f"Failed to initialize EntityAnalyzer: {str(e)}")
+            return False
+    
+    def analyze(self, text: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Analyze text to extract entities and relationships.
         
         Args:
-            data: Text data to analyze
-            **kwargs: Additional parameters:
-                - extract_relationships: Override config setting
-                - build_knowledge_graph: Override config setting
-                - min_relationship_confidence: Override config setting
-                - max_entities: Override config setting
-                - entity_types: Override config setting
-                
+            text: Text to analyze
+            context: Additional context for the analysis
+            
         Returns:
-            Dict[str, Any]: Analysis results containing entities and relationships
+            Dictionary with analysis results
         """
         if not self.initialized:
-            self.initialize()
+            logger.warning("EntityAnalyzer not initialized, initializing now")
+            if not self.initialize():
+                return {"error": "Failed to initialize EntityAnalyzer"}
+        
+        try:
+            # Extract entities using NLTK
+            entities = self._extract_entities_nltk(text)
             
-        # Get text from input data
-        if isinstance(data, str):
-            text = data
-        elif isinstance(data, dict) and 'processed_text' in data:
-            # Handle output from TextProcessor
-            text = data['processed_text']
-        elif hasattr(data, 'text') or hasattr(data, 'content'):
-            # Handle requests.Response or similar objects
-            text = getattr(data, 'text', None) or getattr(data, 'content', '').decode('utf-8')
-        else:
-            # Try to convert to string
-            try:
-                text = str(data)
-            except Exception as e:
-                logger.error(f"Could not convert data to text: {str(e)}")
-                return {'error': 'Invalid input data type', 'entities': []}
-                
-        # Override config settings with kwargs if provided
-        extract_relationships = kwargs.get('extract_relationships', self.extract_relationships)
-        build_knowledge_graph = kwargs.get('build_knowledge_graph', self.build_knowledge_graph)
-        min_relationship_confidence = kwargs.get('min_relationship_confidence', self.min_relationship_confidence)
-        max_entities = kwargs.get('max_entities', self.max_entities)
-        entity_types = kwargs.get('entity_types', self.entity_types)
-        
-        # Extract entities
-        entities = self._extract_entities(text, entity_types, max_entities)
-        
-        result = {'entities': entities}
-        
-        # Extract relationships if requested
-        if extract_relationships and len(entities) > 1:
-            relationships = self._extract_relationships(text, entities, min_relationship_confidence)
-            result['relationships'] = relationships
+            # Limit the number of entities
+            if len(entities) > self.max_entities:
+                logger.warning(f"Too many entities ({len(entities)}), limiting to {self.max_entities}")
+                entities = entities[:self.max_entities]
             
-        # Build knowledge graph if requested
-        if build_knowledge_graph and len(entities) > 0:
-            if 'relationships' not in result:
-                relationships = self._extract_relationships(text, entities, min_relationship_confidence)
-                result['relationships'] = relationships
-                
-            graph = self._build_knowledge_graph(entities, result['relationships'])
-            result['knowledge_graph'] = graph
+            # Extract relationships if configured
+            relationships = []
+            if self.extract_relationships and len(entities) > 1:
+                relationships = self._extract_relationships(text, entities)
             
-        return result
-        
-    def _extract_entities(self, text: str, entity_types: List[str], max_entities: int) -> List[Dict[str, Any]]:
-        """Extract entities from text.
+            # Build knowledge graph if configured
+            knowledge_graph = None
+            if self.build_knowledge_graph and entities:
+                knowledge_graph = self._build_knowledge_graph(entities, relationships)
+            
+            # Prepare the result
+            result = {
+                "entities": [e.to_dict() for e in entities],
+                "entity_count": len(entities),
+                "relationship_count": len(relationships)
+            }
+            
+            if relationships:
+                result["relationships"] = [r.to_dict() for r in relationships]
+            
+            if knowledge_graph:
+                result["knowledge_graph"] = knowledge_graph
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error in entity analysis: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {"error": str(e)}
+    
+    def _extract_entities_nltk(self, text: str) -> List[Entity]:
+        """Extract entities from text using NLTK.
         
         Args:
-            text: Input text
-            entity_types: List of entity types to extract
-            max_entities: Maximum number of entities to extract
+            text: Text to extract entities from
             
         Returns:
-            List[Dict[str, Any]]: List of extracted entities with metadata
+            List of extracted entities
         """
         try:
-            # Tokenize text
+            # Tokenize and tag the text
             tokens = word_tokenize(text)
-            
-            # Part-of-speech tagging
             tagged = pos_tag(tokens)
             
-            # Named entity recognition
-            chunks = ne_chunk(tagged)
+            # Extract named entities
+            named_entities = ne_chunk(tagged)
             
-            # Extract entities
+            # Process the named entities
             entities = []
-            entity_set = set()  # To track unique entities
+            current_entity = []
+            current_type = None
             
-            for chunk in chunks:
-                if hasattr(chunk, 'label') and chunk.label() in entity_types:
-                    entity_text = ' '.join(c[0] for c in chunk)
+            for chunk in named_entities:
+                if hasattr(chunk, 'label'):
+                    # This is a named entity
                     entity_type = chunk.label()
                     
-                    # Skip if already processed or if we've reached the maximum
-                    if entity_text.lower() in entity_set or len(entities) >= max_entities:
+                    # Skip entity types not in the configured list
+                    if self.entity_types and entity_type not in self.entity_types:
                         continue
-                        
-                    entity_set.add(entity_text.lower())
                     
-                    # Find positions in text
-                    positions = []
-                    for match in re.finditer(re.escape(entity_text), text):
-                        positions.append((match.start(), match.end()))
-                        
-                    # Create entity object
-                    entity = {
-                        'text': entity_text,
-                        'type': entity_type,
-                        'positions': positions[:10],  # Limit to 10 positions
-                        'confidence': 1.0  # Default confidence
-                    }
+                    # Extract the entity text
+                    entity_text = ' '.join(word for word, tag in chunk.leaves())
+                    
+                    # Create an Entity object
+                    entity = Entity(
+                        name=entity_text,
+                        entity_type=entity_type,
+                        sources=["nltk_extraction"],
+                        metadata={
+                            "confidence": 0.8,  # NLTK entities are generally reliable
+                            "extraction_method": "nltk"
+                        }
+                    )
+                    
+                    # Cache the entity to avoid duplicates
+                    cache_key = f"{entity_text}|{entity_type}"
+                    if cache_key in self.entity_cache:
+                        entity = self.entity_cache[cache_key]
+                    else:
+                        self.entity_cache[cache_key] = entity
                     
                     entities.append(entity)
-                    
-                    if len(entities) >= max_entities:
-                        break
-                        
+            
+            logger.info(f"Extracted {len(entities)} entities using NLTK")
             return entities
-            
         except Exception as e:
-            logger.error(f"Error extracting entities: {str(e)}")
+            logger.error(f"Error extracting entities with NLTK: {str(e)}")
+            logger.error(traceback.format_exc())
             return []
-            
-    def _extract_relationships(self, text: str, entities: List[Dict[str, Any]], min_confidence: float) -> List[Dict[str, Any]]:
+    
+    def _extract_relationships(self, text: str, entities: List[Entity]) -> List[Relationship]:
         """Extract relationships between entities.
         
         Args:
-            text: Input text
-            entities: List of extracted entities
-            min_confidence: Minimum confidence for relationships
+            text: Text to extract relationships from
+            entities: List of entities to find relationships between
             
         Returns:
-            List[Dict[str, Any]]: List of extracted relationships with metadata
+            List of extracted relationships
         """
-        relationships = []
-        
         try:
-            # Create a simple co-occurrence based relationship extraction
-            # Entities that appear close to each other in text are likely related
+            # Simple co-occurrence based relationship extraction
+            # In a real implementation, this would use more sophisticated techniques
+            relationships = []
             
-            # Create a map of entity text to entity object
-            entity_map = {entity['text']: entity for entity in entities}
-            
-            # Split text into sentences
-            sentences = nltk.sent_tokenize(text)
-            
-            for sentence in sentences:
-                # Find entities in this sentence
-                sentence_entities = []
-                for entity_text in entity_map:
-                    if entity_text in sentence:
-                        sentence_entities.append(entity_map[entity_text])
+            # Only consider entities that are close to each other in the text
+            for i in range(len(entities)):
+                for j in range(i+1, len(entities)):
+                    entity1 = entities[i]
+                    entity2 = entities[j]
+                    
+                    # Skip if same entity
+                    if entity1.entity_id == entity2.entity_id:
+                        continue
+                    
+                    # Check if the entities are mentioned close to each other
+                    # This is a simple heuristic and could be improved
+                    if entity1.name in text and entity2.name in text:
+                        idx1 = text.find(entity1.name)
+                        idx2 = text.find(entity2.name)
                         
-                # Create relationships between entities in the same sentence
-                for i in range(len(sentence_entities)):
-                    for j in range(i + 1, len(sentence_entities)):
-                        entity1 = sentence_entities[i]
-                        entity2 = sentence_entities[j]
-                        
-                        # Calculate confidence based on entity types and distance
-                        # This is a simple heuristic and can be improved
-                        confidence = 0.7  # Base confidence for entities in same sentence
-                        
-                        # Adjust confidence based on entity types
-                        if entity1['type'] == 'PERSON' and entity2['type'] == 'ORGANIZATION':
-                            confidence += 0.1  # Person-Organization relationships are common
-                        elif entity1['type'] == 'ORGANIZATION' and entity2['type'] == 'PERSON':
-                            confidence += 0.1
-                        elif entity1['type'] == 'PERSON' and entity2['type'] == 'LOCATION':
-                            confidence += 0.05  # Person-Location relationships
-                        elif entity1['type'] == 'LOCATION' and entity2['type'] == 'PERSON':
-                            confidence += 0.05
+                        if abs(idx1 - idx2) < 100:  # Entities within 100 characters of each other
+                            # Create a relationship
+                            relationship_type = "co_occurrence"
+                            confidence = 0.6  # Simple co-occurrence has moderate confidence
                             
-                        # Only include relationships with sufficient confidence
-                        if confidence >= min_confidence:
-                            relationship = {
-                                'source': entity1['text'],
-                                'source_type': entity1['type'],
-                                'target': entity2['text'],
-                                'target_type': entity2['type'],
-                                'type': 'co-occurrence',  # Default relationship type
-                                'confidence': confidence,
-                                'context': sentence[:100] + '...' if len(sentence) > 100 else sentence
-                            }
+                            # Determine a more specific relationship type based on entity types
+                            if entity1.entity_type == "PERSON" and entity2.entity_type == "ORGANIZATION":
+                                relationship_type = "affiliation"
+                                confidence = 0.7
+                            elif entity1.entity_type == "PERSON" and entity2.entity_type == "PERSON":
+                                relationship_type = "association"
+                                confidence = 0.6
+                            elif entity1.entity_type == "ORGANIZATION" and entity2.entity_type == "LOCATION":
+                                relationship_type = "located_in"
+                                confidence = 0.7
                             
-                            # Check if this relationship already exists
-                            is_duplicate = False
-                            for rel in relationships:
-                                if (rel['source'] == relationship['source'] and rel['target'] == relationship['target']) or \
-                                   (rel['source'] == relationship['target'] and rel['target'] == relationship['source']):
-                                    is_duplicate = True
-                                    # Update confidence if this instance has higher confidence
-                                    if relationship['confidence'] > rel['confidence']:
-                                        rel['confidence'] = relationship['confidence']
-                                        rel['context'] = relationship['context']
-                                    break
-                                    
-                            if not is_duplicate:
-                                relationships.append(relationship)
-                                
+                            # Skip low-confidence relationships
+                            if confidence < self.min_relationship_confidence:
+                                continue
+                            
+                            # Create the relationship
+                            relationship = Relationship(
+                                source_id=entity1.entity_id,
+                                target_id=entity2.entity_id,
+                                relationship_type=relationship_type,
+                                metadata={
+                                    "confidence": confidence,
+                                    "extraction_method": "co_occurrence",
+                                    "distance": abs(idx1 - idx2)
+                                }
+                            )
+                            
+                            # Cache the relationship to avoid duplicates
+                            cache_key = f"{entity1.entity_id}|{entity2.entity_id}|{relationship_type}"
+                            if cache_key in self.relationship_cache:
+                                relationship = self.relationship_cache[cache_key]
+                            else:
+                                self.relationship_cache[cache_key] = relationship
+                            
+                            relationships.append(relationship)
+            
+            logger.info(f"Extracted {len(relationships)} relationships")
             return relationships
-            
         except Exception as e:
             logger.error(f"Error extracting relationships: {str(e)}")
+            logger.error(traceback.format_exc())
             return []
-            
-    def _build_knowledge_graph(self, entities: List[Dict[str, Any]], relationships: List[Dict[str, Any]]) -> Dict[str, Any]:
+    
+    def _build_knowledge_graph(self, entities: List[Entity], relationships: List[Relationship]) -> Dict[str, Any]:
         """Build a knowledge graph from entities and relationships.
         
         Args:
@@ -280,15 +281,15 @@ class EntityAnalyzer(AnalyzerPlugin):
             
             # Add entities as nodes
             for entity in entities:
-                G.add_node(entity['text'], type=entity['type'])
+                G.add_node(entity.entity_id, type=entity.entity_type)
                 
             # Add relationships as edges
             for rel in relationships:
                 G.add_edge(
-                    rel['source'],
-                    rel['target'],
-                    type=rel['type'],
-                    confidence=rel['confidence']
+                    rel.source_id,
+                    rel.target_id,
+                    type=rel.relationship_type,
+                    confidence=rel.metadata['confidence']
                 )
                 
             # Convert to serializable format
@@ -333,4 +334,3 @@ class EntityAnalyzer(AnalyzerPlugin):
         except Exception as e:
             logger.error(f"Error building knowledge graph: {str(e)}")
             return {'nodes': [], 'edges': [], 'metrics': {}}
-
