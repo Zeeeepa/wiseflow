@@ -14,7 +14,7 @@ from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Configure logging
+# Configure basic logging until our full logging system is initialized
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 # Load environment variables from .env file
 env_path = Path(__file__).parent / '.env'
 if env_path.exists():
+    load_dotenv(env_path)
+
 # Add to imports
 from cryptography.fernet import Fernet
 from base64 import b64encode
@@ -78,7 +80,8 @@ def validate_config_value(key: str, value: Any) -> Any:
     
     # Boolean settings
     if key in ['VERBOSE', 'AUTO_SHUTDOWN_ENABLED', 'ENABLE_MULTIMODAL', 
-               'ENABLE_KNOWLEDGE_GRAPH', 'ENABLE_INSIGHTS', 'ENABLE_REFERENCES']:
+               'ENABLE_KNOWLEDGE_GRAPH', 'ENABLE_INSIGHTS', 'ENABLE_REFERENCES',
+               'STRUCTURED_LOGGING', 'LOG_TO_FILE', 'LOG_TO_CONSOLE']:
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -87,6 +90,14 @@ def validate_config_value(key: str, value: Any) -> Any:
             if value.lower() in ['false', 'no', '0', 'off']:
                 return False
         raise ConfigValidationError(f"{key} must be a boolean value")
+    
+    # Log level validation
+    if key == 'LOG_LEVEL':
+        if isinstance(value, str):
+            valid_levels = ['TRACE', 'DEBUG', 'INFO', 'SUCCESS', 'WARNING', 'ERROR', 'CRITICAL']
+            if value.upper() in valid_levels:
+                return value.upper()
+            raise ConfigValidationError(f"{key} must be one of {valid_levels}")
     
     # Return the value as is for other keys
     return value
@@ -136,6 +147,9 @@ class Config:
             encrypted = self._encrypted_values.get(key)
             return self._decrypt_value(encrypted) if encrypted else default
         return self._config.get(key, default)
+
+    # Default configuration values
+    DEFAULT_CONFIG = {
         # Project settings
         "PROJECT_DIR": "work_dir",
         "VERBOSE": False,
@@ -173,7 +187,16 @@ class Config:
         "ENABLE_KNOWLEDGE_GRAPH": False,
         "ENABLE_INSIGHTS": True,
         "ENABLE_REFERENCES": True,
-        "ENABLE_EVENT_SYSTEM": True
+        "ENABLE_EVENT_SYSTEM": True,
+        
+        # Logging settings
+        "LOG_LEVEL": "INFO",
+        "LOG_TO_FILE": True,
+        "LOG_TO_CONSOLE": True,
+        "LOG_DIR": "",  # Default will be PROJECT_DIR/logs
+        "STRUCTURED_LOGGING": False,
+        "LOG_ROTATION": "50 MB",
+        "LOG_RETENTION": "10 days"
     }
     
     def __init__(self, config_file: Optional[str] = None):
@@ -253,6 +276,12 @@ class Config:
         # Set VL_MODEL to PRIMARY_MODEL if not specified
         if not self._config["VL_MODEL"]:
             self._config["VL_MODEL"] = self._config["PRIMARY_MODEL"]
+        
+        # Validate LOG_LEVEL
+        valid_log_levels = ['TRACE', 'DEBUG', 'INFO', 'SUCCESS', 'WARNING', 'ERROR', 'CRITICAL']
+        if self._config["LOG_LEVEL"] not in valid_log_levels:
+            logger.warning(f"Invalid LOG_LEVEL: {self._config['LOG_LEVEL']}, using INFO")
+            self._config["LOG_LEVEL"] = "INFO"
     
     def _setup_project_dir(self) -> None:
         """Create project directory if it doesn't exist."""
@@ -401,3 +430,12 @@ ENABLE_KNOWLEDGE_GRAPH = get_bool_config("ENABLE_KNOWLEDGE_GRAPH", False)
 ENABLE_INSIGHTS = get_bool_config("ENABLE_INSIGHTS", True)
 ENABLE_REFERENCES = get_bool_config("ENABLE_REFERENCES", True)
 ENABLE_EVENT_SYSTEM = get_bool_config("ENABLE_EVENT_SYSTEM", True)
+
+# Logging configuration
+LOG_LEVEL = config.get("LOG_LEVEL", "INFO")
+LOG_TO_FILE = get_bool_config("LOG_TO_FILE", True)
+LOG_TO_CONSOLE = get_bool_config("LOG_TO_CONSOLE", True)
+LOG_DIR = config.get("LOG_DIR", os.path.join(PROJECT_DIR, "logs"))
+STRUCTURED_LOGGING = get_bool_config("STRUCTURED_LOGGING", False)
+LOG_ROTATION = config.get("LOG_ROTATION", "50 MB")
+LOG_RETENTION = config.get("LOG_RETENTION", "10 days")
