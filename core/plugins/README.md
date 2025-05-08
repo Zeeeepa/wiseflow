@@ -1,228 +1,305 @@
-# WiseFlow Plugin System
+# Wiseflow Plugin System
 
-The WiseFlow Plugin System provides a flexible and extensible way to add new functionality to the WiseFlow platform. This document explains how to use and develop plugins for WiseFlow.
+This document provides comprehensive documentation for the Wiseflow plugin system, including how to develop, install, and use plugins.
 
 ## Overview
 
-The plugin system allows you to:
+The Wiseflow plugin system allows for extending the functionality of the application through plugins. There are three main types of plugins:
 
-- Add new data processors for different types of content
-- Add new analyzers for extracting insights from processed data
-- Configure plugins through a centralized configuration system
-- Dynamically load and reload plugins at runtime
+1. **Connector Plugins**: Connect to external data sources and fetch data
+2. **Processor Plugins**: Process data from various sources
+3. **Analyzer Plugins**: Analyze processed data to extract insights
 
-## Plugin Types
+## Plugin Lifecycle
 
-WiseFlow supports the following types of plugins:
+Plugins in Wiseflow go through the following lifecycle states:
 
-1. **Processors**: Transform raw data into structured, processed data
-2. **Analyzers**: Extract insights and patterns from processed data
+1. **UNLOADED**: The plugin class is not yet loaded
+2. **LOADED**: The plugin class is loaded but not initialized
+3. **INITIALIZED**: The plugin is initialized but not necessarily active
+4. **ACTIVE**: The plugin is initialized and enabled
+5. **DISABLED**: The plugin is initialized but disabled
+6. **ERROR**: The plugin encountered an error during loading or initialization
+7. **UNINSTALLED**: The plugin has been uninstalled
 
-## Using Plugins
+## Creating a Plugin
 
-### Loading Plugins
+To create a plugin, you need to create a Python class that inherits from one of the base plugin classes:
 
-To load and use plugins in your code:
-
-```python
-from core.plugins.loader import load_all_plugins, get_processor, get_analyzer
-
-# Load all available plugins
-plugins = load_all_plugins()
-
-# Get a specific processor
-text_processor = get_processor("text_processor")
-
-# Get a specific analyzer
-entity_analyzer = get_analyzer("entity_analyzer")
-
-# Get all processors
-all_processors = get_all_processors()
-
-# Get all analyzers
-all_analyzers = get_all_analyzers()
-```
-
-### Using Processors
-
-Processors transform raw data into structured, processed data:
+### Base Plugin Structure
 
 ```python
-from core.connectors import DataItem
+from core.plugins import BasePlugin, PluginState
 
-# Create a data item
-data_item = DataItem(
-    source_id="example-1",
-    content="Example content",
-    metadata={"author": "Example Author"},
-    url="https://example.com/article1",
-    content_type="text"
-)
-
-# Process the data
-processed_data = text_processor.process(
-    data_item,
-    params={
-        "focus_point": "AI language models",
-        "explanation": "Information about AI language models",
-        "prompts": [
-            "System prompt",
-            "User prompt",
-            "Model name"
-        ]
-    }
-)
-```
-
-### Using Analyzers
-
-Analyzers extract insights from processed data:
-
-```python
-# Analyze the processed data
-analysis_result = entity_analyzer.analyze(processed_data)
-
-# Access the analysis content
-entities = analysis_result.analysis_content["entities"]
-relationships = analysis_result.analysis_content["relationships"]
-```
-
-## Developing Plugins
-
-### Creating a Processor Plugin
-
-To create a new processor plugin:
-
-1. Create a new Python file in the `core/plugins/processors` directory
-2. Define a class that inherits from `ProcessorBase`
-3. Implement the required methods
-
-Example:
-
-```python
-from core.plugins.processors import ProcessorBase, ProcessedData
-from core.connectors import DataItem
-
-class MyProcessor(ProcessorBase):
-    """Custom processor for specific data."""
-    
-    name: str = "my_processor"
-    description: str = "Custom processor for specific data"
-    processor_type: str = "custom"
+class MyPlugin(BasePlugin):
+    name = "my_plugin"
+    version = "1.0.0"
+    description = "My custom plugin"
     
     def __init__(self, config=None):
         super().__init__(config)
-        # Initialize any resources
-        
-    def process(self, data_item: DataItem, params=None) -> ProcessedData:
-        # Process the data item
-        processed_content = self._process_data(data_item.content)
-        
-        # Return processed data
-        return ProcessedData(
-            original_item=data_item,
-            processed_content=processed_content,
-            metadata={"processor": self.name}
-        )
-        
+        # Custom initialization code
+    
     def initialize(self) -> bool:
-        # Perform any necessary initialization
+        # Initialize the plugin
+        # Return True if initialization was successful, False otherwise
         return True
-        
-    def _process_data(self, content):
-        # Custom processing logic
-        return content
+    
+    def shutdown(self) -> bool:
+        # Clean up resources
+        # Return True if shutdown was successful, False otherwise
+        return True
+    
+    def validate_config(self) -> bool:
+        # Validate the plugin configuration
+        # Return True if configuration is valid, False otherwise
+        return True
 ```
 
-### Creating an Analyzer Plugin
-
-To create a new analyzer plugin:
-
-1. Create a new Python file in the `core/plugins/analyzers` directory
-2. Define a class that inherits from `AnalyzerBase`
-3. Implement the required methods
-
-Example:
+### Connector Plugin Example
 
 ```python
-from core.plugins.analyzers import AnalyzerBase, AnalysisResult
-from core.plugins.processors import ProcessedData
+from core.plugins import ConnectorPlugin
+from typing import Dict, Any
 
-class MyAnalyzer(AnalyzerBase):
-    """Custom analyzer for specific insights."""
+class MyConnector(ConnectorPlugin):
+    name = "my_connector"
+    version = "1.0.0"
+    description = "My custom connector plugin"
     
-    name: str = "my_analyzer"
-    description: str = "Custom analyzer for specific insights"
-    analyzer_type: str = "custom"
+    def initialize(self) -> bool:
+        # Initialize the connector
+        return True
+    
+    def connect(self) -> bool:
+        # Connect to the data source
+        return True
+    
+    def fetch_data(self, query: str, **kwargs) -> Dict[str, Any]:
+        # Fetch data from the source
+        return {"data": "sample data"}
+    
+    def disconnect(self) -> bool:
+        # Disconnect from the data source
+        return True
+```
+
+### Processor Plugin Example
+
+```python
+from core.plugins import ProcessorPlugin
+from typing import Any
+
+class MyProcessor(ProcessorPlugin):
+    name = "my_processor"
+    version = "1.0.0"
+    description = "My custom processor plugin"
+    
+    def initialize(self) -> bool:
+        # Initialize the processor
+        return True
+    
+    def process(self, data: Any, **kwargs) -> Any:
+        # Process the input data
+        return data
+```
+
+### Analyzer Plugin Example
+
+```python
+from core.plugins import AnalyzerPlugin
+from typing import Dict, Any
+
+class MyAnalyzer(AnalyzerPlugin):
+    name = "my_analyzer"
+    version = "1.0.0"
+    description = "My custom analyzer plugin"
+    
+    def initialize(self) -> bool:
+        # Initialize the analyzer
+        return True
+    
+    def analyze(self, data: Any, **kwargs) -> Dict[str, Any]:
+        # Analyze the input data
+        return {"analysis": "sample analysis"}
+```
+
+## Plugin Metadata
+
+Plugins can include metadata to provide additional information:
+
+```python
+from core.plugins import BasePlugin, PluginMetadata, PluginSecurityLevel
+
+class MyPlugin(BasePlugin):
+    name = "my_plugin"
+    version = "1.0.0"
+    description = "My custom plugin"
     
     def __init__(self, config=None):
         super().__init__(config)
-        # Initialize any resources
-        
-    def analyze(self, processed_data: ProcessedData, params=None) -> AnalysisResult:
-        # Analyze the processed data
-        analysis_content = self._analyze_data(processed_data.processed_content)
-        
-        # Return analysis result
-        return AnalysisResult(
-            processed_data=processed_data,
-            analysis_content=analysis_content,
-            metadata={"analyzer": self.name}
+        self.metadata = PluginMetadata(
+            name=self.name,
+            version=self.version,
+            description=self.description,
+            author="Your Name",
+            website="https://example.com",
+            license="MIT",
+            min_system_version="4.0.0",
+            max_system_version="5.0.0",
+            dependencies={"another_plugin": ">=1.0.0"},
+            security_level=PluginSecurityLevel.MEDIUM
         )
-        
+    
     def initialize(self) -> bool:
-        # Perform any necessary initialization
         return True
+```
+
+## Event Integration
+
+Plugins can subscribe to system events:
+
+```python
+from core.plugins import BasePlugin
+from core.event_system import EventType, Event
+
+class MyPlugin(BasePlugin):
+    name = "my_plugin"
+    
+    def initialize(self) -> bool:
+        # Subscribe to system events
+        self._subscribe_to_event(EventType.SYSTEM_STARTUP, self._handle_system_startup)
+        self._subscribe_to_event(EventType.SYSTEM_SHUTDOWN, self._handle_system_shutdown)
+        return True
+    
+    def _handle_system_startup(self, event: Event) -> None:
+        # Handle system startup event
+        print(f"System started: {event.data}")
+    
+    def _handle_system_shutdown(self, event: Event) -> None:
+        # Handle system shutdown event
+        print(f"System shutting down: {event.data}")
+```
+
+## Resource Management
+
+Plugins should properly manage resources:
+
+```python
+from core.plugins import BasePlugin
+
+class MyPlugin(BasePlugin):
+    name = "my_plugin"
+    
+    def initialize(self) -> bool:
+        # Open a file resource
+        self.file = open("data.txt", "w")
         
-    def _analyze_data(self, content):
-        # Custom analysis logic
-        return {"insights": []}
+        # Register the resource for automatic cleanup
+        self._register_resource("file", self.file)
+        
+        return True
+    
+    def shutdown(self) -> bool:
+        # Resources will be automatically cleaned up
+        # But you can also manually clean up if needed
+        return super().shutdown()
+```
+
+## Error Handling
+
+Plugins should handle errors gracefully:
+
+```python
+from core.plugins import BasePlugin
+from core.utils.error_handling import handle_exceptions
+
+class MyPlugin(BasePlugin):
+    name = "my_plugin"
+    
+    @handle_exceptions(
+        error_types=[Exception],
+        default_message="Failed to process data",
+        log_error=True
+    )
+    def process_data(self, data):
+        # Process data with automatic error handling
+        return data
 ```
 
 ## Plugin Configuration
 
-Plugins can be configured through the `config.json` file in the `core/plugins` directory:
-
-```json
-{
-  "my_processor": {
-    "option1": "value1",
-    "option2": 42
-  },
-  "my_analyzer": {
-    "model": "gpt-3.5-turbo",
-    "max_tokens": 1000
-  }
-}
-```
-
-Access configuration in your plugin:
+Plugins can be configured through a configuration dictionary:
 
 ```python
-def __init__(self, config=None):
-    super().__init__(config)
-    self.option1 = self.config.get("option1", "default")
-    self.option2 = self.config.get("option2", 0)
+from core.plugins import BasePlugin
+
+class MyPlugin(BasePlugin):
+    name = "my_plugin"
+    
+    def __init__(self, config=None):
+        super().__init__(config)
+        
+        # Get configuration values with defaults
+        self.api_key = self.config.get("api_key", "")
+        self.timeout = self.config.get("timeout", 30)
+    
+    def validate_config(self) -> bool:
+        # Validate required configuration
+        if not self.api_key:
+            return False
+        return True
 ```
 
-## Plugin Discovery
+## Plugin Installation
 
-The plugin system automatically discovers plugins in the following locations:
+To install a plugin:
 
-- `core/plugins/*.py`: General plugins
-- `core/plugins/processors/*.py`: Processor plugins
-- `core/plugins/analyzers/*.py`: Analyzer plugins
+1. Place the plugin module in the `core/plugins` directory or a subdirectory
+2. The plugin will be automatically discovered and loaded when the system starts
+3. You can also manually load and initialize plugins using the plugin manager
 
-Plugins are loaded based on their directory structure, so placing a plugin in the correct directory automatically registers it with the appropriate type.
+## Plugin Security
+
+The plugin system includes security measures:
+
+1. **Module Restrictions**: Certain modules are restricted to prevent security issues
+2. **File Hashing**: Plugin files are hashed to detect modifications
+3. **Security Levels**: Plugins can have different security levels
+
+## Version Compatibility
+
+Plugins can specify version compatibility requirements:
+
+1. **Minimum System Version**: The minimum system version required
+2. **Maximum System Version**: The maximum system version supported
+3. **Dependencies**: Other plugins that this plugin depends on
+
+## Plugin Manager API
+
+The plugin manager provides the following API:
+
+- `load_plugin(plugin_name)`: Load a plugin by name
+- `load_all_plugins()`: Load all available plugins
+- `initialize_plugin(plugin_name, config)`: Initialize a plugin
+- `initialize_all_plugins(configs)`: Initialize all loaded plugins
+- `get_plugin(plugin_name)`: Get a plugin by name
+- `get_all_plugins()`: Get all initialized plugins
+- `get_plugins_by_type(plugin_type)`: Get plugins by type
+- `shutdown_plugin(plugin_name)`: Shutdown a plugin
+- `shutdown_all_plugins()`: Shutdown all initialized plugins
+- `reload_plugin(plugin_name, config)`: Reload a plugin
+- `enable_plugin(plugin_name)`: Enable a plugin
+- `disable_plugin(plugin_name)`: Disable a plugin
 
 ## Best Practices
 
-1. **Descriptive Names**: Use clear, descriptive names for your plugins
-2. **Error Handling**: Implement robust error handling in your plugins
-3. **Documentation**: Document your plugin's purpose, parameters, and behavior
-4. **Configuration**: Make your plugin configurable through the configuration system
-5. **Testing**: Write tests for your plugins to ensure they work correctly
+1. **Error Handling**: Always handle errors gracefully
+2. **Resource Management**: Register resources for automatic cleanup
+3. **Configuration Validation**: Validate plugin configuration
+4. **Event Integration**: Use the event system for communication
+5. **Security**: Be mindful of security implications
+6. **Documentation**: Document your plugin thoroughly
+7. **Testing**: Write tests for your plugin
+8. **Version Compatibility**: Specify version compatibility requirements
 
-## Example
-
-See the `examples/plugin_example.py` file for a complete example of using the plugin system.

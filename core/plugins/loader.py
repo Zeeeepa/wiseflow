@@ -8,14 +8,8 @@ import os
 import logging
 from typing import Dict, List, Any, Optional, Union, Type
 
-from core.plugins import (
-    BasePlugin,
-    ConnectorPlugin,
-    ProcessorPlugin,
-    AnalyzerPlugin,
-    plugin_manager,
-    get_plugin_manager
-)
+# Import the plugin manager class but avoid circular imports
+from core.plugins.base import BasePlugin, ConnectorPlugin, ProcessorPlugin, AnalyzerPlugin, PluginManager
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +31,7 @@ def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "co
     
     if _plugin_manager is None:
         # Create a new plugin manager
+        from core.plugins.base import PluginManager
         _plugin_manager = PluginManager(plugins_dir, config_file)
         
     return _plugin_manager
