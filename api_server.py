@@ -18,6 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+# Import from core modules
+from core.config import config, WISEFLOW_API_KEY, API_HOST, API_PORT, API_RELOAD
 from core.export.webhook import WebhookManager, get_webhook_manager
 from core.llms.advanced.specialized_prompting import (
     SpecializedPromptProcessor,
@@ -58,8 +60,8 @@ app.add_middleware(
 # Initialize webhook manager
 webhook_manager = get_webhook_manager()
 
-# API key authentication
-API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
+# API key authentication - Use the value from config
+API_KEY = WISEFLOW_API_KEY
 
 def verify_api_key(x_api_key: str = Header(None)):
     """
@@ -136,8 +138,10 @@ class ContentProcessorManager:
     
     def __init__(self):
         """Initialize the content processor manager."""
+        from core.config import PRIMARY_MODEL
+        
         self.prompt_processor = SpecializedPromptProcessor(
-            default_model=os.environ.get("PRIMARY_MODEL", "gpt-3.5-turbo"),
+            default_model=PRIMARY_MODEL or "gpt-3.5-turbo",
             default_temperature=0.7,
             default_max_tokens=1000,
         )
@@ -648,7 +652,7 @@ if __name__ == "__main__":
     # Run the FastAPI app with uvicorn
     uvicorn.run(
         "api_server:app",
-        host=os.environ.get("API_HOST", "0.0.0.0"),
-        port=int(os.environ.get("API_PORT", 8000)),
-        reload=os.environ.get("API_RELOAD", "false").lower() == "true"
+        host=API_HOST,
+        port=API_PORT,
+        reload=API_RELOAD
     )
