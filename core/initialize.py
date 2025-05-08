@@ -11,6 +11,7 @@ import asyncio
 import signal
 import logging
 import time
+import traceback
 from typing import Dict, Any, Optional, List, Callable, Awaitable
 
 from core.imports import (
@@ -58,10 +59,14 @@ class WiseflowSystem:
         self.logger = logger.bind(component="WiseflowSystem")
         self.plugin_manager = PluginManager()
         self.pb = PbTalker(self.logger)
+        
+        # Initialize resource monitor with proper thresholds
         self.resource_monitor = ResourceMonitor(
-            check_interval=10.0,
-            warning_threshold=75.0,
-            critical_threshold=90.0
+            check_interval=config.get("RESOURCE_CHECK_INTERVAL", 10.0),
+            cpu_threshold=config.get("CPU_THRESHOLD", 90.0),
+            memory_threshold=config.get("MEMORY_THRESHOLD", 85.0),
+            disk_threshold=config.get("DISK_THRESHOLD", 90.0),
+            warning_threshold_factor=config.get("WARNING_THRESHOLD_FACTOR", 0.8)
         )
         
         self.connectors = {}
@@ -164,6 +169,7 @@ class WiseflowSystem:
                         handler()
                 except Exception as e:
                     self.logger.error(f"Error in shutdown handler: {e}")
+                    self.logger.debug(f"Traceback: {traceback.format_exc()}")
             
             # Stop resource monitoring
             await self.resource_monitor.stop()
