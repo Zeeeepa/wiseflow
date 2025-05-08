@@ -1,11 +1,12 @@
 """
-Tests for the plugin system.
+Unit tests for the plugin system.
 """
 
-import unittest
 import os
-import tempfile
 import json
+import pytest
+import tempfile
+import shutil
 from unittest.mock import patch, MagicMock
 
 from core.plugins.base import (
@@ -16,8 +17,10 @@ from core.plugins.base import (
     PluginManager
 )
 
-class TestBasePlugin(unittest.TestCase):
-    """Tests for the BasePlugin class."""
+
+@pytest.mark.unit
+class TestBasePlugin:
+    """Test the BasePlugin class."""
     
     def test_init(self):
         """Test initialization of BasePlugin."""
@@ -33,15 +36,15 @@ class TestBasePlugin(unittest.TestCase):
         
         # Test initialization with default config
         plugin = TestPlugin()
-        self.assertEqual(plugin.name, "test_plugin")
-        self.assertEqual(plugin.config, {})
-        self.assertFalse(plugin.initialized)
+        assert plugin.name == "test_plugin"
+        assert plugin.config == {}
+        assert plugin.initialized is False
         
         # Test initialization with custom config
         config = {"param1": "value1", "param2": 42}
         plugin = TestPlugin(config)
-        self.assertEqual(plugin.config, config)
-        
+        assert plugin.config == config
+    
     def test_initialize(self):
         """Test initialization of BasePlugin."""
         # Create a concrete implementation of BasePlugin for testing
@@ -54,11 +57,11 @@ class TestBasePlugin(unittest.TestCase):
         
         # Test initialization
         plugin = TestPlugin()
-        self.assertFalse(plugin.initialized)
+        assert plugin.initialized is False
         result = plugin.initialize()
-        self.assertTrue(result)
-        self.assertTrue(plugin.initialized)
-        
+        assert result is True
+        assert plugin.initialized is True
+    
     def test_shutdown(self):
         """Test shutdown of BasePlugin."""
         # Create a concrete implementation of BasePlugin for testing
@@ -72,11 +75,11 @@ class TestBasePlugin(unittest.TestCase):
         # Test shutdown
         plugin = TestPlugin()
         plugin.initialize()
-        self.assertTrue(plugin.initialized)
+        assert plugin.initialized is True
         result = plugin.shutdown()
-        self.assertTrue(result)
-        self.assertFalse(plugin.initialized)
-        
+        assert result is True
+        assert plugin.initialized is False
+    
     def test_validate_config(self):
         """Test config validation of BasePlugin."""
         # Create a concrete implementation of BasePlugin for testing
@@ -92,13 +95,13 @@ class TestBasePlugin(unittest.TestCase):
         # Test with valid config
         config = {"param1": "value1"}
         plugin = TestPlugin(config)
-        self.assertTrue(plugin.validate_config())
+        assert plugin.validate_config() is True
         
         # Test with invalid config
         config = {"param1": "wrong_value"}
         plugin = TestPlugin(config)
-        self.assertFalse(plugin.validate_config())
-        
+        assert plugin.validate_config() is False
+    
     def test_enable_disable(self):
         """Test enabling and disabling of BasePlugin."""
         # Create a concrete implementation of BasePlugin for testing
@@ -110,12 +113,12 @@ class TestBasePlugin(unittest.TestCase):
         
         # Test enable/disable
         plugin = TestPlugin()
-        self.assertTrue(plugin.is_enabled)
+        assert plugin.is_enabled is True
         plugin.disable()
-        self.assertFalse(plugin.is_enabled)
+        assert plugin.is_enabled is False
         plugin.enable()
-        self.assertTrue(plugin.is_enabled)
-        
+        assert plugin.is_enabled is True
+    
     def test_get_status(self):
         """Test get_status of BasePlugin."""
         # Create a concrete implementation of BasePlugin for testing
@@ -131,22 +134,23 @@ class TestBasePlugin(unittest.TestCase):
         # Test get_status
         plugin = TestPlugin()
         status = plugin.get_status()
-        self.assertEqual(status["name"], "test_plugin")
-        self.assertEqual(status["description"], "Test plugin")
-        self.assertEqual(status["version"], "1.0.0")
-        self.assertTrue(status["is_enabled"])
-        self.assertFalse(status["initialized"])
+        assert status["name"] == "test_plugin"
+        assert status["description"] == "Test plugin"
+        assert status["version"] == "1.0.0"
+        assert status["is_enabled"] is True
+        assert status["initialized"] is False
         
         # Test get_status after initialization
         plugin.initialize()
         status = plugin.get_status()
-        self.assertTrue(status["initialized"])
+        assert status["initialized"] is True
 
 
-class TestPluginManager(unittest.TestCase):
-    """Tests for the PluginManager class."""
+@pytest.mark.unit
+class TestPluginManager:
+    """Test the PluginManager class."""
     
-    def setUp(self):
+    def setup_method(self):
         """Set up test fixtures."""
         # Create a temporary directory for plugins
         self.plugins_dir = tempfile.mkdtemp()
@@ -222,198 +226,249 @@ class TestPluginManager(unittest.TestCase):
         self.TestProcessor = TestProcessor
         self.TestAnalyzer = TestAnalyzer
     
-    def tearDown(self):
+    def teardown_method(self):
         """Tear down test fixtures."""
         # Remove temporary directory
-        import shutil
         shutil.rmtree(self.plugins_dir)
     
     def test_init(self):
         """Test initialization of PluginManager."""
-        self.assertEqual(self.plugin_manager.plugins_dir, self.plugins_dir)
-        self.assertEqual(self.plugin_manager.config_file, self.config_file)
-        self.assertEqual(self.plugin_manager.plugins, {})
-        self.assertEqual(self.plugin_manager.plugin_classes, {})
-        self.assertEqual(self.plugin_manager.plugin_modules, {})
-        self.assertEqual(self.plugin_manager.connectors, {})
-        self.assertEqual(self.plugin_manager.processors, {})
-        self.assertEqual(self.plugin_manager.analyzers, {})
-        self.assertEqual(self.plugin_manager.plugin_configs["test_plugin"]["param1"], "value1")
-        self.assertEqual(self.plugin_manager.plugin_configs["test_plugin"]["param2"], 42)
+        assert self.plugin_manager.plugins_dir == self.plugins_dir
+        assert self.plugin_manager.config_file == self.config_file
+        assert self.plugin_manager.plugins == {}
+        assert self.plugin_manager.plugin_classes == {}
+        assert self.plugin_manager.plugin_modules == {}
+        assert self.plugin_manager.connectors == {}
+        assert self.plugin_manager.processors == {}
+        assert self.plugin_manager.analyzers == {}
+        assert self.plugin_manager.plugin_configs["test_plugin"]["param1"] == "value1"
+        assert self.plugin_manager.plugin_configs["test_plugin"]["param2"] == 42
     
     def test_register_connector(self):
         """Test registration of connector plugins."""
         self.plugin_manager.register_connector("test_connector", self.TestConnector)
-        self.assertIn("test_connector", self.plugin_manager.connectors)
-        self.assertIn("test_connector", self.plugin_manager.plugin_classes)
-        self.assertEqual(self.plugin_manager.connectors["test_connector"], self.TestConnector)
+        assert "test_connector" in self.plugin_manager.connectors
+        assert "test_connector" in self.plugin_manager.plugin_classes
+        assert self.plugin_manager.connectors["test_connector"] == self.TestConnector
         
         # Test registration of invalid connector
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.plugin_manager.register_connector("invalid_connector", self.TestPlugin)
     
     def test_register_processor(self):
         """Test registration of processor plugins."""
         self.plugin_manager.register_processor("test_processor", self.TestProcessor)
-        self.assertIn("test_processor", self.plugin_manager.processors)
-        self.assertIn("test_processor", self.plugin_manager.plugin_classes)
-        self.assertEqual(self.plugin_manager.processors["test_processor"], self.TestProcessor)
+        assert "test_processor" in self.plugin_manager.processors
+        assert "test_processor" in self.plugin_manager.plugin_classes
+        assert self.plugin_manager.processors["test_processor"] == self.TestProcessor
         
         # Test registration of invalid processor
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.plugin_manager.register_processor("invalid_processor", self.TestPlugin)
     
     def test_register_analyzer(self):
         """Test registration of analyzer plugins."""
         self.plugin_manager.register_analyzer("test_analyzer", self.TestAnalyzer)
-        self.assertIn("test_analyzer", self.plugin_manager.analyzers)
-        self.assertIn("test_analyzer", self.plugin_manager.plugin_classes)
-        self.assertEqual(self.plugin_manager.analyzers["test_analyzer"], self.TestAnalyzer)
+        assert "test_analyzer" in self.plugin_manager.analyzers
+        assert "test_analyzer" in self.plugin_manager.plugin_classes
+        assert self.plugin_manager.analyzers["test_analyzer"] == self.TestAnalyzer
         
         # Test registration of invalid analyzer
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.plugin_manager.register_analyzer("invalid_analyzer", self.TestPlugin)
     
-    def test_initialize_plugin(self):
-        """Test initialization of plugins."""
-        # Register a plugin
-        self.plugin_manager.register_connector("test_connector", self.TestConnector)
+    def test_load_plugin(self):
+        """Test loading plugins."""
+        # Register a plugin class
+        self.plugin_manager.plugin_classes["test_plugin"] = self.TestPlugin
         
-        # Initialize the plugin
-        result = self.plugin_manager.initialize_plugin("test_connector")
-        self.assertTrue(result)
-        self.assertIn("test_connector", self.plugin_manager.plugins)
-        self.assertTrue(self.plugin_manager.plugins["test_connector"].initialized)
-        
-        # Initialize a non-existent plugin
-        result = self.plugin_manager.initialize_plugin("non_existent_plugin")
-        self.assertFalse(result)
-        
-        # Initialize an already initialized plugin
-        result = self.plugin_manager.initialize_plugin("test_connector")
-        self.assertTrue(result)
+        # Load the plugin
+        plugin = self.plugin_manager.load_plugin("test_plugin")
+        assert plugin is not None
+        assert plugin.name == "test_plugin"
+        assert plugin.config["param1"] == "value1"
+        assert plugin.config["param2"] == 42
+        assert "test_plugin" in self.plugin_manager.plugins
+        assert self.plugin_manager.plugins["test_plugin"] == plugin
     
-    def test_initialize_all_plugins(self):
-        """Test initialization of all plugins."""
-        # Register plugins
+    def test_load_connector(self):
+        """Test loading connector plugins."""
+        # Register a connector class
         self.plugin_manager.register_connector("test_connector", self.TestConnector)
+        
+        # Load the connector
+        connector = self.plugin_manager.load_connector("test_connector")
+        assert connector is not None
+        assert connector.name == "test_connector"
+        assert "test_connector" in self.plugin_manager.plugins
+        assert self.plugin_manager.plugins["test_connector"] == connector
+    
+    def test_load_processor(self):
+        """Test loading processor plugins."""
+        # Register a processor class
         self.plugin_manager.register_processor("test_processor", self.TestProcessor)
+        
+        # Load the processor
+        processor = self.plugin_manager.load_processor("test_processor")
+        assert processor is not None
+        assert processor.name == "test_processor"
+        assert "test_processor" in self.plugin_manager.plugins
+        assert self.plugin_manager.plugins["test_processor"] == processor
+    
+    def test_load_analyzer(self):
+        """Test loading analyzer plugins."""
+        # Register an analyzer class
         self.plugin_manager.register_analyzer("test_analyzer", self.TestAnalyzer)
         
-        # Initialize all plugins
-        results = self.plugin_manager.initialize_all_plugins()
-        self.assertTrue(results["test_connector"])
-        self.assertTrue(results["test_processor"])
-        self.assertTrue(results["test_analyzer"])
-        self.assertIn("test_connector", self.plugin_manager.plugins)
-        self.assertIn("test_processor", self.plugin_manager.plugins)
-        self.assertIn("test_analyzer", self.plugin_manager.plugins)
+        # Load the analyzer
+        analyzer = self.plugin_manager.load_analyzer("test_analyzer")
+        assert analyzer is not None
+        assert analyzer.name == "test_analyzer"
+        assert "test_analyzer" in self.plugin_manager.plugins
+        assert self.plugin_manager.plugins["test_analyzer"] == analyzer
     
     def test_get_plugin(self):
-        """Test getting a plugin."""
-        # Register and initialize a plugin
-        self.plugin_manager.register_connector("test_connector", self.TestConnector)
-        self.plugin_manager.initialize_plugin("test_connector")
+        """Test getting plugins."""
+        # Register and load a plugin
+        self.plugin_manager.plugin_classes["test_plugin"] = self.TestPlugin
+        self.plugin_manager.load_plugin("test_plugin")
         
         # Get the plugin
-        plugin = self.plugin_manager.get_plugin("test_connector")
-        self.assertIsNotNone(plugin)
-        self.assertIsInstance(plugin, self.TestConnector)
+        plugin = self.plugin_manager.get_plugin("test_plugin")
+        assert plugin is not None
+        assert plugin.name == "test_plugin"
         
-        # Get a non-existent plugin
-        plugin = self.plugin_manager.get_plugin("non_existent_plugin")
-        self.assertIsNone(plugin)
+        # Test getting a non-existent plugin
+        with pytest.raises(KeyError):
+            self.plugin_manager.get_plugin("non_existent_plugin")
     
-    def test_get_all_plugins(self):
-        """Test getting all plugins."""
-        # Register and initialize plugins
+    def test_get_connector(self):
+        """Test getting connector plugins."""
+        # Register and load a connector
         self.plugin_manager.register_connector("test_connector", self.TestConnector)
-        self.plugin_manager.register_processor("test_processor", self.TestProcessor)
-        self.plugin_manager.initialize_plugin("test_connector")
-        self.plugin_manager.initialize_plugin("test_processor")
+        self.plugin_manager.load_connector("test_connector")
         
-        # Get all plugins
-        plugins = self.plugin_manager.get_all_plugins()
-        self.assertEqual(len(plugins), 2)
-        self.assertIn("test_connector", plugins)
-        self.assertIn("test_processor", plugins)
+        # Get the connector
+        connector = self.plugin_manager.get_connector("test_connector")
+        assert connector is not None
+        assert connector.name == "test_connector"
+        
+        # Test getting a non-existent connector
+        with pytest.raises(KeyError):
+            self.plugin_manager.get_connector("non_existent_connector")
     
-    def test_get_plugins_by_type(self):
-        """Test getting plugins by type."""
-        # Register and initialize plugins
+    def test_get_processor(self):
+        """Test getting processor plugins."""
+        # Register and load a processor
+        self.plugin_manager.register_processor("test_processor", self.TestProcessor)
+        self.plugin_manager.load_processor("test_processor")
+        
+        # Get the processor
+        processor = self.plugin_manager.get_processor("test_processor")
+        assert processor is not None
+        assert processor.name == "test_processor"
+        
+        # Test getting a non-existent processor
+        with pytest.raises(KeyError):
+            self.plugin_manager.get_processor("non_existent_processor")
+    
+    def test_get_analyzer(self):
+        """Test getting analyzer plugins."""
+        # Register and load an analyzer
+        self.plugin_manager.register_analyzer("test_analyzer", self.TestAnalyzer)
+        self.plugin_manager.load_analyzer("test_analyzer")
+        
+        # Get the analyzer
+        analyzer = self.plugin_manager.get_analyzer("test_analyzer")
+        assert analyzer is not None
+        assert analyzer.name == "test_analyzer"
+        
+        # Test getting a non-existent analyzer
+        with pytest.raises(KeyError):
+            self.plugin_manager.get_analyzer("non_existent_analyzer")
+    
+    def test_shutdown_plugin(self):
+        """Test shutting down plugins."""
+        # Register and load a plugin
+        self.plugin_manager.plugin_classes["test_plugin"] = self.TestPlugin
+        plugin = self.plugin_manager.load_plugin("test_plugin")
+        plugin.initialize()
+        assert plugin.initialized is True
+        
+        # Shutdown the plugin
+        self.plugin_manager.shutdown_plugin("test_plugin")
+        assert plugin.initialized is False
+    
+    def test_shutdown_all(self):
+        """Test shutting down all plugins."""
+        # Register and load multiple plugins
+        self.plugin_manager.plugin_classes["test_plugin"] = self.TestPlugin
         self.plugin_manager.register_connector("test_connector", self.TestConnector)
         self.plugin_manager.register_processor("test_processor", self.TestProcessor)
         self.plugin_manager.register_analyzer("test_analyzer", self.TestAnalyzer)
-        self.plugin_manager.initialize_plugin("test_connector")
-        self.plugin_manager.initialize_plugin("test_processor")
-        self.plugin_manager.initialize_plugin("test_analyzer")
         
-        # Get plugins by type
-        connectors = self.plugin_manager.get_plugins_by_type("connectors")
-        processors = self.plugin_manager.get_plugins_by_type("processors")
-        analyzers = self.plugin_manager.get_plugins_by_type("analyzers")
+        plugin = self.plugin_manager.load_plugin("test_plugin")
+        connector = self.plugin_manager.load_connector("test_connector")
+        processor = self.plugin_manager.load_processor("test_processor")
+        analyzer = self.plugin_manager.load_analyzer("test_analyzer")
         
-        self.assertEqual(len(connectors), 1)
-        self.assertEqual(len(processors), 1)
-        self.assertEqual(len(analyzers), 1)
-        self.assertIn("test_connector", connectors)
-        self.assertIn("test_processor", processors)
-        self.assertIn("test_analyzer", analyzers)
+        plugin.initialize()
+        connector.initialize()
+        processor.initialize()
+        analyzer.initialize()
         
-        # Get plugins by invalid type
-        invalid_plugins = self.plugin_manager.get_plugins_by_type("invalid_type")
-        self.assertEqual(len(invalid_plugins), 0)
-    
-    def test_shutdown_plugin(self):
-        """Test shutting down a plugin."""
-        # Register and initialize a plugin
-        self.plugin_manager.register_connector("test_connector", self.TestConnector)
-        self.plugin_manager.initialize_plugin("test_connector")
-        
-        # Shutdown the plugin
-        result = self.plugin_manager.shutdown_plugin("test_connector")
-        self.assertTrue(result)
-        self.assertNotIn("test_connector", self.plugin_manager.plugins)
-        
-        # Shutdown a non-existent plugin
-        result = self.plugin_manager.shutdown_plugin("non_existent_plugin")
-        self.assertFalse(result)
-    
-    def test_shutdown_all_plugins(self):
-        """Test shutting down all plugins."""
-        # Register and initialize plugins
-        self.plugin_manager.register_connector("test_connector", self.TestConnector)
-        self.plugin_manager.register_processor("test_processor", self.TestProcessor)
-        self.plugin_manager.initialize_plugin("test_connector")
-        self.plugin_manager.initialize_plugin("test_processor")
+        assert plugin.initialized is True
+        assert connector.initialized is True
+        assert processor.initialized is True
+        assert analyzer.initialized is True
         
         # Shutdown all plugins
-        results = self.plugin_manager.shutdown_all_plugins()
-        self.assertTrue(results["test_connector"])
-        self.assertTrue(results["test_processor"])
-        self.assertEqual(len(self.plugin_manager.plugins), 0)
-    
-    @patch("importlib.reload")
-    def test_reload_plugin(self, mock_reload):
-        """Test reloading a plugin."""
-        # Register and initialize a plugin
-        self.plugin_manager.register_connector("test_connector", self.TestConnector)
-        self.plugin_manager.initialize_plugin("test_connector")
+        self.plugin_manager.shutdown_all()
         
-        # Mock the plugin module
-        self.plugin_manager.plugin_modules["test_connector"] = MagicMock(__name__="test_connector")
+        assert plugin.initialized is False
+        assert connector.initialized is False
+        assert processor.initialized is False
+        assert analyzer.initialized is False
+    
+    def test_reload_plugin(self):
+        """Test reloading plugins."""
+        # Register and load a plugin
+        self.plugin_manager.plugin_classes["test_plugin"] = self.TestPlugin
+        plugin = self.plugin_manager.load_plugin("test_plugin")
+        plugin.initialize()
+        assert plugin.initialized is True
         
         # Reload the plugin
-        with patch.object(self.plugin_manager, "load_plugin", return_value=self.TestConnector):
-            result = self.plugin_manager.reload_plugin("test_connector")
-            self.assertTrue(result)
-            mock_reload.assert_called_once()
+        new_plugin = self.plugin_manager.reload_plugin("test_plugin")
+        assert new_plugin is not None
+        assert new_plugin.name == "test_plugin"
+        assert new_plugin.initialized is True
+        assert new_plugin is not plugin  # Should be a new instance
+    
+    def test_reload_config(self):
+        """Test reloading plugin configurations."""
+        # Register and load a plugin
+        self.plugin_manager.plugin_classes["test_plugin"] = self.TestPlugin
+        plugin = self.plugin_manager.load_plugin("test_plugin")
+        assert plugin.config["param1"] == "value1"
+        assert plugin.config["param2"] == 42
         
-        # Reload a non-existent plugin
-        result = self.plugin_manager.reload_plugin("non_existent_plugin")
-        self.assertFalse(result)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        # Update the config file
+        with open(self.config_file, "w") as f:
+            json.dump({
+                "test_plugin": {
+                    "param1": "new_value",
+                    "param2": 100
+                }
+            }, f)
+        
+        # Reload the config
+        self.plugin_manager.reload_config()
+        assert self.plugin_manager.plugin_configs["test_plugin"]["param1"] == "new_value"
+        assert self.plugin_manager.plugin_configs["test_plugin"]["param2"] == 100
+        
+        # Reload the plugin to apply the new config
+        plugin = self.plugin_manager.reload_plugin("test_plugin")
+        assert plugin.config["param1"] == "new_value"
+        assert plugin.config["param2"] == 100
 
