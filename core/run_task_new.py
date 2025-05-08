@@ -19,12 +19,14 @@ import asyncio
 import os
 import json
 import uuid
+import signal
+import sys
 from typing import Dict, List, Any, Optional, Set
 from datetime import datetime
 
 from core.utils.general_utils import get_logger
 from core.utils.pb_api import PbTalker
-from core.task import AsyncTaskManager, Task, create_task_id
+from core.task.unified_manager import unified_task_manager
 from core.plugins import PluginManager
 from core.plugins.connectors import ConnectorBase, DataItem
 from core.plugins.processors import ProcessorBase, ProcessedData
@@ -37,9 +39,6 @@ pb = PbTalker(wiseflow_logger)
 
 # Configure the maximum number of concurrent tasks
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
-
-# Initialize the task manager
-task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
 
 # Initialize the plugin manager
 plugin_manager = PluginManager(plugins_dir="core")
@@ -240,8 +239,8 @@ async def schedule_task():
         
         for focus in focus_points:
             # Check if there's already a task running for this focus point
-            existing_tasks = task_manager.get_tasks_by_focus(focus["id"])
-            active_tasks = [t for t in existing_tasks if t.status in ["pending", "running"]]
+            existing_tasks = await unified_task_manager.get_tasks_by_focus(focus["id"])
+            active_tasks = [t for t in existing_tasks if t.get('status') in ["pending", "running"]]
             
             if active_tasks:
                 wiseflow_logger.info(f"Focus point {focus.get('focuspoint', '')} already has active tasks")
@@ -251,30 +250,38 @@ async def schedule_task():
             sites = [_record for _record in sites_record if _record['id'] in focus.get('sites', [])]
             
             # Create a new task
-            task_id = create_task_id()
+            task_id = str(uuid.uuid4())
             auto_shutdown = focus.get("auto_shutdown", False)
             
-            task = Task(
-                task_id=task_id,
-                focus_id=focus["id"],
-                function=process_focus_point,
+            # Register the task with the unified task manager
+            await unified_task_manager.register_task(
+                name=f"Focus: {focus.get('focuspoint', '')}",
+                func=process_focus_point,
                 args=(focus, sites),
-                auto_shutdown=auto_shutdown
+                task_id=task_id,
+                task_type="focus_point",
+                description=f"Process focus point: {focus.get('focuspoint', '')}",
+                metadata={
+                    "focus_id": focus["id"],
+                    "auto_shutdown": auto_shutdown,
+                    "sites_count": len(sites)
+                }
             )
             
-            # Submit the task
-            wiseflow_logger.info(f"Submitting task {task_id} for focus point: {focus.get('focuspoint', '')}")
-            await task_manager.submit_task(task)
+            # Execute the task
+            wiseflow_logger.info(f"Executing task {task_id} for focus point: {focus.get('focuspoint', '')}")
+            await unified_task_manager.execute_task(task_id)
             
             # Save task to database
             task_record = {
                 "task_id": task_id,
                 "focus_id": focus["id"],
-                "status": "pending",
+                "status": "running",
                 "auto_shutdown": auto_shutdown,
                 "metadata": json.dumps({
                     "focus_point": focus.get("focuspoint", ""),
-                    "sites_count": len(sites)
+                    "sites_count": len(sites),
+                    "task_manager": "unified"
                 })
             }
             pb.add(collection_name='tasks', body=task_record)
@@ -283,17 +290,36 @@ async def schedule_task():
         wiseflow_logger.info("Waiting for 60 seconds before checking for new tasks...")
         await asyncio.sleep(60)
 
+def handle_shutdown_signal(signum, frame):
+    """Handle shutdown signals gracefully."""
+    wiseflow_logger.info(f"Received signal {signum}. Shutting down gracefully...")
+    
+    # Create a task to shut down the task manager
+    loop = asyncio.get_event_loop()
+    
+    async def shutdown_all():
+        await unified_task_manager.shutdown()
+    
+    loop.create_task(shutdown_all())
+    
+    # Exit after a short delay to allow tasks to complete
+    loop.call_later(5, sys.exit, 0)
+
 async def main():
     """Main entry point."""
     try:
-        wiseflow_logger.info("Starting Wiseflow with concurrent task management...")
+        # Register signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, handle_shutdown_signal)
+        signal.signal(signal.SIGTERM, handle_shutdown_signal)
+        
+        wiseflow_logger.info("Starting Wiseflow with unified task management...")
         await schedule_task()
     except KeyboardInterrupt:
         wiseflow_logger.info("Shutting down...")
-        await task_manager.shutdown()
+        await unified_task_manager.shutdown()
     except Exception as e:
         wiseflow_logger.error(f"Error in main loop: {e}")
-        await task_manager.shutdown()
+        await unified_task_manager.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())
