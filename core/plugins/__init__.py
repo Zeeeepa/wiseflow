@@ -1,11 +1,14 @@
 """
-Plugin system for WiseFlow.
+Plugin system for Wiseflow.
 
-This module provides a plugin system for extending WiseFlow functionality.
+This module provides a plugin system for extending Wiseflow functionality.
 """
 
+import os
 import logging
-from typing import Dict, Any, Optional, List, Type, Union
+import importlib
+import inspect
+from typing import Dict, List, Any, Optional, Union, Type, Callable
 
 # Import the base plugin classes and plugin manager
 from core.plugins.base import (
@@ -13,139 +16,99 @@ from core.plugins.base import (
     ConnectorPlugin,
     ProcessorPlugin,
     AnalyzerPlugin,
-    PluginManager,
-    PluginState,
-    PluginSecurityLevel,
-    PluginMetadata
+    PluginManager
 )
-
-# Import the plugin loader functions
-from core.plugins.loader import (
-    get_plugin_manager,
-    load_all_plugins,
-    initialize_all_plugins,
-    get_plugin,
-    get_processor,
-    get_analyzer,
-    get_connector,
-    get_all_processors,
-    get_all_analyzers,
-    get_all_connectors,
-    reload_plugin,
-    save_plugin_configs
-)
-
-# Import plugin security manager
-from core.plugins.security import security_manager
-
-# Import plugin compatibility manager
-from core.plugins.compatibility import compatibility_manager
-
-# Import plugin lifecycle manager
-from core.plugins.lifecycle import (
-    lifecycle_manager,
-    LifecycleEvent
-)
-
-# Import plugin resource manager
-from core.plugins.resources import (
-    resource_manager,
-    ResourceLimit,
-    ResourceUsage
-)
-
-# Import plugin isolation manager
-from core.plugins.isolation import isolation_manager
-
-# Import plugin validation manager
-from core.plugins.validation import validation_manager
 
 logger = logging.getLogger(__name__)
 
-# Get the global plugin manager instance
-plugin_manager = get_plugin_manager()
+# Global plugin manager instance
+plugin_manager = PluginManager()
 
-# Export the plugin classes and functions
-__all__ = [
-    # Base classes
-    'BasePlugin',
-    'ConnectorPlugin',
-    'ProcessorPlugin',
-    'AnalyzerPlugin',
-    'PluginManager',
-    'PluginState',
-    'PluginSecurityLevel',
-    'PluginMetadata',
+def get_plugin_manager() -> PluginManager:
+    """
+    Get the global plugin manager instance.
     
-    # Plugin manager
-    'plugin_manager',
-    'get_plugin_manager',
-    
-    # Loader functions
-    'load_all_plugins',
-    'initialize_all_plugins',
-    'get_plugin',
-    'get_processor',
-    'get_analyzer',
-    'get_connector',
-    'get_all_processors',
-    'get_all_analyzers',
-    'get_all_connectors',
-    'reload_plugin',
-    'save_plugin_configs',
-    
-    # Security
-    'security_manager',
-    
-    # Compatibility
-    'compatibility_manager',
-    
-    # Lifecycle
-    'lifecycle_manager',
-    'LifecycleEvent',
-    
-    # Resources
-    'resource_manager',
-    'ResourceLimit',
-    'ResourceUsage',
-    
-    # Isolation
-    'isolation_manager',
-    
-    # Validation
-    'validation_manager',
-    
-    # Convenience functions
-    'initialize_plugin_system'
-]
+    Returns:
+        PluginManager instance
+    """
+    return plugin_manager
 
 def initialize_plugin_system() -> Dict[str, bool]:
     """
     Initialize the plugin system.
     
-    This function loads and initializes all available plugins.
+    This function initializes the plugin system and all available plugins.
     
     Returns:
         Dictionary mapping plugin names to initialization success status
     """
-    # Configure security manager
-    security_manager.set_security_enabled(True)
-    
-    # Configure compatibility manager
-    compatibility_manager.set_system_version("4.0.0")
-    
-    # Start resource monitoring
-    resource_manager.start_monitoring()
-    
-    # Configure isolation manager
-    isolation_manager.set_isolation_enabled(True)
-    isolation_manager.set_timeout_enabled(True)
-    
-    # Configure validation manager
-    validation_manager.set_validation_enabled(True)
+    # Register connector plugins
+    from core.plugins.connectors import register_connector_plugins
+    register_connector_plugins()
     
     # Load all plugins
-    load_all_plugins()
+    plugin_manager.load_all_plugins()
     
     # Initialize all plugins
-    return initialize_all_plugins()
+    return plugin_manager.initialize_all_plugins()
+
+def get_plugin(name: str) -> Optional[BasePlugin]:
+    """
+    Get a plugin by name.
+    
+    Args:
+        name: Name of the plugin
+        
+    Returns:
+        Plugin instance if found, None otherwise
+    """
+    return plugin_manager.get_plugin(name)
+
+def get_all_plugins() -> Dict[str, BasePlugin]:
+    """
+    Get all plugins.
+    
+    Returns:
+        Dictionary of plugin instances
+    """
+    return plugin_manager.get_all_plugins()
+
+def register_plugin(plugin_class: Type[BasePlugin]) -> bool:
+    """
+    Register a plugin.
+    
+    Args:
+        plugin_class: Plugin class to register
+        
+    Returns:
+        True if registration was successful, False otherwise
+    """
+    return plugin_manager.register_plugin(plugin_class)
+
+def unregister_plugin(name: str) -> bool:
+    """
+    Unregister a plugin.
+    
+    Args:
+        name: Name of the plugin to unregister
+        
+    Returns:
+        True if unregistration was successful, False otherwise
+    """
+    return plugin_manager.unregister_plugin(name)
+
+# Export plugin classes and functions
+__all__ = [
+    'BasePlugin',
+    'ConnectorPlugin',
+    'ProcessorPlugin',
+    'AnalyzerPlugin',
+    'PluginManager',
+    'plugin_manager',
+    'get_plugin_manager',
+    'initialize_plugin_system',
+    'get_plugin',
+    'get_all_plugins',
+    'register_plugin',
+    'unregister_plugin'
+]

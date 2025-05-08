@@ -1,8 +1,8 @@
 """
 Core module for WiseFlow.
 
-This module contains the core functionality of the WiseFlow system.
+This module provides core functionality for WiseFlow, including LLM integration,
+data processing, and analysis.
 """
 
-__version__ = "3.9.3"  # Using standard version format
-
+__version__ = "0.1.0"
