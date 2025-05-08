@@ -8,9 +8,14 @@ import os
 import logging
 from typing import Dict, List, Any, Optional, Union, Type
 
-from core.plugins import PluginBase, PluginManager
-from core.plugins.processors import ProcessorBase
-from core.plugins.analyzers import AnalyzerBase
+from core.plugins import (
+    BasePlugin,
+    ConnectorPlugin,
+    ProcessorPlugin,
+    AnalyzerPlugin,
+    plugin_manager,
+    get_plugin_manager
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,29 +41,52 @@ def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "co
         
     return _plugin_manager
 
-def load_all_plugins(plugins_dir: str = "core/plugins", config_file: str = "core/plugins/config.json") -> Dict[str, PluginBase]:
+def load_all_plugins() -> Dict[str, Type[BasePlugin]]:
     """
     Load all available plugins.
     
-    Args:
-        plugins_dir: Directory containing plugins
-        config_file: Path to plugin configuration file
-        
     Returns:
-        Dictionary of loaded plugins
+        Dictionary of loaded plugin classes
     """
     # Get the plugin manager
-    plugin_manager = get_plugin_manager(plugins_dir, config_file)
+    manager = get_plugin_manager()
     
     # Load all plugins
-    plugins = plugin_manager.load_all_plugins()
+    return manager.load_all_plugins()
+
+def initialize_all_plugins(configs: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, bool]:
+    """
+    Initialize all loaded plugins.
+    
+    Args:
+        configs: Optional dictionary of plugin configurations
+        
+    Returns:
+        Dictionary mapping plugin names to initialization success status
+    """
+    # Get the plugin manager
+    manager = get_plugin_manager()
     
     # Initialize all plugins
-    plugin_manager.initialize_all_plugins()
-    
-    return plugins
+    return manager.initialize_all_plugins(configs)
 
-def get_processor(name: str) -> Optional[ProcessorBase]:
+def get_plugin(name: str) -> Optional[BasePlugin]:
+    """
+    Get a plugin by name.
+    
+    Args:
+        name: Name of the plugin
+        
+    Returns:
+        Plugin instance if found, None otherwise
+    """
+    # Get the plugin manager
+    manager = get_plugin_manager()
+    
+    # Get the plugin
+    return manager.get_plugin(name)
+
+def get_processor(name: str) -> Optional[ProcessorPlugin]:
     """
     Get a processor plugin by name.
     
@@ -68,18 +96,19 @@ def get_processor(name: str) -> Optional[ProcessorBase]:
     Returns:
         Processor plugin instance if found, None otherwise
     """
-    plugin_manager = get_plugin_manager()
+    # Get the plugin manager
+    manager = get_plugin_manager()
     
-    # Try to get the plugin directly
-    plugin = plugin_manager.get_plugin(name)
-    if plugin and isinstance(plugin, ProcessorBase):
+    # Get the plugin
+    plugin = manager.get_plugin(name)
+    
+    # Check if it's a processor
+    if plugin and isinstance(plugin, ProcessorPlugin):
         return plugin
     
-    # Try to get the plugin from the registry
-    processors = plugin_manager.get_plugins_by_type("processors")
-    return processors.get(name)
+    return None
 
-def get_analyzer(name: str) -> Optional[AnalyzerBase]:
+def get_analyzer(name: str) -> Optional[AnalyzerPlugin]:
     """
     Get an analyzer plugin by name.
     
@@ -89,36 +118,78 @@ def get_analyzer(name: str) -> Optional[AnalyzerBase]:
     Returns:
         Analyzer plugin instance if found, None otherwise
     """
-    plugin_manager = get_plugin_manager()
+    # Get the plugin manager
+    manager = get_plugin_manager()
     
-    # Try to get the plugin directly
-    plugin = plugin_manager.get_plugin(name)
-    if plugin and isinstance(plugin, AnalyzerBase):
+    # Get the plugin
+    plugin = manager.get_plugin(name)
+    
+    # Check if it's an analyzer
+    if plugin and isinstance(plugin, AnalyzerPlugin):
         return plugin
     
-    # Try to get the plugin from the registry
-    analyzers = plugin_manager.get_plugins_by_type("analyzers")
-    return analyzers.get(name)
+    return None
 
-def get_all_processors() -> Dict[str, ProcessorBase]:
+def get_connector(name: str) -> Optional[ConnectorPlugin]:
+    """
+    Get a connector plugin by name.
+    
+    Args:
+        name: Name of the connector
+        
+    Returns:
+        Connector plugin instance if found, None otherwise
+    """
+    # Get the plugin manager
+    manager = get_plugin_manager()
+    
+    # Get the plugin
+    plugin = manager.get_plugin(name)
+    
+    # Check if it's a connector
+    if plugin and isinstance(plugin, ConnectorPlugin):
+        return plugin
+    
+    return None
+
+def get_all_processors() -> Dict[str, ProcessorPlugin]:
     """
     Get all processor plugins.
     
     Returns:
         Dictionary of processor plugins
     """
-    plugin_manager = get_plugin_manager()
-    return plugin_manager.get_plugins_by_type("processors")
+    # Get the plugin manager
+    manager = get_plugin_manager()
+    
+    # Get all processors
+    return manager.get_plugins_by_type("processors")
 
-def get_all_analyzers() -> Dict[str, AnalyzerBase]:
+def get_all_analyzers() -> Dict[str, AnalyzerPlugin]:
     """
     Get all analyzer plugins.
     
     Returns:
         Dictionary of analyzer plugins
     """
-    plugin_manager = get_plugin_manager()
-    return plugin_manager.get_plugins_by_type("analyzers")
+    # Get the plugin manager
+    manager = get_plugin_manager()
+    
+    # Get all analyzers
+    return manager.get_plugins_by_type("analyzers")
+
+def get_all_connectors() -> Dict[str, ConnectorPlugin]:
+    """
+    Get all connector plugins.
+    
+    Returns:
+        Dictionary of connector plugins
+    """
+    # Get the plugin manager
+    manager = get_plugin_manager()
+    
+    # Get all connectors
+    return manager.get_plugins_by_type("connectors")
 
 def reload_plugin(name: str) -> bool:
     """
@@ -130,8 +201,11 @@ def reload_plugin(name: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    plugin_manager = get_plugin_manager()
-    return plugin_manager.reload_plugin(name)
+    # Get the plugin manager
+    manager = get_plugin_manager()
+    
+    # Reload the plugin
+    return manager.reload_plugin(name)
 
 def save_plugin_configs(config_file: Optional[str] = None) -> bool:
     """
@@ -143,5 +217,8 @@ def save_plugin_configs(config_file: Optional[str] = None) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    plugin_manager = get_plugin_manager()
-    return plugin_manager.save_plugin_configs(config_file)
+    # Get the plugin manager
+    manager = get_plugin_manager()
+    
+    # Save plugin configurations
+    return manager.save_plugin_configs(config_file)

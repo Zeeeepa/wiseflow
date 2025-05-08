@@ -2,13 +2,13 @@
 Processor plugins for Wiseflow.
 """
 
-from core.plugins.base import registry
+from core.plugins.base import ProcessorPlugin, plugin_manager
 from core.plugins.processors.text_processor import TextProcessor
 
 # Register processors
-registry.register_processor('text', TextProcessor)
+plugin_manager.register_processor('text', TextProcessor)
 
 __all__ = [
+    'ProcessorPlugin',
     'TextProcessor'
 ]
-
