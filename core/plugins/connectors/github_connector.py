@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 class GitHubConnector(ConnectorPlugin):
     """Connector for fetching data from GitHub repositories."""
     
+    name = "github_connector"
+    description = "Fetches data from GitHub repositories"
+    version = "1.0.0"
+    
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize the GitHub connector.
         
@@ -150,7 +154,8 @@ class GitHubConnector(ConnectorPlugin):
             Dict[str, Any]: Dictionary containing the fetched data
         """
         if not self.initialized:
-            self.initialize()
+            if not self.initialize():
+                return {'error': 'Failed to initialize GitHub connector'}
             
         query_type = kwargs.get('query_type', 'repo')
         
@@ -266,4 +271,3 @@ class GitHubConnector(ConnectorPlugin):
             
         else:
             raise ValueError(f"Unsupported data type: {data_type}")
-

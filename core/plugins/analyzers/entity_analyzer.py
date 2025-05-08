@@ -31,6 +31,10 @@ except LookupError:
 class EntityAnalyzer(AnalyzerPlugin):
     """Analyzer for extracting and analyzing entities from text."""
     
+    name = "entity_analyzer"
+    description = "Extracts and analyzes entities from text"
+    version = "1.0.0"
+    
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize the entity analyzer.
         
@@ -74,7 +78,8 @@ class EntityAnalyzer(AnalyzerPlugin):
             Dict[str, Any]: Analysis results containing entities and relationships
         """
         if not self.initialized:
-            self.initialize()
+            if not self.initialize():
+                return {'error': 'Failed to initialize entity analyzer', 'entities': []}
             
         # Get text from input data
         if isinstance(data, str):
@@ -333,4 +338,3 @@ class EntityAnalyzer(AnalyzerPlugin):
         except Exception as e:
             logger.error(f"Error building knowledge graph: {str(e)}")
             return {'nodes': [], 'edges': [], 'metrics': {}}
-
