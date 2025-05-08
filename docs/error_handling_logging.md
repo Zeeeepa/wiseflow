@@ -1,318 +1,517 @@
-# WiseFlow Error Handling and Logging System
+# Error Handling and Logging Guide
 
-This document provides an overview of the error handling and logging system in WiseFlow, including best practices and examples.
+This guide provides comprehensive documentation for the error handling and logging system in WiseFlow.
 
 ## Table of Contents
 
-1. [Logging System](#logging-system)
-2. [Error Handling System](#error-handling-system)
-3. [Best Practices](#best-practices)
-4. [Examples](#examples)
+1. [Introduction](#introduction)
+2. [Error Handling](#error-handling)
+   - [Exception Hierarchy](#exception-hierarchy)
+   - [Using the Handle Exceptions Decorator](#using-the-handle-exceptions-decorator)
+   - [Using the Error Handler Context Manager](#using-the-error-handler-context-manager)
+   - [Retry Mechanisms](#retry-mechanisms)
+   - [Circuit Breaker Pattern](#circuit-breaker-pattern)
+3. [Logging](#logging)
+   - [Logging Configuration](#logging-configuration)
+   - [Contextual Logging](#contextual-logging)
+   - [Standardized Logging Patterns](#standardized-logging-patterns)
+   - [Log Sampling](#log-sampling)
+4. [Best Practices](#best-practices)
+   - [Error Handling Best Practices](#error-handling-best-practices)
+   - [Logging Best Practices](#logging-best-practices)
+5. [Examples](#examples)
+   - [Error Handling Examples](#error-handling-examples)
+   - [Logging Examples](#logging-examples)
 
-## Logging System
+## Introduction
 
-WiseFlow uses [loguru](https://github.com/Delgan/loguru) for all logging needs. The logging system is configured in `core/utils/logging_config.py`.
+Proper error handling and logging are critical for system stability, debugging, and maintenance. The WiseFlow error handling and logging system provides a comprehensive set of tools for handling errors and logging information in a consistent and informative way.
 
-### Key Features
+## Error Handling
 
-- **Centralized Configuration**: All logging configuration is managed in one place.
-- **Structured Logging**: Support for JSON-formatted logs for better analysis.
-- **Contextual Logging**: Add context to logs for better debugging.
-- **Log Rotation**: Automatic log rotation based on file size.
-- **Multiple Outputs**: Log to both console and files.
-- **Error-Specific Logs**: Separate log file for errors.
+### Exception Hierarchy
 
-### Log Levels
-
-WiseFlow uses the following log levels:
-
-- **TRACE (5)**: Detailed debugging information.
-- **DEBUG (10)**: Debugging information.
-- **INFO (20)**: General information.
-- **SUCCESS (25)**: Successful operations.
-- **WARNING (30)**: Potential issues.
-- **ERROR (40)**: Errors that don't stop the application.
-- **CRITICAL (50)**: Critical errors that may stop the application.
-
-### Basic Usage
+WiseFlow provides a comprehensive exception hierarchy that allows for specific error types to be caught and handled appropriately. The base class for all WiseFlow exceptions is `WiseflowError`.
 
 ```python
-from core.utils.logging_config import logger, get_logger, with_context, LogContext
-
-# Get a logger with a specific name
-my_logger = get_logger("my_module")
-my_logger.info("This is an info message")
-
-# Add context to logs
-user_logger = with_context(user_id="123", action="login")
-user_logger.info("User logged in")
-
-# Use context manager for temporary context
-with LogContext(request_id="abc123", endpoint="/api/data"):
-    logger.info("Processing request")
-    # ... do something ...
-    logger.success("Request processed successfully")
-```
-
-### Configuration
-
-You can configure the logging system using environment variables or the configuration file:
-
-```
-LOG_LEVEL=INFO
-LOG_TO_FILE=true
-LOG_TO_CONSOLE=true
-STRUCTURED_LOGGING=false
-```
-
-## Error Handling System
-
-WiseFlow provides a comprehensive error handling system in `core/utils/error_handling.py`.
-
-### Key Features
-
-- **Error Hierarchy**: A hierarchy of error classes for different types of errors.
-- **Structured Errors**: All errors include context and can be serialized to JSON.
-- **Error Decorators**: Decorators for handling exceptions in functions.
-- **Context Managers**: Context managers for handling exceptions in blocks of code.
-- **Async Support**: Support for handling exceptions in async functions.
-
-### Error Classes
-
-WiseFlow provides the following error classes:
-
-- **WiseflowError**: Base class for all WiseFlow errors.
-- **ConnectionError**: Errors related to connections.
-- **DataProcessingError**: Errors related to data processing.
-- **ConfigurationError**: Errors related to configuration.
-- **ResourceError**: Errors related to resources.
-- **TaskError**: Errors related to tasks.
-- **PluginError**: Errors related to plugins.
-- **ValidationError**: Errors related to validation.
-- **AuthenticationError**: Errors related to authentication.
-- **AuthorizationError**: Errors related to authorization.
-- **NotFoundError**: Errors related to resources not found.
-
-### Basic Usage
-
-```python
-from core.utils.error_handling import (
-    WiseflowError, handle_exceptions, ErrorHandler, async_error_handler
+from core.utils.exceptions import (
+    WiseflowError,
+    InputError, ValidationError, MissingParameterError, InvalidParameterError,
+    ProcessingError, DataProcessingError, TransformationError, AnalysisError,
+    SystemError, ConfigurationError, ResourceError, TaskError,
+    ExternalError, ConnectionError, APIError, TimeoutError,
+    SecurityError, AuthenticationError, AuthorizationError,
+    NotFoundError
 )
-
-# Raise a WiseFlow error
-raise WiseflowError("Something went wrong", {"detail": "More information"})
-
-# Use the decorator to handle exceptions
-@handle_exceptions(
-    error_types=[ValueError, TypeError],
-    default_message="Invalid input",
-    log_error=True
-)
-def process_data(data):
-    # ... do something ...
-    return result
-
-# Use the context manager to handle exceptions
-def process_request(request):
-    with ErrorHandler(error_types=[Exception], default="default response") as handler:
-        # ... do something that might raise an exception ...
-        result = process_data(request.data)
-        return result
-    
-    if handler.error_occurred:
-        # Handle the error
-        return handler.result
-
-# Use the async utility function
-async def fetch_data(url):
-    result = await async_error_handler(
-        fetch_url(url),
-        error_types=[ConnectionError],
-        default=[],
-        context={"url": url}
-    )
-    return result
 ```
 
-## Best Practices
+The exception hierarchy is organized as follows:
 
-### Logging Best Practices
+- `WiseflowError`: Base class for all WiseFlow exceptions
+  - `InputError`: Base class for errors related to input validation
+    - `ValidationError`: Error raised when input validation fails
+    - `MissingParameterError`: Error raised when a required parameter is missing
+    - `InvalidParameterError`: Error raised when a parameter has an invalid value
+    - `FormatError`: Error raised when data has an invalid format
+  - `ProcessingError`: Base class for errors that occur during data processing
+    - `DataProcessingError`: Error raised when data processing fails
+    - `TransformationError`: Error raised when data transformation fails
+    - `AnalysisError`: Error raised when data analysis fails
+    - `ExtractionError`: Error raised when data extraction fails
+  - `SystemError`: Base class for errors related to system operations
+    - `ConfigurationError`: Error raised when there is a configuration error
+    - `ResourceError`: Error raised when there is a resource error
+    - `TaskError`: Error raised when there is a task error
+    - `ConcurrencyError`: Error raised when there is a concurrency issue
+    - `PluginError`: Error raised when there is a plugin error
+  - `ExternalError`: Base class for errors related to external services
+    - `ConnectionError`: Error raised when a connection fails
+    - `APIError`: Error raised when an API request fails
+    - `RateLimitError`: Error raised when a rate limit is exceeded
+    - `TimeoutError`: Error raised when a connection times out
+    - `ServiceUnavailableError`: Error raised when a service is unavailable
+    - `NotFoundError`: Error raised when a resource is not found
+  - `SecurityError`: Base class for security-related errors
+    - `AuthenticationError`: Error raised when authentication fails
+    - `AuthorizationError`: Error raised when authorization fails
 
-1. **Use Appropriate Log Levels**:
-   - `TRACE`: For very detailed debugging information.
-   - `DEBUG`: For debugging information.
-   - `INFO`: For general information about application progress.
-   - `SUCCESS`: For successful operations.
-   - `WARNING`: For potential issues that don't prevent the application from working.
-   - `ERROR`: For errors that don't stop the application.
-   - `CRITICAL`: For critical errors that may stop the application.
+### Using the Handle Exceptions Decorator
 
-2. **Add Context to Logs**:
-   - Always include relevant context in logs.
-   - Use `with_context()` or `LogContext` to add context.
-   - Include IDs, user information, and other relevant data.
-
-3. **Structured Logging**:
-   - Use structured logging for better analysis.
-   - Include key-value pairs instead of just messages.
-   - Enable `STRUCTURED_LOGGING` in production.
-
-4. **Log Messages**:
-   - Make log messages clear and concise.
-   - Include enough information to understand what happened.
-   - Avoid logging sensitive information.
-
-### Error Handling Best Practices
-
-1. **Use Appropriate Error Classes**:
-   - Use the most specific error class for the situation.
-   - Create new error classes if needed for specific domains.
-   - Include relevant details in the error.
-
-2. **Error Propagation**:
-   - Decide whether to handle errors locally or propagate them.
-   - Use `reraise=True` in `handle_exceptions` to propagate errors.
-   - Add context to errors as they propagate up the stack.
-
-3. **Error Recovery**:
-   - Implement recovery mechanisms for non-critical errors.
-   - Use default values or fallbacks when appropriate.
-   - Log recovery attempts and results.
-
-4. **Error Reporting**:
-   - Log all errors with appropriate context.
-   - Save critical errors to files for later analysis.
-   - Consider sending alerts for critical errors.
-
-## Examples
-
-### Example 1: Basic Logging
-
-```python
-from core.utils.logging_config import logger, get_logger
-
-# Get a logger for the current module
-logger = get_logger(__name__)
-
-def process_user(user_id, data):
-    logger.info(f"Processing user {user_id}")
-    
-    try:
-        # ... do something ...
-        logger.success(f"User {user_id} processed successfully")
-    except Exception as e:
-        logger.error(f"Error processing user {user_id}: {e}")
-        raise
-```
-
-### Example 2: Contextual Logging
-
-```python
-from core.utils.logging_config import with_context, LogContext
-
-def process_order(order_id, items):
-    # Create a logger with order context
-    order_logger = with_context(order_id=order_id, item_count=len(items))
-    
-    order_logger.info("Processing order")
-    
-    # Process each item with item context
-    for item in items:
-        with LogContext(item_id=item.id, item_type=item.type):
-            logger.info(f"Processing item {item.name}")
-            # ... process item ...
-            logger.success("Item processed")
-    
-    order_logger.success("Order processed successfully")
-```
-
-### Example 3: Error Handling with Decorator
+The `handle_exceptions` decorator provides a convenient way to handle exceptions in functions. It can be used to catch specific exception types, log errors, and provide default return values.
 
 ```python
 from core.utils.error_handling import handle_exceptions, DataProcessingError
 
 @handle_exceptions(
-    error_types=[ValueError, TypeError, KeyError],
+    error_types=[ValueError, DataProcessingError],
     default_message="Error processing data",
     log_error=True,
-    default_return=[]
+    reraise=False,
+    save_to_file=False,
+    default_return=None
 )
 def process_data(data):
-    if not isinstance(data, dict):
-        raise TypeError("Data must be a dictionary")
+    # Process data
+    if not data:
+        raise ValueError("Data cannot be empty")
     
-    if "id" not in data:
-        raise KeyError("Data must contain an ID")
-    
-    if data["value"] < 0:
-        raise ValueError("Value must be positive")
-    
-    # ... process data ...
+    # More processing
     return processed_data
 ```
 
-### Example 4: Error Handling with Context Manager
+### Using the Error Handler Context Manager
+
+The `ErrorHandler` context manager provides a way to handle exceptions in a block of code. It can be used to catch specific exception types, log errors, and provide default return values.
 
 ```python
 from core.utils.error_handling import ErrorHandler, ConnectionError
 
-def fetch_user_data(user_id):
+def fetch_data(url):
     with ErrorHandler(
-        error_types=[ConnectionError, ValueError],
-        default={"error": "Failed to fetch user data"},
-        context={"user_id": user_id}
+        error_types=[ConnectionError, TimeoutError],
+        default={"status": "error", "message": "Failed to fetch data"},
+        log_error=True,
+        save_to_file=False
     ) as handler:
-        # ... fetch data from API ...
-        return data
+        # Fetch data
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return response.json()
     
     if handler.error_occurred:
-        # Log additional information
-        logger.warning(f"Using cached data for user {user_id} due to error")
-        return get_cached_data(user_id)
+        # Handle error
+        print(f"Error: {handler.error}")
+    
+    return handler.result
 ```
 
-### Example 5: Async Error Handling
+### Retry Mechanisms
+
+WiseFlow provides retry mechanisms for operations that may fail with transient errors. The `retry` decorator and `RetryContext` context manager can be used to automatically retry operations with exponential backoff.
 
 ```python
-from core.utils.error_handling import async_error_handler, ConnectionError
+from core.utils.retry import retry, RetryContext
 
-async def fetch_data_from_multiple_sources(sources):
-    results = []
+@retry(
+    max_attempts=3,
+    delay=1.0,
+    backoff_factor=2.0,
+    jitter=True,
+    retry_on=[ConnectionError, TimeoutError],
+    max_delay=30.0,
+    log_retries=True
+)
+def fetch_data(url):
+    # Fetch data
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+def fetch_data_with_context(url):
+    for _ in range(3):
+        with RetryContext(
+            max_attempts=3,
+            delay=1.0,
+            backoff_factor=2.0,
+            jitter=True,
+            retry_on=[ConnectionError, TimeoutError],
+            max_delay=30.0,
+            log_retries=True
+        ) as retry_ctx:
+            try:
+                # Fetch data
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                if not retry_ctx.should_retry:
+                    raise
     
-    for source in sources:
-        # Use async error handler to handle exceptions
-        data = await async_error_handler(
-            fetch_from_source(source),
-            error_types=[ConnectionError, TimeoutError],
-            default=[],
-            context={"source": source}
-        )
-        
-        results.extend(data)
-    
-    return results
+    # If we get here, all retries failed
+    raise retry_ctx.last_exception
 ```
 
-### Example 6: Custom Error Class
+### Circuit Breaker Pattern
+
+The circuit breaker pattern prevents a failing service from being repeatedly called, which can lead to cascading failures. WiseFlow provides a `CircuitBreaker` class and `with_circuit_breaker` decorator for implementing this pattern.
 
 ```python
-from core.utils.error_handling import WiseflowError
+from core.utils.circuit_breaker import with_circuit_breaker, CircuitBreakerContext
 
-class PaymentError(WiseflowError):
-    """Error raised when a payment operation fails."""
+@with_circuit_breaker(
+    name="api_service",
+    failure_threshold=5,
+    recovery_timeout=60.0,
+    expected_exceptions=[ConnectionError, TimeoutError]
+)
+def call_api_service(endpoint):
+    # Call API service
+    response = requests.get(f"https://api.example.com/{endpoint}", timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+def call_api_with_context(endpoint):
+    with CircuitBreakerContext(
+        name="api_service",
+        failure_threshold=5,
+        recovery_timeout=60.0,
+        expected_exceptions=[ConnectionError, TimeoutError]
+    ):
+        # Call API service
+        response = requests.get(f"https://api.example.com/{endpoint}", timeout=10)
+        response.raise_for_status()
+        return response.json()
+```
+
+## Logging
+
+### Logging Configuration
+
+WiseFlow uses the [loguru](https://github.com/Delgan/loguru) library for logging. The logging system is configured in the `core.utils.logging_config` module.
+
+```python
+from core.utils.logging_config import configure_logging
+
+# Configure logging
+configure_logging(
+    log_level="INFO",
+    log_to_console=True,
+    log_to_file=True,
+    log_dir="/path/to/logs",
+    app_name="wiseflow",
+    structured_logging=False,
+    rotation="50 MB",
+    retention="10 days"
+)
+```
+
+### Contextual Logging
+
+Contextual logging allows you to add additional context to log messages. This can be useful for tracking requests, users, or other relevant information.
+
+```python
+from core.utils.logging_config import with_context, LogContext
+
+# Add context to logger
+user_logger = with_context(user_id="user-123", action="login")
+user_logger.info("User logged in")
+
+# Use context manager for temporary context
+with LogContext(request_id="req-123", endpoint="/api/data"):
+    logger.info("Processing request")
+    logger.debug("Request details: ...")
+    logger.success("Request processed successfully")
+```
+
+### Standardized Logging Patterns
+
+WiseFlow provides standardized logging patterns for common scenarios such as API requests, task execution, and data processing.
+
+```python
+from core.utils.enhanced_logging import (
+    log_api_request, log_task_execution, log_data_processing,
+    log_function_call
+)
+
+# Log API request
+log_api_request(
+    method="GET",
+    url="https://api.example.com/data",
+    status_code=200,
+    elapsed=0.5,
+    request_id="req-123",
+    user_id="user-456",
+    error=None,
+    request_data={"param": "value"},
+    response_data={"result": "success"}
+)
+
+# Log task execution
+log_task_execution(
+    task_id="task-123",
+    task_type="data_processing",
+    status="completed",
+    elapsed=1.5,
+    error=None,
+    metadata={"items_processed": 100}
+)
+
+# Log data processing
+log_data_processing(
+    data_type="user_data",
+    operation="validation",
+    count=100,
+    status="completed",
+    elapsed=0.8,
+    error=None,
+    metadata={"valid": 95, "invalid": 5}
+)
+
+# Log function calls
+@log_function_call(
+    log_args=True,
+    log_result=True,
+    log_level="DEBUG",
+    exclude_args=["password"],
+    mask_args={"api_key": "********"}
+)
+def process_user(user_id, password, api_key):
+    # Process user
+    return {"status": "success"}
+```
+
+### Log Sampling
+
+For high-volume logs, WiseFlow provides log sampling to reduce the volume of logs while still maintaining visibility into the system.
+
+```python
+from core.utils.enhanced_logging import sample_log
+
+# Sample logs
+@sample_log(sample_rate=0.1, min_level="INFO")
+def debug(self, message, *args, **kwargs):
+    # Original debug method
+    pass
+```
+
+## Best Practices
+
+### Error Handling Best Practices
+
+1. **Use specific exception types**: Use the most specific exception type that applies to the error condition. This makes it easier to catch and handle specific error types.
+
+2. **Include context in exceptions**: When raising exceptions, include relevant context such as the operation being performed, the data being processed, and any other information that would be useful for debugging.
+
+3. **Handle exceptions at the appropriate level**: Handle exceptions at the level where you have enough context to make a decision about how to handle the error. Don't catch exceptions too early or too late.
+
+4. **Use retry mechanisms for transient errors**: Use retry mechanisms for operations that may fail with transient errors, such as network requests or database operations.
+
+5. **Use circuit breakers for external services**: Use circuit breakers to prevent cascading failures when external services are unavailable or experiencing issues.
+
+6. **Log exceptions**: Always log exceptions with enough context to understand what went wrong and how to fix it.
+
+7. **Clean up resources**: Always clean up resources (e.g., file handles, database connections) when exceptions occur.
+
+### Logging Best Practices
+
+1. **Use appropriate log levels**: Use the appropriate log level for each message. For example, use DEBUG for detailed debugging information, INFO for general information, WARNING for potential issues, ERROR for errors that don't prevent the application from running, and CRITICAL for errors that prevent the application from running.
+
+2. **Include context in logs**: Include relevant context in log messages, such as the operation being performed, the data being processed, and any other information that would be useful for debugging.
+
+3. **Use structured logging**: Use structured logging to make it easier to parse and analyze logs.
+
+4. **Log at entry and exit points**: Log at the entry and exit points of important operations to make it easier to trace the flow of execution.
+
+5. **Use standardized logging patterns**: Use standardized logging patterns for common scenarios such as API requests, task execution, and data processing.
+
+6. **Sample high-volume logs**: Sample high-volume logs to reduce the volume of logs while still maintaining visibility into the system.
+
+7. **Monitor log performance**: Monitor the performance impact of logging and adjust as needed.
+
+## Examples
+
+### Error Handling Examples
+
+```python
+from core.utils.exceptions import ValidationError, APIError
+from core.utils.error_handling import handle_exceptions, ErrorHandler
+from core.utils.retry import retry
+from core.utils.circuit_breaker import with_circuit_breaker
+
+# Example 1: Raising specific exceptions
+def validate_user(user_data):
+    if not user_data:
+        raise ValidationError("User data cannot be empty")
     
-    def __init__(self, message, payment_id=None, amount=None, cause=None):
-        details = {
-            "payment_id": payment_id,
-            "amount": amount
-        }
-        super().__init__(message, details, cause)
+    if "name" not in user_data:
+        raise ValidationError("Name is required", field="name")
+    
+    if "age" in user_data and not isinstance(user_data["age"], int):
+        raise ValidationError("Age must be an integer", field="age", value=user_data["age"])
+    
+    return True
 
-# Usage
-try:
-    # ... payment processing ...
-except Exception as e:
-    raise PaymentError("Payment processing failed", payment_id="123", amount=100, cause=e)
+# Example 2: Using the handle_exceptions decorator
+@handle_exceptions(
+    error_types=[ValidationError],
+    default_message="Error validating user",
+    log_error=True,
+    reraise=False,
+    save_to_file=False,
+    default_return=False
+)
+def process_user(user_data):
+    # Validate user
+    validate_user(user_data)
+    
+    # Process user
+    return True
+
+# Example 3: Using the ErrorHandler context manager
+def fetch_user(user_id):
+    with ErrorHandler(
+        error_types=[APIError, TimeoutError],
+        default={"status": "error", "message": "Failed to fetch user"},
+        log_error=True,
+        save_to_file=False
+    ) as handler:
+        # Fetch user
+        response = requests.get(f"https://api.example.com/users/{user_id}", timeout=10)
+        response.raise_for_status()
+        return response.json()
+    
+    if handler.error_occurred:
+        # Handle error
+        print(f"Error: {handler.error}")
+    
+    return handler.result
+
+# Example 4: Using the retry decorator
+@retry(
+    max_attempts=3,
+    delay=1.0,
+    backoff_factor=2.0,
+    jitter=True,
+    retry_on=[ConnectionError, TimeoutError],
+    max_delay=30.0,
+    log_retries=True
+)
+def fetch_data(url):
+    # Fetch data
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+# Example 5: Using the circuit breaker decorator
+@with_circuit_breaker(
+    name="api_service",
+    failure_threshold=5,
+    recovery_timeout=60.0,
+    expected_exceptions=[ConnectionError, TimeoutError]
+)
+def call_api_service(endpoint):
+    # Call API service
+    response = requests.get(f"https://api.example.com/{endpoint}", timeout=10)
+    response.raise_for_status()
+    return response.json()
+```
+
+### Logging Examples
+
+```python
+from core.utils.logging_config import logger, with_context, LogContext
+from core.utils.enhanced_logging import (
+    log_api_request, log_task_execution, log_data_processing,
+    log_function_call, RequestContext
+)
+
+# Example 1: Basic logging
+logger.debug("This is a debug message")
+logger.info("This is an info message")
+logger.success("This is a success message")
+logger.warning("This is a warning message")
+logger.error("This is an error message")
+logger.critical("This is a critical message")
+
+# Example 2: Contextual logging
+user_logger = with_context(user_id="user-123", action="login")
+user_logger.info("User logged in")
+
+with LogContext(request_id="req-123", endpoint="/api/data"):
+    logger.info("Processing request")
+    logger.debug("Request details: ...")
+    logger.success("Request processed successfully")
+
+# Example 3: Request context
+with RequestContext(user_id="user-123", request_id="req-456"):
+    # All logs in this block will have user_id and request_id
+    logger.info("Processing request")
+    
+    # Nested function calls will inherit the context
+    process_data()
+
+# Example 4: Standardized logging patterns
+log_api_request(
+    method="GET",
+    url="https://api.example.com/data",
+    status_code=200,
+    elapsed=0.5,
+    request_id="req-123",
+    user_id="user-456",
+    error=None,
+    request_data={"param": "value"},
+    response_data={"result": "success"}
+)
+
+log_task_execution(
+    task_id="task-123",
+    task_type="data_processing",
+    status="completed",
+    elapsed=1.5,
+    error=None,
+    metadata={"items_processed": 100}
+)
+
+log_data_processing(
+    data_type="user_data",
+    operation="validation",
+    count=100,
+    status="completed",
+    elapsed=0.8,
+    error=None,
+    metadata={"valid": 95, "invalid": 5}
+)
+
+# Example 5: Function call logging
+@log_function_call(
+    log_args=True,
+    log_result=True,
+    log_level="DEBUG",
+    exclude_args=["password"],
+    mask_args={"api_key": "********"}
+)
+def process_user(user_id, password, api_key):
+    # Process user
+    return {"status": "success"}
 ```
 
