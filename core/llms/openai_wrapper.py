@@ -1,8 +1,14 @@
 import os
-from openai import AsyncOpenAI as OpenAI
-from openai import RateLimitError, APIError
 import asyncio
 from typing import List, Dict, Any, Optional
+from openai import AsyncOpenAI as OpenAI
+from openai import RateLimitError, APIError
+
+from core.utils.logging_config import logger, with_context, log_execution
+from core.utils.error_handling import (
+    handle_exceptions, WiseflowError, ConnectionError, 
+    RateLimitError as WiseflowRateLimitError
+)
 
 base_url = os.environ.get('LLM_API_BASE', "")
 token = os.environ.get('LLM_API_KEY', "")
@@ -21,6 +27,18 @@ concurrent_number = os.environ.get('LLM_CONCURRENT_NUMBER', 1)
 semaphore = asyncio.Semaphore(int(concurrent_number))
 
 
+@log_execution(log_args=True, log_result=False, level="DEBUG")
+@handle_exceptions(
+    error_types=[RateLimitError, APIError, Exception],
+    default_return="",
+    log_error=True,
+    retry_count=3,
+    retry_delay=30,
+    retry_backoff=2.0,
+    retry_condition=lambda e: isinstance(e, (RateLimitError, APIError)) and 
+                             (not hasattr(e, 'status_code') or 
+                              getattr(e, 'status_code', 0) not in [400, 401])
+)
 async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **kwargs) -> str:
     """
     Make an asynchronous call to the OpenAI API.
@@ -39,81 +57,31 @@ async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **
         The content of the API response
         
     Raises:
-        Exception: If all retries fail
+        WiseflowRateLimitError: If rate limit is exceeded
+        ConnectionError: If API connection fails
+        Exception: If other errors occur
     """
+    log_context = {
+        "model": model,
+        "message_count": len(messages),
+        "kwargs": str(kwargs)
+    }
+    
     if logger:
-        logger.debug(f'messages:\n {messages}')
+        logger.debug(f'messages:\n {messages}', **log_context)
         logger.debug(f'model: {model}')
         logger.debug(f'kwargs:\n {kwargs}')
 
     async with semaphore:  # Use semaphore to control concurrency
-        # Maximum number of retries
-        max_retries = 3
-        # Initial wait time (seconds)
-        wait_time = 30
+        response = await client.chat.completions.create(
+            messages=messages,
+            model=model,
+            **kwargs
+        )
         
-        for retry in range(max_retries):
-            try:
-                response = await client.chat.completions.create(
-                    messages=messages,
-                    model=model,
-                    **kwargs
-                )
-                
-                if logger:
-                    logger.debug(f'choices:\n {response.choices}')
-                    logger.debug(f'usage:\n {response.usage}')
-                return response.choices[0].message.content
-                
-            except RateLimitError as e:
-                # Rate limit error needs to be retried
-                error_msg = f"Rate limit error: {str(e)}. Retry {retry+1}/{max_retries}."
-                if logger:
-                    logger.warning(error_msg)
-                else:
-                    print(error_msg)
-            except APIError as e:
-                if hasattr(e, 'status_code'):
-                    if e.status_code in [400, 401]:
-                        # Client errors don't need to be retried
-                        error_msg = f"Client error: {e.status_code}. Detail: {str(e)}"
-                        if logger:
-                            logger.error(error_msg)
-                        else:
-                            print(error_msg)
-                        return ''
-                    else:
-                        # Other API errors need to be retried
-                        error_msg = f"API error: {e.status_code}. Retry {retry+1}/{max_retries}."
-                        if logger:
-                            logger.warning(error_msg)
-                        else:
-                            print(error_msg)
-                else:
-                    # Unknown API errors need to be retried
-                    error_msg = f"Unknown API error: {str(e)}. Retry {retry+1}/{max_retries}."
-                    if logger:
-                        logger.warning(error_msg)
-                    else:
-                        print(error_msg)
-            except Exception as e:
-                # Other exceptions need to be retried
-                error_msg = f"Unexpected error: {str(e)}. Retry {retry+1}/{max_retries}."
-                if logger:
-                    logger.error(error_msg)
-                else:
-                    print(error_msg)
-
-            if retry < max_retries - 1:
-                # Exponential backoff strategy
-                await asyncio.sleep(wait_time)
-                # Double the wait time for the next retry
-                wait_time *= 2
-
-    # If all retries fail
-    error_msg = "Maximum retries reached, still unable to get a valid response."
-    if logger:
-        logger.error(error_msg)
-    else:
-        print(error_msg)
-    return ''
+        if logger:
+            logger.debug(f'choices:\n {response.choices}')
+            logger.debug(f'usage:\n {response.usage}')
+        
+        with_context(**log_context).debug(f"OpenAI API call successful")
+        return response.choices[0].message.content

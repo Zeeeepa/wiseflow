@@ -3,13 +3,16 @@ import os
 import re
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set, List, Dict, Any, Union
 
 # Import our new logging configuration
-from core.utils.logging_config import logger, get_logger
+from core.utils.logging_config import logger, get_logger, log_execution
+from core.utils.error_handling import handle_exceptions, WiseflowError, ValidationError
 
 url_pattern = r'((?:https?://|www\.)[-A-Za-z0-9+&@#/%?=~_|!:,.;]*[-A-Za-z0-9+&@#/%=~_|])'
 
+@log_execution(level="DEBUG")
+@handle_exceptions(error_types=[Exception], log_error=True, default="")
 def normalize_url(url: str, base_url: str) -> str:
     """
     Normalize a URL, ensuring it has the correct format.
@@ -21,6 +24,9 @@ def normalize_url(url: str, base_url: str) -> str:
     Returns:
         Normalized URL
     """
+    if not url or not isinstance(url, str):
+        raise ValidationError("URL must be a non-empty string", {"url": str(url)})
+        
     url = url.strip()
     if url.startswith(('www.', 'WWW.')):
         _url = f"https://{url}"
@@ -44,6 +50,8 @@ def normalize_url(url: str, base_url: str) -> str:
         return _ss[0] + '//' + '/'.join(_ss[1:])
 
 
+@log_execution(level="DEBUG")
+@handle_exceptions(error_types=[Exception], log_error=True, default=False)
 def isURL(string: str) -> bool:
     """
     Check if a string is a valid URL.
@@ -54,13 +62,18 @@ def isURL(string: str) -> bool:
     Returns:
         True if the string is a valid URL, False otherwise
     """
+    if not string or not isinstance(string, str):
+        return False
+        
     if string.startswith("www."):
         string = f"https://{string}"
     result = urlparse(string)
     return result.scheme != '' and result.netloc != ''
 
 
-def extract_urls(text: str) -> set:
+@log_execution(level="DEBUG")
+@handle_exceptions(error_types=[Exception], log_error=True, default=set())
+def extract_urls(text: str) -> Set[str]:
     """
     Extract all URLs from a text.
     
@@ -70,6 +83,9 @@ def extract_urls(text: str) -> set:
     Returns:
         Set of extracted URLs
     """
+    if not text or not isinstance(text, str):
+        return set()
+        
     # Regular expression to match http, https, and www URLs
     urls = re.findall(url_pattern, text)
     # urls = {quote(url.rstrip('/'), safe='/:?=&') for url in urls}
@@ -90,6 +106,8 @@ def extract_urls(text: str) -> set:
     return cleaned_urls
 
 
+@log_execution(level="DEBUG")
+@handle_exceptions(error_types=[Exception], log_error=True, default=False)
 def isChinesePunctuation(char: str) -> bool:
     """
     Check if a character is Chinese punctuation.
@@ -100,12 +118,17 @@ def isChinesePunctuation(char: str) -> bool:
     Returns:
         True if the character is Chinese punctuation, False otherwise
     """
+    if not char or not isinstance(char, str) or len(char) != 1:
+        return False
+        
     # Define the Unicode encoding range for Chinese punctuation marks
     chinese_punctuations = set(range(0x3000, 0x303F)) | set(range(0xFF00, 0xFFEF))
     # Check if the character is within the above range
     return ord(char) in chinese_punctuations
 
 
+@log_execution(level="DEBUG")
+@handle_exceptions(error_types=[Exception], log_error=True, default=False)
 def is_chinese(string: str) -> bool:
     """
     Check if a string is mostly Chinese.
@@ -116,6 +139,9 @@ def is_chinese(string: str) -> bool:
     Returns:
         True if the string is mostly Chinese, False otherwise
     """
+    if not string or not isinstance(string, str):
+        return False
+        
     pattern = re.compile(r'[^\u4e00-\u9fa5]')
     non_chinese_count = len(pattern.findall(string))
     # It is easy to misjudge strictly according to the number of bytes less than half.
@@ -123,6 +149,8 @@ def is_chinese(string: str) -> bool:
     return (non_chinese_count/len(string)) < 0.68
 
 
+@log_execution(level="DEBUG")
+@handle_exceptions(error_types=[Exception], log_error=True, default='')
 def extract_and_convert_dates(input_string: str) -> str:
     """
     Extract and convert dates from a string to a standardized format.
@@ -143,7 +171,7 @@ def extract_and_convert_dates(input_string: str) -> str:
         r'(\d{4})\.(\d{2})\.(\d{2})',  # YYYY.MM.DD
         r'(\d{4})\\(\d{2})\\(\d{2})',  # YYYY\\MM\\DD
         r'(\d{4})(\d{2})(\d{2})',  # YYYYMMDD
-        r'(\d{4})年(\d{2})月(\d{2})日'  # YYYY年MM月DD日
+        r'(\d{4})\u5e74(\d{2})\u6708(\d{2})\u65e5'  # YYYY年MM月DD日
     ]
 
     matches = []
