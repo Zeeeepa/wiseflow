@@ -16,7 +16,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from core.export.webhook import WebhookManager, get_webhook_manager
 from core.llms.advanced.specialized_prompting import (
@@ -31,6 +31,7 @@ from core.llms.advanced.specialized_prompting import (
     TASK_EXTRACTION,
     TASK_REASONING
 )
+from core.auth import verify_api_key, get_current_user, has_role, User
 
 # Set up logging
 logging.basicConfig(
@@ -91,6 +92,17 @@ class ContentRequest(BaseModel):
     use_multi_step_reasoning: bool = Field(False, description="Whether to use multi-step reasoning")
     references: Optional[str] = Field(None, description="Optional reference materials for contextual understanding")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    
+    @validator('content_type')
+    def validate_content_type(cls, v):
+        valid_types = [
+            CONTENT_TYPE_TEXT, CONTENT_TYPE_HTML, CONTENT_TYPE_MARKDOWN,
+            CONTENT_TYPE_CODE, CONTENT_TYPE_ACADEMIC, CONTENT_TYPE_VIDEO,
+            CONTENT_TYPE_SOCIAL
+        ]
+        if v not in valid_types:
+            raise ValueError(f"Invalid content type. Must be one of: {', '.join(valid_types)}")
+        return v
 
 class BatchContentRequest(BaseModel):
     """Request model for batch content processing."""
@@ -99,6 +111,21 @@ class BatchContentRequest(BaseModel):
     explanation: str = Field("", description="Additional explanation or context")
     use_multi_step_reasoning: bool = Field(False, description="Whether to use multi-step reasoning")
     max_concurrency: int = Field(5, description="Maximum number of concurrent processes")
+    
+    @validator('max_concurrency')
+    def validate_max_concurrency(cls, v):
+        if v < 1 or v > 20:
+            raise ValueError("max_concurrency must be between 1 and 20")
+        return v
+    
+    @validator('items')
+    def validate_items(cls, v):
+        if not v:
+            raise ValueError("items list cannot be empty")
+        for item in v:
+            if 'content' not in item:
+                raise ValueError("Each item must contain 'content' field")
+        return v
 
 class WebhookRequest(BaseModel):
     """Request model for webhook operations."""
@@ -107,6 +134,18 @@ class WebhookRequest(BaseModel):
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers to include in webhook requests")
     secret: Optional[str] = Field(None, description="Optional secret for signing webhook payloads")
     description: Optional[str] = Field(None, description="Optional description of the webhook")
+    
+    @validator('endpoint')
+    def validate_endpoint(cls, v):
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError("endpoint must be a valid HTTP or HTTPS URL")
+        return v
+    
+    @validator('events')
+    def validate_events(cls, v):
+        if not v:
+            raise ValueError("events list cannot be empty")
+        return v
 
 class WebhookUpdateRequest(BaseModel):
     """Request model for webhook update operations."""
@@ -246,7 +285,7 @@ async def health_check():
 
 # Content processing endpoints
 @app.post("/api/v1/process", dependencies=[Depends(verify_api_key)])
-async def process_content(request: ContentRequest):
+async def process_content(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Process content using specialized prompting strategies.
     
@@ -270,7 +309,6 @@ async def process_content(request: ContentRequest):
         )
         
         # Trigger webhook for content processing
-        background_tasks = BackgroundTasks()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "content.processed",
