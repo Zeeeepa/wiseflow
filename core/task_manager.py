@@ -9,9 +9,11 @@ import time
 import asyncio
 import logging
 import uuid
+import threading
 from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
 from datetime import datetime
 from enum import Enum, auto
+from concurrent.futures import ThreadPoolExecutor
 
 from core.config import config
 from core.event_system import (
@@ -64,7 +66,9 @@ class Task:
         dependencies: List[str] = None,
         max_retries: int = 0,
         retry_delay: float = 1.0,
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        description: str = "",
+        tags: List[str] = None
     ):
         """
         Initialize a task.
@@ -80,6 +84,8 @@ class Task:
             max_retries: Maximum number of retries if the task fails
             retry_delay: Delay in seconds between retries
             timeout: Timeout in seconds for the task
+            description: Description of the task
+            tags: List of tags for the task
         """
         self.task_id = task_id
         self.name = name
@@ -91,6 +97,8 @@ class Task:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.timeout = timeout
+        self.description = description
+        self.tags = tags or []
         
         self.status = TaskStatus.PENDING
         self.result = None
@@ -100,6 +108,8 @@ class Task:
         self.completed_at = None
         self.retry_count = 0
         self.task_object = None
+        self._future = None
+        self._lock = asyncio.Lock()
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -119,8 +129,24 @@ class Task:
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
-            "error": str(self.error) if self.error else None
+            "error": str(self.error) if self.error else None,
+            "description": self.description,
+            "tags": self.tags
         }
+    
+    async def cancel(self) -> bool:
+        """
+        Cancel the task if it's running.
+        
+        Returns:
+            True if the task was cancelled, False otherwise
+        """
+        async with self._lock:
+            if self.status == TaskStatus.RUNNING and self.task_object:
+                if not self.task_object.done():
+                    self.task_object.cancel()
+                    return True
+            return False
 
 class TaskManager:
     """
@@ -155,22 +181,40 @@ class TaskManager:
         self.is_running = False
         self.scheduler_task = None
         
+        # Thread pool for executing CPU-bound tasks
+        self.thread_pool = ThreadPoolExecutor(
+            max_workers=config.get("TASK_THREAD_POOL_SIZE", os.cpu_count() or 4),
+            thread_name_prefix="task_worker"
+        )
+        
+        # Task metrics
+        self._metrics = {
+            "tasks_completed": 0,
+            "tasks_failed": 0,
+            "tasks_cancelled": 0,
+            "total_execution_time": 0.0,
+            "avg_execution_time": 0.0
+        }
+        self._metrics_lock = threading.RLock()
+        
         self._initialized = True
         
-        logger.info("Task manager initialized")
+        logger.info(f"Task manager initialized with max {self.max_concurrent_tasks} concurrent tasks")
     
     def register_task(
         self,
         name: str,
         func: Callable,
-        args: tuple = (),
+        *args,
         kwargs: dict = None,
         priority: TaskPriority = TaskPriority.NORMAL,
         dependencies: List[str] = None,
         max_retries: int = 0,
         retry_delay: float = 1.0,
         timeout: Optional[float] = None,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        description: str = "",
+        tags: List[str] = None
     ) -> str:
         """
         Register a task with the task manager.
@@ -178,7 +222,7 @@ class TaskManager:
         Args:
             name: Name of the task
             func: Function to execute
-            args: Arguments to pass to the function
+            *args: Arguments to pass to the function
             kwargs: Keyword arguments to pass to the function
             priority: Priority of the task
             dependencies: List of task IDs that must complete before this task
@@ -186,6 +230,8 @@ class TaskManager:
             retry_delay: Delay in seconds between retries
             timeout: Timeout in seconds for the task
             task_id: Optional task ID, if not provided a new one will be generated
+            description: Description of the task
+            tags: List of tags for the task
             
         Returns:
             Task ID
@@ -209,47 +255,42 @@ class TaskManager:
             dependencies=dependencies or [],
             max_retries=max_retries,
             retry_delay=retry_delay,
-            timeout=timeout
+            timeout=timeout,
+            description=description,
+            tags=tags
         )
         
         # Add task to manager
         self.tasks[task_id] = task
         
-def cancel_task(self, task_id: str) -> bool:
-    task = self.get_task(task_id)
-    if not task:
-        logger.warning(f"Task {task_id} not found")
-        return False
-        
-    try:
-        # Cleanup any allocated resources
-        self._cleanup_task_resources(task)
-        
-        # Cancel the task
-        if task.status == TaskStatus.RUNNING:
-            task.task_object.cancel()
-            self.running_tasks.discard(task_id)
-        elif task.status == TaskStatus.PENDING:
-            self.pending_tasks.discard(task_id)
-        elif task.status == TaskStatus.WAITING:
-            self.waiting_tasks.discard(task_id)
+        # Check if task has dependencies
+        if task.dependencies:
+            # Check if all dependencies are completed
+            can_run = True
+            for dep_id in task.dependencies:
+                dep_task = self.tasks.get(dep_id)
+                if not dep_task or dep_task.status != TaskStatus.COMPLETED:
+                    can_run = False
+                    break
             
-        task.status = TaskStatus.CANCELLED
-        task.completed_at = datetime.now()
-        self.cancelled_tasks.add(task_id)
+            if not can_run:
+                # Task has dependencies that are not completed yet
+                task.status = TaskStatus.WAITING
+                self.waiting_tasks.add(task_id)
+                logger.info(f"Task {task_id} ({name}) is waiting for dependencies")
         
         # Publish event
-        event = create_task_event(
-            EventType.TASK_CANCELLED,
-            task_id,
-            {"name": task.name, "reason": "cancelled by user"}
-        )
-        publish_sync(event)
+        try:
+            event = create_task_event(
+                EventType.TASK_CREATED,
+                task_id,
+                {"name": name, "priority": priority.name}
+            )
+            publish_sync(event)
+        except Exception as e:
+            logger.warning(f"Failed to publish task created event: {e}")
         
-        return True
-    except Exception as e:
-        logger.error(f"Error cancelling task {task_id}: {e}")
-        return False
+        logger.info(f"Task registered: {task_id} ({name})")
         return task_id
     
     def cancel_task(self, task_id: str) -> bool:
@@ -268,8 +309,8 @@ def cancel_task(self, task_id: str) -> bool:
             return False
         
         if task.status == TaskStatus.RUNNING:
-            if task.task_object and not task.task_object.done():
-                task.task_object.cancel()
+            # Create a task to cancel the running task
+            asyncio.create_task(task.cancel())
             
             self.running_tasks.discard(task_id)
             self.cancelled_tasks.add(task_id)
@@ -283,11 +324,16 @@ def cancel_task(self, task_id: str) -> bool:
             return False
         
         task.status = TaskStatus.CANCELLED
+        task.completed_at = datetime.now()
+        
+        # Update metrics
+        with self._metrics_lock:
+            self._metrics["tasks_cancelled"] += 1
         
         # Publish event
         try:
             event = create_task_event(
-                EventType.TASK_FAILED,
+                EventType.TASK_CANCELLED,
                 task_id,
                 {"name": task.name, "reason": "cancelled"}
             )
@@ -412,6 +458,41 @@ def cancel_task(self, task_id: str) -> bool:
         """
         return {task_id: task for task_id, task in self.tasks.items() if task.status == TaskStatus.WAITING}
     
+    def get_tasks_by_tag(self, tag: str) -> Dict[str, Task]:
+        """
+        Get all tasks with a specific tag.
+        
+        Args:
+            tag: Tag to filter by
+            
+        Returns:
+            Dictionary of tasks with the specified tag
+        """
+        return {task_id: task for task_id, task in self.tasks.items() if tag in task.tags}
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get task manager metrics.
+        
+        Returns:
+            Dictionary of metrics
+        """
+        with self._metrics_lock:
+            metrics = self._metrics.copy()
+        
+        # Add current task counts
+        metrics.update({
+            "pending_tasks": len(self.get_pending_tasks()),
+            "running_tasks": len(self.running_tasks),
+            "completed_tasks": len(self.completed_tasks),
+            "failed_tasks": len(self.failed_tasks),
+            "cancelled_tasks": len(self.cancelled_tasks),
+            "waiting_tasks": len(self.waiting_tasks),
+            "total_tasks": len(self.tasks)
+        })
+        
+        return metrics
+    
     async def start(self):
         """Start the task manager."""
         if self.is_running:
@@ -439,6 +520,9 @@ def cancel_task(self, task_id: str) -> bool:
         # Cancel all running tasks
         for task_id in list(self.running_tasks):
             self.cancel_task(task_id)
+        
+        # Shutdown thread pool
+        self.thread_pool.shutdown(wait=True)
         
         logger.info("Task manager stopped")
     
@@ -478,6 +562,7 @@ def cancel_task(self, task_id: str) -> bool:
                 if can_run:
                     task.status = TaskStatus.PENDING
                     self.waiting_tasks.discard(task_id)
+                    logger.info(f"Task {task_id} ({task.name}) is now ready to run")
             
             # Get pending tasks sorted by priority
             pending_tasks = sorted(
@@ -520,6 +605,8 @@ def cancel_task(self, task_id: str) -> bool:
         Args:
             task: Task to execute
         """
+        start_time = time.time()
+        
         try:
             # Execute task with timeout if specified
             if task.timeout:
@@ -527,61 +614,68 @@ def cancel_task(self, task_id: str) -> bool:
             else:
                 task.result = await self._call_task_func(task)
             
+            # Calculate execution time
+            execution_time = time.time() - start_time
+            
             # Mark task as completed
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now()
             self.running_tasks.discard(task.task_id)
             self.completed_tasks.add(task.task_id)
             
+            # Update metrics
+            with self._metrics_lock:
+                self._metrics["tasks_completed"] += 1
+                self._metrics["total_execution_time"] += execution_time
+                if self._metrics["tasks_completed"] > 0:
+                    self._metrics["avg_execution_time"] = (
+                        self._metrics["total_execution_time"] / self._metrics["tasks_completed"]
+                    )
+            
             # Publish event
             try:
                 event = create_task_event(
                     EventType.TASK_COMPLETED,
                     task.task_id,
-                    {"name": task.name}
+                    {
+                        "name": task.name,
+                        "execution_time": execution_time
+                    }
                 )
                 publish_sync(event)
             except Exception as e:
                 logger.warning(f"Failed to publish task completed event: {e}")
             
-            logger.info(f"Task completed: {task.task_id} ({task.name})")
+            logger.info(f"Task completed: {task.task_id} ({task.name}) in {execution_time:.2f}s")
             
             # Check for waiting tasks that depend on this task
-            for waiting_task_id in list(self.waiting_tasks):
-                waiting_task = self.tasks.get(waiting_task_id)
-                if not waiting_task:
-                    self.waiting_tasks.discard(waiting_task_id)
-                    continue
-                
-                if task.task_id in waiting_task.dependencies:
-                    # Check if all dependencies are completed
-                    can_run = True
-                    for dep_id in waiting_task.dependencies:
-                        dep_task = self.tasks.get(dep_id)
-                        if not dep_task or dep_task.status != TaskStatus.COMPLETED:
-                            can_run = False
-                            break
-                    
-                    if can_run:
-                        waiting_task.status = TaskStatus.PENDING
-                        self.waiting_tasks.discard(waiting_task_id)
+            await self._check_dependent_tasks(task.task_id)
         except asyncio.TimeoutError:
             # Handle timeout
+            execution_time = time.time() - start_time
             task.error = asyncio.TimeoutError(f"Task timed out after {task.timeout} seconds")
-            await self._handle_task_error(task)
+            logger.warning(f"Task {task.task_id} ({task.name}) timed out after {task.timeout}s")
+            await self._handle_task_error(task, execution_time)
         except asyncio.CancelledError:
             # Handle cancellation
+            execution_time = time.time() - start_time
             task.error = asyncio.CancelledError("Task was cancelled")
             task.status = TaskStatus.CANCELLED
             task.completed_at = datetime.now()
             self.running_tasks.discard(task.task_id)
             self.cancelled_tasks.add(task.task_id)
             
-            logger.info(f"Task cancelled: {task.task_id} ({task.name})")
+            # Update metrics
+            with self._metrics_lock:
+                self._metrics["tasks_cancelled"] += 1
+            
+            logger.info(f"Task cancelled: {task.task_id} ({task.name}) after {execution_time:.2f}s")
         except Exception as e:
             # Handle other errors
+            execution_time = time.time() - start_time
             task.error = e
-            await self._handle_task_error(task)
+            logger.error(f"Task {task.task_id} ({task.name}) failed: {e}")
+            await self._handle_task_error(task, execution_time)
     
     async def _call_task_func(self, task: Task) -> Any:
         """
@@ -594,16 +688,23 @@ def cancel_task(self, task_id: str) -> bool:
             Result of the task function
         """
         if asyncio.iscoroutinefunction(task.func):
+            # Function is already a coroutine
             return await task.func(*task.args, **task.kwargs)
         else:
-            return task.func(*task.args, **task.kwargs)
+            # Function is synchronous, run it in a thread pool
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self.thread_pool,
+                lambda: task.func(*task.args, **task.kwargs)
+            )
     
-    async def _handle_task_error(self, task: Task):
+    async def _handle_task_error(self, task: Task, execution_time: float):
         """
         Handle a task error.
         
         Args:
             task: Task that failed
+            execution_time: Time spent executing the task before it failed
         """
         # Check if we should retry
         if task.retry_count < task.max_retries:
@@ -611,10 +712,16 @@ def cancel_task(self, task_id: str) -> bool:
             task.status = TaskStatus.PENDING
             self.running_tasks.discard(task.task_id)
             
-            logger.warning(f"Task {task.task_id} ({task.name}) failed, retrying ({task.retry_count}/{task.max_retries}): {task.error}")
+            # Calculate retry delay with exponential backoff
+            retry_delay = task.retry_delay * (2 ** (task.retry_count - 1))
+            
+            logger.warning(
+                f"Task {task.task_id} ({task.name}) failed, retrying "
+                f"({task.retry_count}/{task.max_retries}) in {retry_delay:.2f}s: {task.error}"
+            )
             
             # Wait before retrying
-            await asyncio.sleep(task.retry_delay * (2 ** (task.retry_count - 1)))  # Exponential backoff
+            await asyncio.sleep(retry_delay)
         else:
             # Mark task as failed
             task.status = TaskStatus.FAILED
@@ -622,19 +729,99 @@ def cancel_task(self, task_id: str) -> bool:
             self.running_tasks.discard(task.task_id)
             self.failed_tasks.add(task.task_id)
             
+            # Update metrics
+            with self._metrics_lock:
+                self._metrics["tasks_failed"] += 1
+            
             # Publish event
             try:
                 event = create_task_event(
                     EventType.TASK_FAILED,
                     task.task_id,
-                    {"name": task.name, "error": str(task.error)}
+                    {
+                        "name": task.name,
+                        "error": str(task.error),
+                        "execution_time": execution_time
+                    }
                 )
                 publish_sync(event)
             except Exception as e:
                 logger.warning(f"Failed to publish task failed event: {e}")
             
-            logger.error(f"Task failed: {task.task_id} ({task.name}): {task.error}")
+            logger.error(f"Task failed: {task.task_id} ({task.name}) after {execution_time:.2f}s: {task.error}")
+    
+    async def _check_dependent_tasks(self, completed_task_id: str):
+        """
+        Check for waiting tasks that depend on a completed task.
+        
+        Args:
+            completed_task_id: ID of the completed task
+        """
+        for waiting_task_id in list(self.waiting_tasks):
+            waiting_task = self.tasks.get(waiting_task_id)
+            if not waiting_task:
+                self.waiting_tasks.discard(waiting_task_id)
+                continue
+            
+            if completed_task_id in waiting_task.dependencies:
+                # Check if all dependencies are completed
+                can_run = True
+                for dep_id in waiting_task.dependencies:
+                    dep_task = self.tasks.get(dep_id)
+                    if not dep_task or dep_task.status != TaskStatus.COMPLETED:
+                        can_run = False
+                        break
+                
+                if can_run:
+                    waiting_task.status = TaskStatus.PENDING
+                    self.waiting_tasks.discard(waiting_task_id)
+                    logger.info(f"Task {waiting_task_id} ({waiting_task.name}) is now ready to run")
+    
+    def cleanup_completed_tasks(self, max_age_seconds: int = 3600):
+        """
+        Clean up old completed, failed, and cancelled tasks.
+        
+        Args:
+            max_age_seconds: Maximum age of tasks to keep in seconds
+        """
+        now = datetime.now()
+        count = 0
+        
+        for task_id in list(self.completed_tasks):
+            task = self.tasks.get(task_id)
+            if not task:
+                self.completed_tasks.discard(task_id)
+                continue
+            
+            if task.completed_at and (now - task.completed_at).total_seconds() > max_age_seconds:
+                del self.tasks[task_id]
+                self.completed_tasks.discard(task_id)
+                count += 1
+        
+        for task_id in list(self.failed_tasks):
+            task = self.tasks.get(task_id)
+            if not task:
+                self.failed_tasks.discard(task_id)
+                continue
+            
+            if task.completed_at and (now - task.completed_at).total_seconds() > max_age_seconds:
+                del self.tasks[task_id]
+                self.failed_tasks.discard(task_id)
+                count += 1
+        
+        for task_id in list(self.cancelled_tasks):
+            task = self.tasks.get(task_id)
+            if not task:
+                self.cancelled_tasks.discard(task_id)
+                continue
+            
+            if task.completed_at and (now - task.completed_at).total_seconds() > max_age_seconds:
+                del self.tasks[task_id]
+                self.cancelled_tasks.discard(task_id)
+                count += 1
+        
+        if count > 0:
+            logger.info(f"Cleaned up {count} old tasks")
 
 # Create a singleton instance
 task_manager = TaskManager()
-
