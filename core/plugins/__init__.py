@@ -49,6 +49,10 @@ def initialize_plugin_system() -> Dict[str, bool]:
     Returns:
         Dictionary mapping plugin names to initialization success status
     """
+    # Register connector plugins
+    from core.plugins.connectors import register_connector_plugins
+    register_connector_plugins()
+    
     # Load all plugins
     plugin_manager.load_all_plugins()
     

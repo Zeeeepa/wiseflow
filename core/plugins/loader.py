@@ -8,38 +8,27 @@ import os
 import logging
 from typing import Dict, List, Any, Optional, Union, Type
 
-from core.plugins import (
+# Import the base plugin classes and plugin manager
+# Avoid circular imports by importing from base directly
+from core.plugins.base import (
     BasePlugin,
     ConnectorPlugin,
     ProcessorPlugin,
     AnalyzerPlugin,
-    plugin_manager,
-    get_plugin_manager
+    PluginManager,
+    plugin_manager
 )
 
 logger = logging.getLogger(__name__)
 
-# Global plugin manager instance
-_plugin_manager: Optional[PluginManager] = None
-
-def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "core/plugins/config.json") -> PluginManager:
+def get_plugin_manager() -> PluginManager:
     """
     Get the global plugin manager instance.
     
-    Args:
-        plugins_dir: Directory containing plugins
-        config_file: Path to plugin configuration file
-        
     Returns:
         PluginManager instance
     """
-    global _plugin_manager
-    
-    if _plugin_manager is None:
-        # Create a new plugin manager
-        _plugin_manager = PluginManager(plugins_dir, config_file)
-        
-    return _plugin_manager
+    return plugin_manager
 
 def load_all_plugins() -> Dict[str, Type[BasePlugin]]:
     """

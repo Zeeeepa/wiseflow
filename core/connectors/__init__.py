@@ -13,7 +13,7 @@ from datetime import datetime
 import time
 from ratelimit import limits, sleep_and_retry
 
-from core.plugins import PluginBase
+from core.plugins.base import BasePlugin
 from core.event_system import (
     EventType, Event, publish_sync,
     create_connector_event
@@ -104,7 +104,7 @@ class DataItem:
         )
 
 
-class ConnectorBase(PluginBase):
+class ConnectorBase(BasePlugin):
     """
     Base class for data source connectors.
     
@@ -131,6 +131,8 @@ class ConnectorBase(PluginBase):
         self.retry_count = self.config.get('retry_count', 3)
         self.retry_delay = self.config.get('retry_delay', 5)  # seconds
         self._initialized = False
+        self.error_count = 0
+        self.last_run = None
     
     @sleep_and_retry
     @limits(calls=60, period=60)  # default 60 calls per 60 seconds
@@ -222,6 +224,7 @@ class ConnectorBase(PluginBase):
             # Publish initialization event
             self._publish_initialization_success()
             
+            self._initialized = True
             return True
         except Exception as e:
             logger.error(f"Failed to initialize connector {self.name}: {e}")
@@ -243,7 +246,12 @@ class ConnectorBase(PluginBase):
     
     def shutdown(self) -> bool:
         """Shutdown the connector. Return True if successful, False otherwise."""
+        self._initialized = False
         return True
+    
+    def update_last_run(self) -> None:
+        """Update the last run timestamp."""
+        self.last_run = datetime.now()
     
     def _publish_initialization_success(self) -> None:
         """Publish connector initialization success event."""
