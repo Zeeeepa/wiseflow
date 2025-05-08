@@ -15,6 +15,15 @@ from core.plugins.base import (
     AnalyzerPlugin,
     PluginManager
 )
+from core.plugins.exceptions import (
+    PluginError,
+    PluginInitializationError,
+    PluginValidationError,
+    PluginInterfaceError,
+    PluginLoadError,
+    PluginDependencyError,
+    PluginResourceError
+)
 
 class TestBasePlugin(unittest.TestCase):
     """Tests for the BasePlugin class."""
@@ -141,6 +150,68 @@ class TestBasePlugin(unittest.TestCase):
         plugin.initialize()
         status = plugin.get_status()
         self.assertTrue(status["initialized"])
+        
+    def test_resource_management(self):
+        """Test resource management of BasePlugin."""
+        # Create a concrete implementation of BasePlugin for testing
+        class TestPlugin(BasePlugin):
+            name = "test_plugin"
+            
+            def initialize(self) -> bool:
+                self.initialized = True
+                return True
+        
+        # Test resource registration and release
+        plugin = TestPlugin()
+        
+        # Register a resource
+        resource = {"name": "test_resource"}
+        plugin._register_resource("test_resource", resource)
+        self.assertIn("test_resource", plugin._resources)
+        
+        # Release a resource
+        result = plugin._release_resource("test_resource")
+        self.assertTrue(result)
+        self.assertNotIn("test_resource", plugin._resources)
+        
+        # Release a non-existent resource
+        result = plugin._release_resource("non_existent_resource")
+        self.assertFalse(result)
+        
+        # Register multiple resources
+        resource1 = {"name": "resource1"}
+        resource2 = {"name": "resource2"}
+        plugin._register_resource("resource1", resource1)
+        plugin._register_resource("resource2", resource2)
+        
+        # Release all resources
+        result = plugin._release_all_resources()
+        self.assertTrue(result)
+        self.assertEqual(len(plugin._resources), 0)
+        
+    def test_validate_implementation(self):
+        """Test implementation validation of BasePlugin."""
+        # Create a valid implementation of BasePlugin
+        class ValidPlugin(BasePlugin):
+            name = "valid_plugin"
+            
+            def initialize(self) -> bool:
+                return True
+        
+        # Create an invalid implementation of BasePlugin
+        class InvalidPlugin(BasePlugin):
+            name = "invalid_plugin"
+            required_methods = ["initialize", "process"]
+            
+            def initialize(self) -> bool:
+                return True
+        
+        # Test valid implementation
+        self.assertTrue(ValidPlugin.validate_implementation())
+        
+        # Test invalid implementation
+        with self.assertRaises(PluginInterfaceError):
+            InvalidPlugin.validate_implementation()
 
 
 class TestPluginManager(unittest.TestCase):
@@ -412,8 +483,78 @@ class TestPluginManager(unittest.TestCase):
         # Reload a non-existent plugin
         result = self.plugin_manager.reload_plugin("non_existent_plugin")
         self.assertFalse(result)
+        
+    def test_register_dependency(self):
+        """Test registering dependencies between plugins."""
+        # Register plugins
+        self.plugin_manager.register_connector("test_connector", self.TestConnector)
+        self.plugin_manager.register_processor("test_processor", self.TestProcessor)
+        
+        # Register dependency
+        self.plugin_manager.register_dependency("test_processor", "test_connector")
+        
+        # Check dependency registration
+        self.assertIn("test_processor", self.plugin_manager.plugin_dependencies)
+        self.assertIn("test_connector", self.plugin_manager.plugin_dependencies["test_processor"])
+        self.assertIn("test_connector", self.plugin_manager.plugin_dependents)
+        self.assertIn("test_processor", self.plugin_manager.plugin_dependents["test_connector"])
+        
+    def test_resolve_dependencies(self):
+        """Test resolving dependencies between plugins."""
+        # Register plugins
+        self.plugin_manager.register_connector("test_connector", self.TestConnector)
+        self.plugin_manager.register_processor("test_processor", self.TestProcessor)
+        self.plugin_manager.register_analyzer("test_analyzer", self.TestAnalyzer)
+        
+        # Register dependencies
+        self.plugin_manager.register_dependency("test_processor", "test_connector")
+        self.plugin_manager.register_dependency("test_analyzer", "test_processor")
+        
+        # Resolve dependencies for analyzer
+        dependencies = self.plugin_manager.resolve_dependencies("test_analyzer")
+        
+        # Check that dependencies are resolved in the correct order
+        self.assertEqual(len(dependencies), 2)
+        self.assertEqual(dependencies[0], "test_connector")
+        self.assertEqual(dependencies[1], "test_processor")
+        
+        # Test circular dependency detection
+        self.plugin_manager.register_dependency("test_connector", "test_analyzer")
+        
+        # Resolve dependencies for analyzer (should raise an exception)
+        with self.assertRaises(PluginDependencyError):
+            self.plugin_manager.resolve_dependencies("test_analyzer")
+            
+    def test_shared_resources(self):
+        """Test shared resource management."""
+        # Register a shared resource
+        resource = {"name": "shared_resource"}
+        self.plugin_manager.register_shared_resource("shared_resource", resource)
+        
+        # Get the shared resource
+        retrieved_resource = self.plugin_manager.get_shared_resource("shared_resource")
+        self.assertEqual(retrieved_resource, resource)
+        self.assertEqual(self.plugin_manager.resource_reference_counts["shared_resource"], 1)
+        
+        # Get the shared resource again
+        retrieved_resource = self.plugin_manager.get_shared_resource("shared_resource")
+        self.assertEqual(self.plugin_manager.resource_reference_counts["shared_resource"], 2)
+        
+        # Release the shared resource
+        result = self.plugin_manager.release_shared_resource("shared_resource")
+        self.assertTrue(result)
+        self.assertEqual(self.plugin_manager.resource_reference_counts["shared_resource"], 1)
+        
+        # Release the shared resource again
+        result = self.plugin_manager.release_shared_resource("shared_resource")
+        self.assertTrue(result)
+        self.assertNotIn("shared_resource", self.plugin_manager.shared_resources)
+        self.assertNotIn("shared_resource", self.plugin_manager.resource_reference_counts)
+        
+        # Release a non-existent shared resource
+        result = self.plugin_manager.release_shared_resource("non_existent_resource")
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":
     unittest.main()
-
