@@ -104,10 +104,9 @@ wiseflow/
 
 ## Dependencies
 
-WiseFlow uses a modular dependency management approach to ensure compatibility and prevent runtime errors:
+WiseFlow uses a simplified dependency management approach:
 
-- `requirements.txt`: Main entry point that includes base requirements
-- `requirements-base.txt`: Core dependencies required for basic functionality
+- `requirements.txt`: Contains all core dependencies required for basic functionality
 - `requirements-optional.txt`: Optional dependencies for extended features
 - `requirements-dev.txt`: Dependencies needed for development and testing
 
@@ -117,27 +116,6 @@ Module-specific requirements:
 
 For detailed information about dependencies, see [DEPENDENCIES.md](DEPENDENCIES.md).
 
-### Dependency Management
-
-WiseFlow includes a dependency management script to help maintain dependencies:
-
-```bash
-# Check for outdated packages
-python scripts/dependency_check.py --check-outdated
-
-# Find unused dependencies
-python scripts/dependency_check.py --find-unused
-
-# Find missing dependencies
-python scripts/dependency_check.py --find-missing
-
-# Validate version constraints
-python scripts/dependency_check.py --validate-versions
-
-# Run all checks
-python scripts/dependency_check.py --all
-```
-
 ### Installation
 
 1. Clone the repository:
@@ -146,9 +124,34 @@ python scripts/dependency_check.py --all
    cd wiseflow
    ```
 
-2. Install dependencies:
+2. Install dependencies using the installation script:
    ```bash
+   # Basic installation (core dependencies only)
+   python install.py
+   
+   # Install with optional dependencies
+   python install.py --optional
+   
+   # Install with development dependencies
+   python install.py --dev
+   
+   # Install all dependencies (core, optional, and dev)
+   python install.py --all
+   
+   # Upgrade existing packages to the latest version
+   python install.py --upgrade
+   ```
+
+   Alternatively, you can install dependencies manually:
+   ```bash
+   # Install core dependencies only
    pip install -r requirements.txt
+   
+   # Install optional dependencies
+   pip install -r requirements-optional.txt
+   
+   # Install development dependencies
+   pip install -r requirements-dev.txt
    ```
 
 3. Set up environment variables:
@@ -363,4 +366,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-

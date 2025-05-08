@@ -1,5 +1,5 @@
-# Include base requirements
--r requirements-base.txt
+# WiseFlow Development Dependencies
+# These are dependencies needed for development and testing
 
 # Testing
 pytest>=7.0.0,<8.0.0
