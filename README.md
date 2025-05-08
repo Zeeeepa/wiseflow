@@ -24,7 +24,7 @@ WiseFlow is organized into several core components:
 ### Core Components
 
 - **Imports Module** (`core/imports.py`): Centralizes imports to avoid circular dependencies
-- **Configuration Module** (`core/config.py`): Manages configuration settings
+- **Configuration Module** (`core/config.py`): Manages configuration settings from environment variables and files
 - **Initialization Module** (`core/initialize.py`): Handles system initialization and shutdown
 - **Task Management** (`core/task_manager.py`, `core/thread_pool_manager.py`): Manages concurrent task execution
 - **Resource Monitoring** (`core/resource_monitor.py`): Monitors system resources
@@ -363,4 +363,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-

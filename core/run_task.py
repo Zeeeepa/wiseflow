@@ -115,7 +115,7 @@ async def perform_cross_source_analysis(focus):
         knowledge_graph = cross_source_analyzer.analyze(infos)
         
         # Save the knowledge graph
-        graph_dir = os.path.join(os.environ.get("PROJECT_DIR", ""), "knowledge_graphs")
+        graph_dir = os.path.join(config.get("PROJECT_DIR", "work_dir"), "knowledge_graphs")
         os.makedirs(graph_dir, exist_ok=True)
         
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")

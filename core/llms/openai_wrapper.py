@@ -3,11 +3,20 @@ from openai import AsyncOpenAI as OpenAI
 from openai import RateLimitError, APIError
 import asyncio
 from typing import List, Dict, Any, Optional
+import logging
 
-base_url = os.environ.get('LLM_API_BASE', "")
-token = os.environ.get('LLM_API_KEY', "")
+# Import the config system
+from core.config import config, get_str_config, get_int_config
+
+# Get logger
+logger = logging.getLogger(__name__)
+
+# Use the config system instead of direct environment variable access
+base_url = get_str_config('LLM_API_BASE', "")
+token = get_str_config('LLM_API_KEY', "")
 
 if not base_url and not token:
+    logger.error("LLM_API_BASE or LLM_API_KEY must be set")
     raise ValueError("LLM_API_BASE or LLM_API_KEY must be set")
 elif base_url and not token:
     client = OpenAI(base_url=base_url, api_key="not_use")
@@ -16,9 +25,9 @@ elif not base_url and token:
 else:
     client = OpenAI(api_key=token, base_url=base_url)
 
-# Set maximum concurrency based on environment variable
-concurrent_number = os.environ.get('LLM_CONCURRENT_NUMBER', 1)
-semaphore = asyncio.Semaphore(int(concurrent_number))
+# Set maximum concurrency based on configuration
+concurrent_number = get_int_config('LLM_CONCURRENT_NUMBER', 1)
+semaphore = asyncio.Semaphore(concurrent_number)
 
 
 async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **kwargs) -> str:

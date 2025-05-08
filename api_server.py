@@ -6,18 +6,24 @@ This module provides a FastAPI server for WiseFlow, enabling integration with ot
 """
 
 import os
+import sys
 import json
-import logging
+import time
 import asyncio
+import logging
+import traceback
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
+from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from core.config import config, get_str_config, get_int_config, get_bool_config
+from core.imports import logger, PbTalker, openai_llm, LiteLLMWrapper
 from core.export.webhook import WebhookManager, get_webhook_manager
 from core.llms.advanced.specialized_prompting import (
     SpecializedPromptProcessor,
@@ -59,7 +65,7 @@ app.add_middleware(
 webhook_manager = get_webhook_manager()
 
 # API key authentication
-API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
+API_KEY = get_str_config("WISEFLOW_API_KEY", "dev-api-key")
 
 def verify_api_key(x_api_key: str = Header(None)):
     """
@@ -137,7 +143,7 @@ class ContentProcessorManager:
     def __init__(self):
         """Initialize the content processor manager."""
         self.prompt_processor = SpecializedPromptProcessor(
-            default_model=os.environ.get("PRIMARY_MODEL", "gpt-3.5-turbo"),
+            default_model=get_str_config("PRIMARY_MODEL", "gpt-3.5-turbo"),
             default_temperature=0.7,
             default_max_tokens=1000,
         )
@@ -160,7 +166,7 @@ class ContentProcessorManager:
             focus_point: The focus point for extraction
             explanation: Additional explanation or context
             content_type: The type of content
-            use_multi_step_reasoning: Whether to use multi-step reasoning
+            use_multi-step_reasoning: Whether to use multi-step reasoning
             references: Optional reference materials for contextual understanding
             metadata: Additional metadata
             
@@ -645,10 +651,11 @@ async def contextual_understanding(request: ContentRequest):
         )
 
 if __name__ == "__main__":
-    # Run the FastAPI app with uvicorn
+    import uvicorn
+    
     uvicorn.run(
         "api_server:app",
-        host=os.environ.get("API_HOST", "0.0.0.0"),
-        port=int(os.environ.get("API_PORT", 8000)),
-        reload=os.environ.get("API_RELOAD", "false").lower() == "true"
+        host=get_str_config("API_HOST", "0.0.0.0"),
+        port=get_int_config("API_PORT", 8000),
+        reload=get_bool_config("API_RELOAD", False)
     )
