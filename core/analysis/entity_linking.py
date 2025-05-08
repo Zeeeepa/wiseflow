@@ -24,7 +24,134 @@ from core.utils.pb_api import PbTalker
 
 logger = logging.getLogger(__name__)
 
-# ... existing EntityRegistry class ...
+class EntityRegistry:
+    """
+    Registry for tracking and linking entities.
+    """
+    
+    def __init__(self):
+        """Initialize an empty entity registry."""
+        self.entities = {}  # Map entity_id to Entity
+        self.links = defaultdict(set)  # Map entity_id to set of linked entity_ids
+        self.vectorizer = TfidfVectorizer(min_df=1, stop_words='english')
+        
+    def add_entity(self, entity: Entity) -> None:
+        """
+        Add an entity to the registry.
+        
+        Args:
+            entity: Entity to add
+        """
+        if entity.entity_id not in self.entities:
+            self.entities[entity.entity_id] = entity
+            
+    def link_entities(self, entity_id1: str, entity_id2: str, confidence: float = 1.0) -> None:
+        """
+        Link two entities.
+        
+        Args:
+            entity_id1: ID of the first entity
+            entity_id2: ID of the second entity
+            confidence: Confidence score for the link
+        """
+        if entity_id1 not in self.entities or entity_id2 not in self.entities:
+            return
+            
+        self.links[entity_id1].add(entity_id2)
+        self.links[entity_id2].add(entity_id1)
+        
+        # Add relationships to the entities
+        entity1 = self.entities[entity_id1]
+        entity2 = self.entities[entity_id2]
+        
+        # Create a relationship from entity1 to entity2
+        relationship_id = f"link_{uuid.uuid4().hex[:8]}"
+        relationship = Relationship(
+            relationship_id=relationship_id,
+            source_id=entity_id1,
+            target_id=entity_id2,
+            relationship_type="same_as",
+            metadata={"confidence": confidence}
+        )
+        
+        # Add the relationship to entity1
+        entity1.add_relationship(relationship)
+        
+        # Create a relationship from entity2 to entity1
+        reverse_relationship_id = f"link_{uuid.uuid4().hex[:8]}"
+        reverse_relationship = Relationship(
+            relationship_id=reverse_relationship_id,
+            source_id=entity_id2,
+            target_id=entity_id1,
+            relationship_type="same_as",
+            metadata={"confidence": confidence}
+        )
+        
+        # Add the relationship to entity2
+        entity2.add_relationship(reverse_relationship)
+        
+    def get_linked_entities(self, entity_id: str) -> List[Entity]:
+        """
+        Get all entities linked to the given entity.
+        
+        Args:
+            entity_id: ID of the entity
+            
+        Returns:
+            List of linked entities
+        """
+        if entity_id not in self.entities:
+            return []
+            
+        linked_ids = self.links[entity_id]
+        return [self.entities[linked_id] for linked_id in linked_ids if linked_id in self.entities]
+        
+    def calculate_entity_similarity(self, entity1: Entity, entity2: Entity) -> Tuple[float, float]:
+        """
+        Calculate similarity between two entities.
+        
+        Args:
+            entity1: First entity
+            entity2: Second entity
+            
+        Returns:
+            Tuple of (similarity_score, confidence)
+        """
+        # If entities are of different types, they are less likely to be the same
+        if entity1.entity_type != entity2.entity_type and entity1.entity_type != "unknown" and entity2.entity_type != "unknown":
+            type_penalty = 0.5
+        else:
+            type_penalty = 1.0
+            
+        # Calculate name similarity
+        name_similarity = difflib.SequenceMatcher(None, entity1.name.lower(), entity2.name.lower()).ratio()
+        
+        # Calculate metadata similarity
+        metadata_similarity = 0.0
+        metadata_count = 0
+        
+        # Compare common metadata fields
+        common_keys = set(entity1.metadata.keys()) & set(entity2.metadata.keys())
+        for key in common_keys:
+            value1 = str(entity1.metadata[key]).lower()
+            value2 = str(entity2.metadata[key]).lower()
+            field_similarity = difflib.SequenceMatcher(None, value1, value2).ratio()
+            metadata_similarity += field_similarity
+            metadata_count += 1
+            
+        # Calculate final metadata similarity
+        if metadata_count > 0:
+            metadata_similarity /= metadata_count
+        else:
+            metadata_similarity = 0.5  # Neutral if no common metadata
+            
+        # Calculate overall similarity
+        similarity = (name_similarity * 0.6 + metadata_similarity * 0.4) * type_penalty
+        
+        # Calculate confidence based on amount of information
+        confidence = min(1.0, 0.5 + 0.1 * len(common_keys))
+        
+        return similarity, confidence
 
 # Implement the missing functions
 async def link_entities(entities: List[Entity]) -> Dict[str, List[Entity]]:
@@ -452,3 +579,4 @@ async def manual_correction(entity1_id: str, entity2_id: str, should_link: bool,
     
     # Update the link
     return update_entity_link(entity1, entity2, should_link)
+

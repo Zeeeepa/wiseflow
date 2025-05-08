@@ -1,7 +1,7 @@
 from crawl4ai import BrowserConfig, AsyncWebCrawler, CrawlerRunConfig, CacheMode
 from crawl4ai.hub import BaseCrawler
 from crawl4ai.utils import optimize_html, get_home_folder
-# from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
+from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
 from pathlib import Path
 import json
 import os
@@ -77,7 +77,8 @@ class GoogleSearchCrawler(BaseCrawler):
         else:
             organic_schema = JsonCssExtractionStrategy.generate_schema(
                 html=cleaned_html,
-                target_json_example="""{
+                target_json_example="""
+            {
             "title": "...",
             "link": "...",
             "snippet": "...",
@@ -96,7 +97,8 @@ class GoogleSearchCrawler(BaseCrawler):
         else:
             top_stories_schema = JsonCssExtractionStrategy.generate_schema(
                 html=cleaned_html,
-                target_json_example="""{
+                target_json_example="""
+            {
             "title": "...",
             "link": "...",
             "source": "Insider Monkey",
@@ -115,7 +117,8 @@ class GoogleSearchCrawler(BaseCrawler):
         else:
             suggested_query_schema = JsonCssExtractionStrategy.generate_schema(
                 html=cleaned_html,
-                target_json_example="""{
+                target_json_example="""
+            {
             "query": "A for Apple",
         }""",
                 query="""The given HTML contains the crawled HTML from Google search results. Please find the schema for each suggested query in the section "People also search for" within the given HTML. I am interested in the queries only."""
@@ -128,3 +131,4 @@ class GoogleSearchCrawler(BaseCrawler):
             "top_stories_schema": top_stories_schema,
             "suggested_query_schema": suggested_query_schema,
         }
+
