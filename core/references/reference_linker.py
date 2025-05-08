@@ -7,6 +7,7 @@ This module provides functionality for cross-referencing between sources and ref
 import os
 import logging
 import json
+import threading
 from typing import Dict, List, Any, Optional, Set, Tuple
 from datetime import datetime
 import re
@@ -25,6 +26,7 @@ class ReferenceLinker:
         """
         self.storage_path = storage_path
         os.makedirs(storage_path, exist_ok=True)
+        self._lock = threading.RLock()  # Add a lock for thread safety
         
         # Initialize link structures
         self.reference_to_sources: Dict[str, Set[str]] = {}  # reference_id -> set of source_ids
@@ -44,7 +46,7 @@ class ReferenceLinker:
         
         if os.path.exists(ref_to_sources_path):
             try:
-                with open(ref_to_sources_path, 'r') as f:
+                with open(ref_to_sources_path, 'r', encoding='utf-8') as f:
                     # Convert lists back to sets
                     data = json.load(f)
                     self.reference_to_sources = {k: set(v) for k, v in data.items()}
@@ -55,7 +57,7 @@ class ReferenceLinker:
         
         if os.path.exists(source_to_refs_path):
             try:
-                with open(source_to_refs_path, 'r') as f:
+                with open(source_to_refs_path, 'r', encoding='utf-8') as f:
                     # Convert lists back to sets
                     data = json.load(f)
                     self.source_to_references = {k: set(v) for k, v in data.items()}
@@ -66,7 +68,7 @@ class ReferenceLinker:
         
         if os.path.exists(entity_links_path):
             try:
-                with open(entity_links_path, 'r') as f:
+                with open(entity_links_path, 'r', encoding='utf-8') as f:
                     # Convert nested lists back to sets
                     data = json.load(f)
                     self.entity_links = {
@@ -80,7 +82,7 @@ class ReferenceLinker:
         
         if os.path.exists(keyword_links_path):
             try:
-                with open(keyword_links_path, 'r') as f:
+                with open(keyword_links_path, 'r', encoding='utf-8') as f:
                     # Convert nested lists back to sets
                     data = json.load(f)
                     self.keyword_links = {
@@ -94,37 +96,50 @@ class ReferenceLinker:
     
     def _save_links(self) -> None:
         """Save links to disk."""
-        ref_to_sources_path = os.path.join(self.storage_path, "reference_to_sources.json")
-        source_to_refs_path = os.path.join(self.storage_path, "source_to_references.json")
-        entity_links_path = os.path.join(self.storage_path, "entity_links.json")
-        keyword_links_path = os.path.join(self.storage_path, "keyword_links.json")
-        
-        try:
-            # Convert sets to lists for JSON serialization
-            with open(ref_to_sources_path, 'w') as f:
-                json.dump({k: list(v) for k, v in self.reference_to_sources.items()}, f)
+        with self._lock:
+            ref_to_sources_path = os.path.join(self.storage_path, "reference_to_sources.json")
+            source_to_refs_path = os.path.join(self.storage_path, "source_to_references.json")
+            entity_links_path = os.path.join(self.storage_path, "entity_links.json")
+            keyword_links_path = os.path.join(self.storage_path, "keyword_links.json")
             
-            with open(source_to_refs_path, 'w') as f:
-                json.dump({k: list(v) for k, v in self.source_to_references.items()}, f)
-            
-            # Convert nested sets to lists for JSON serialization
-            with open(entity_links_path, 'w') as f:
-                entity_data = {
-                    entity: {ref_id: list(source_ids) for ref_id, source_ids in refs.items()}
-                    for entity, refs in self.entity_links.items()
-                }
-                json.dump(entity_data, f)
-            
-            with open(keyword_links_path, 'w') as f:
-                keyword_data = {
-                    keyword: {ref_id: list(source_ids) for ref_id, source_ids in refs.items()}
-                    for keyword, refs in self.keyword_links.items()
-                }
-                json.dump(keyword_data, f)
-            
-            logger.info(f"Saved links for {len(self.reference_to_sources)} references, {len(self.source_to_references)} sources, {len(self.entity_links)} entities, and {len(self.keyword_links)} keywords")
-        except Exception as e:
-            logger.error(f"Error saving links: {e}")
+            try:
+                # Create temporary files first to avoid corruption
+                ref_to_sources_temp = ref_to_sources_path + ".tmp"
+                source_to_refs_temp = source_to_refs_path + ".tmp"
+                entity_links_temp = entity_links_path + ".tmp"
+                keyword_links_temp = keyword_links_path + ".tmp"
+                
+                # Convert sets to lists for JSON serialization
+                with open(ref_to_sources_temp, 'w', encoding='utf-8') as f:
+                    json.dump({k: list(v) for k, v in self.reference_to_sources.items()}, f, indent=2)
+                
+                with open(source_to_refs_temp, 'w', encoding='utf-8') as f:
+                    json.dump({k: list(v) for k, v in self.source_to_references.items()}, f, indent=2)
+                
+                # Convert nested sets to lists for JSON serialization
+                with open(entity_links_temp, 'w', encoding='utf-8') as f:
+                    entity_data = {
+                        entity: {ref_id: list(source_ids) for ref_id, source_ids in refs.items()}
+                        for entity, refs in self.entity_links.items()
+                    }
+                    json.dump(entity_data, f, indent=2)
+                
+                with open(keyword_links_temp, 'w', encoding='utf-8') as f:
+                    keyword_data = {
+                        keyword: {ref_id: list(source_ids) for ref_id, source_ids in refs.items()}
+                        for keyword, refs in self.keyword_links.items()
+                    }
+                    json.dump(keyword_data, f, indent=2)
+                
+                # Rename temporary files to final files
+                os.replace(ref_to_sources_temp, ref_to_sources_path)
+                os.replace(source_to_refs_temp, source_to_refs_path)
+                os.replace(entity_links_temp, entity_links_path)
+                os.replace(keyword_links_temp, keyword_links_path)
+                
+                logger.info(f"Saved links for {len(self.reference_to_sources)} references, {len(self.source_to_references)} sources, {len(self.entity_links)} entities, and {len(self.keyword_links)} keywords")
+            except Exception as e:
+                logger.error(f"Error saving links: {e}")
     
     def add_link(self, reference_id: str, source_id: str) -> bool:
         """
@@ -138,21 +153,22 @@ class ReferenceLinker:
             True if the link was added successfully, False otherwise
         """
         try:
-            # Add to reference-to-sources mapping
-            if reference_id not in self.reference_to_sources:
-                self.reference_to_sources[reference_id] = set()
-            self.reference_to_sources[reference_id].add(source_id)
-            
-            # Add to source-to-references mapping
-            if source_id not in self.source_to_references:
-                self.source_to_references[source_id] = set()
-            self.source_to_references[source_id].add(reference_id)
-            
-            # Save the updated links
-            self._save_links()
-            
-            logger.info(f"Added link between reference {reference_id} and source {source_id}")
-            return True
+            with self._lock:
+                # Add to reference-to-sources mapping
+                if reference_id not in self.reference_to_sources:
+                    self.reference_to_sources[reference_id] = set()
+                self.reference_to_sources[reference_id].add(source_id)
+                
+                # Add to source-to-references mapping
+                if source_id not in self.source_to_references:
+                    self.source_to_references[source_id] = set()
+                self.source_to_references[source_id].add(reference_id)
+                
+                # Save the updated links
+                self._save_links()
+                
+                logger.info(f"Added link between reference {reference_id} and source {source_id}")
+                return True
         except Exception as e:
             logger.error(f"Error adding link between reference {reference_id} and source {source_id}: {e}")
             return False
@@ -169,41 +185,42 @@ class ReferenceLinker:
             True if the link was removed successfully, False otherwise
         """
         try:
-            # Remove from reference-to-sources mapping
-            if reference_id in self.reference_to_sources:
-                self.reference_to_sources[reference_id].discard(source_id)
-                if not self.reference_to_sources[reference_id]:
-                    del self.reference_to_sources[reference_id]
-            
-            # Remove from source-to-references mapping
-            if source_id in self.source_to_references:
-                self.source_to_references[source_id].discard(reference_id)
-                if not self.source_to_references[source_id]:
-                    del self.source_to_references[source_id]
-            
-            # Remove from entity links
-            for entity, refs in list(self.entity_links.items()):
-                if reference_id in refs:
-                    refs[reference_id].discard(source_id)
-                    if not refs[reference_id]:
-                        del refs[reference_id]
-                    if not refs:
-                        del self.entity_links[entity]
-            
-            # Remove from keyword links
-            for keyword, refs in list(self.keyword_links.items()):
-                if reference_id in refs:
-                    refs[reference_id].discard(source_id)
-                    if not refs[reference_id]:
-                        del refs[reference_id]
-                    if not refs:
-                        del self.keyword_links[keyword]
-            
-            # Save the updated links
-            self._save_links()
-            
-            logger.info(f"Removed link between reference {reference_id} and source {source_id}")
-            return True
+            with self._lock:
+                # Remove from reference-to-sources mapping
+                if reference_id in self.reference_to_sources:
+                    self.reference_to_sources[reference_id].discard(source_id)
+                    if not self.reference_to_sources[reference_id]:
+                        del self.reference_to_sources[reference_id]
+                
+                # Remove from source-to-references mapping
+                if source_id in self.source_to_references:
+                    self.source_to_references[source_id].discard(reference_id)
+                    if not self.source_to_references[source_id]:
+                        del self.source_to_references[source_id]
+                
+                # Remove from entity links
+                for entity, refs in list(self.entity_links.items()):
+                    if reference_id in refs:
+                        refs[reference_id].discard(source_id)
+                        if not refs[reference_id]:
+                            del refs[reference_id]
+                        if not refs:
+                            del self.entity_links[entity]
+                
+                # Remove from keyword links
+                for keyword, refs in list(self.keyword_links.items()):
+                    if reference_id in refs:
+                        refs[reference_id].discard(source_id)
+                        if not refs[reference_id]:
+                            del refs[reference_id]
+                        if not refs:
+                            del self.keyword_links[keyword]
+                
+                # Save the updated links
+                self._save_links()
+                
+                logger.info(f"Removed link between reference {reference_id} and source {source_id}")
+                return True
         except Exception as e:
             logger.error(f"Error removing link between reference {reference_id} and source {source_id}: {e}")
             return False
@@ -221,26 +238,27 @@ class ReferenceLinker:
             True if the link was added successfully, False otherwise
         """
         try:
-            # Normalize entity name
-            entity = entity.lower().strip()
-            
-            # Add to entity links
-            if entity not in self.entity_links:
-                self.entity_links[entity] = {}
-            
-            if reference_id not in self.entity_links[entity]:
-                self.entity_links[entity][reference_id] = set()
-            
-            self.entity_links[entity][reference_id].add(source_id)
-            
-            # Also add a regular link
-            self.add_link(reference_id, source_id)
-            
-            # Save the updated links
-            self._save_links()
-            
-            logger.info(f"Added entity link for '{entity}' between reference {reference_id} and source {source_id}")
-            return True
+            with self._lock:
+                # Normalize entity name
+                entity = entity.lower().strip()
+                
+                # Add to entity links
+                if entity not in self.entity_links:
+                    self.entity_links[entity] = {}
+                
+                if reference_id not in self.entity_links[entity]:
+                    self.entity_links[entity][reference_id] = set()
+                
+                self.entity_links[entity][reference_id].add(source_id)
+                
+                # Also add a regular link
+                self.add_link(reference_id, source_id)
+                
+                # Save the updated links
+                self._save_links()
+                
+                logger.info(f"Added entity link for '{entity}' between reference {reference_id} and source {source_id}")
+                return True
         except Exception as e:
             logger.error(f"Error adding entity link for '{entity}' between reference {reference_id} and source {source_id}: {e}")
             return False
@@ -258,26 +276,27 @@ class ReferenceLinker:
             True if the link was added successfully, False otherwise
         """
         try:
-            # Normalize keyword
-            keyword = keyword.lower().strip()
-            
-            # Add to keyword links
-            if keyword not in self.keyword_links:
-                self.keyword_links[keyword] = {}
-            
-            if reference_id not in self.keyword_links[keyword]:
-                self.keyword_links[keyword][reference_id] = set()
-            
-            self.keyword_links[keyword][reference_id].add(source_id)
-            
-            # Also add a regular link
-            self.add_link(reference_id, source_id)
-            
-            # Save the updated links
-            self._save_links()
-            
-            logger.info(f"Added keyword link for '{keyword}' between reference {reference_id} and source {source_id}")
-            return True
+            with self._lock:
+                # Normalize keyword
+                keyword = keyword.lower().strip()
+                
+                # Add to keyword links
+                if keyword not in self.keyword_links:
+                    self.keyword_links[keyword] = {}
+                
+                if reference_id not in self.keyword_links[keyword]:
+                    self.keyword_links[keyword][reference_id] = set()
+                
+                self.keyword_links[keyword][reference_id].add(source_id)
+                
+                # Also add a regular link
+                self.add_link(reference_id, source_id)
+                
+                # Save the updated links
+                self._save_links()
+                
+                logger.info(f"Added keyword link for '{keyword}' between reference {reference_id} and source {source_id}")
+                return True
         except Exception as e:
             logger.error(f"Error adding keyword link for '{keyword}' between reference {reference_id} and source {source_id}: {e}")
             return False

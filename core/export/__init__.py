@@ -18,6 +18,7 @@ import threading
 import time
 import requests
 from pathlib import Path
+import contextlib
 
 # Configure logging
 logging.basicConfig(
@@ -183,6 +184,7 @@ class ExportManager:
         self.scheduler_thread = None
         self.scheduler_running = False
         self.data_provider = SampleDataProvider()
+        self._lock = threading.RLock()  # Add a lock for thread safety
         
         # Create export directory if it doesn't exist
         os.makedirs(export_dir, exist_ok=True)
@@ -229,10 +231,11 @@ class ExportManager:
         Returns:
             Created template
         """
-        template = ExportTemplate(name, structure)
-        self.templates[name] = template
-        self._save_templates()
-        return template
+        with self._lock:
+            template = ExportTemplate(name, structure)
+            self.templates[name] = template
+            self._save_templates()
+            return template
     
     def get_template(self, name: str) -> Optional[ExportTemplate]:
         """
@@ -265,11 +268,12 @@ class ExportManager:
         Returns:
             True if deleted, False otherwise
         """
-        if name in self.templates:
-            del self.templates[name]
-            self._save_templates()
-            return True
-        return False
+        with self._lock:
+            if name in self.templates:
+                del self.templates[name]
+                self._save_templates()
+                return True
+            return False
     
     def export_to_format(self, 
                          data: List[Dict[str, Any]], 
@@ -288,238 +292,70 @@ class ExportManager:
         Returns:
             Path to the exported file
         """
+        # Validate format
         if format not in ExportFormat.all():
-            raise ValueError(f"Unsupported format: {format}")
+            raise ValueError(f"Unsupported export format: {format}")
         
         # Apply template if specified
         if template_name:
             template = self.get_template(template_name)
-            if template:
-                data = template.apply(data)
-            else:
-                logger.warning(f"Template not found: {template_name}")
+            if not template:
+                raise ValueError(f"Template not found: {template_name}")
+            data = template.apply(data)
         
         # Generate filename if not provided
         if not filename:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"export_{timestamp}"
         
-        # Ensure filename doesn't have extension
-        filename = os.path.splitext(filename)[0]
+        # Create export directory if it doesn't exist
+        os.makedirs(self.export_dir, exist_ok=True)
         
-        # Create full path
+        # Export to the specified format
         filepath = os.path.join(self.export_dir, f"{filename}.{format}")
         
-        # Export based on format
-        if format == ExportFormat.CSV:
-            self._export_to_csv(data, filepath)
-        elif format == ExportFormat.JSON:
-            self._export_to_json(data, filepath)
-        elif format == ExportFormat.XML:
-            self._export_to_xml(data, filepath)
-        elif format == ExportFormat.PDF:
-            self._export_to_pdf(data, filepath)
-        
-        # Record in export history
-        self.export_history.append({
-            "format": format,
-            "filepath": filepath,
-            "timestamp": datetime.now().isoformat(),
-            "record_count": len(data),
-            "template": template_name
-        })
-        
-        return filepath
-    
-    def _export_to_csv(self, data: List[Dict[str, Any]], filepath: str) -> None:
-        """
-        Export data to CSV.
-        
-        Args:
-            data: Data to export
-            filepath: Path to save the CSV file
-        """
         try:
-            # Handle empty data case
-            if not data:
-                with open(filepath, 'w', newline='', encoding='utf-8') as f:
-                    f.write("# No data to export\n")
-                logger.info(f"Created empty CSV file: {filepath}")
-                return
+            # Import the appropriate exporter module
+            if format == ExportFormat.CSV:
+                from core.export.formats.csv_exporter import export_to_csv
+                export_to_csv(data, filepath)
+            elif format == ExportFormat.JSON:
+                from core.export.formats.json_exporter import export_to_json
+                export_to_json(data, filepath)
+            elif format == ExportFormat.XML:
+                from core.export.formats.xml_exporter import export_to_xml
+                export_to_xml(data, filepath)
+            elif format == ExportFormat.PDF:
+                from core.export.formats.pdf_exporter import export_to_pdf
+                export_to_pdf(data, filepath)
             
-            # Get all possible fields from all records
-            fieldnames = set()
-            for item in data:
-                fieldnames.update(item.keys())
-            fieldnames = sorted(fieldnames)
+            # Record the export in history
+            self.export_history.append({
+                "format": format,
+                "filepath": filepath,
+                "timestamp": datetime.now().isoformat(),
+                "record_count": len(data),
+                "template": template_name
+            })
             
-            with open(filepath, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                
-                for item in data:
-                    # Convert non-string values to strings
-                    row = {}
-                    for key, value in item.items():
-                        if isinstance(value, (list, dict)):
-                            row[key] = json.dumps(value)
-                        elif isinstance(value, datetime):
-                            row[key] = value.isoformat()
-                        else:
-                            row[key] = value
-                    
-                    writer.writerow(row)
+            # Limit history size
+            if len(self.export_history) > 100:
+                self.export_history = self.export_history[-100:]
             
-            logger.info(f"Exported {len(data)} records to CSV: {filepath}")
+            logger.info(f"Exported {len(data)} records to {format.upper()}: {filepath}")
+            
+            return filepath
         except Exception as e:
-            logger.error(f"CSV export failed: {str(e)}")
-            raise
-    
-    def _export_to_json(self, data: List[Dict[str, Any]], filepath: str) -> None:
-        """
-        Export data to JSON.
-        
-        Args:
-            data: Data to export
-            filepath: Path to save the JSON file
-        """
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, default=str)
-            
-            logger.info(f"Exported {len(data)} records to JSON: {filepath}")
-        except Exception as e:
-            logger.error(f"JSON export failed: {str(e)}")
-            raise
-    
-    def _export_to_xml(self, data: List[Dict[str, Any]], filepath: str) -> None:
-        """
-        Export data to XML.
-        
-        Args:
-            data: Data to export
-            filepath: Path to save the XML file
-        """
-        try:
-            root = ET.Element("data")
-            
-            for item in data:
-                record = ET.SubElement(root, "record")
-                
-                for key, value in item.items():
-                    field = ET.SubElement(record, key)
-                    
-                    if isinstance(value, (list, dict)):
-                        field.text = json.dumps(value)
-                    elif isinstance(value, datetime):
-                        field.text = value.isoformat()
-                    elif value is not None:
-                        field.text = str(value)
-            
-            # Pretty print XML
-            xml_str = ET.tostring(root, encoding='utf-8')
-            dom = xml.dom.minidom.parseString(xml_str)
-            pretty_xml = dom.toprettyxml(indent="  ")
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(pretty_xml)
-            
-            logger.info(f"Exported {len(data)} records to XML: {filepath}")
-        except Exception as e:
-            logger.error(f"XML export failed: {str(e)}")
-            raise
-    
-    def _export_to_pdf(self, data: List[Dict[str, Any]], filepath: str) -> None:
-        """
-        Export data to PDF.
-        
-        Args:
-            data: Data to export
-            filepath: Path to save the PDF file
-        """
-        try:
-            # Import here to avoid dependency issues
-            try:
-                from reportlab.lib.pagesizes import letter
-                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-                from reportlab.lib.styles import getSampleStyleSheet
-                from reportlab.lib import colors
-                from reportlab.lib.units import inch
-            except ImportError:
-                logger.error("PDF export requires reportlab. Install with: pip install reportlab")
-                raise ImportError("PDF export requires reportlab")
-            
-            doc = SimpleDocTemplate(filepath, pagesize=letter)
-            elements = []
-            
-            # Add document title and timestamp
-            styles = getSampleStyleSheet()
-            title_style = styles['Title']
-            normal_style = styles['Normal']
-            
-            # Add document title and timestamp
-            elements.append(Paragraph(f"Export - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", title_style))
-            elements.append(Spacer(1, 0.25 * inch))
-            
-            if not data:
-                elements.append(Paragraph("No data to export", normal_style))
-            else:
-                # Get all possible fields from all records
-                fieldnames = set()
-                for item in data:
-                    fieldnames.update(item.keys())
-                fieldnames = sorted(fieldnames)
-                
-                # Prepare table data
-                table_data = [fieldnames]  # Header row
-                
-                for item in data:
-                    row = []
-                    for field in fieldnames:
-                        value = item.get(field, "")
-                        if isinstance(value, (list, dict)):
-                            row.append(json.dumps(value))
-                        elif isinstance(value, datetime):
-                            row.append(value.isoformat())
-                        else:
-                            row.append(str(value))
-                    table_data.append(row)
-                
-                # Create table
-                table = Table(table_data)
-                
-                # Style the table
-                style = TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
-                ])
-                
-                table.setStyle(style)
-                elements.append(table)
-            
-            # Build PDF
-            doc.build(elements)
-            
-            logger.info(f"Exported {len(data)} records to PDF: {filepath}")
-        except ImportError:
-            # Already logged
-            raise
-        except Exception as e:
-            logger.error(f"PDF export failed: {str(e)}")
+            logger.error(f"Export to {format.upper()} failed: {str(e)}")
             raise
     
     def configure_webhook(self, endpoint: str, events: List[str], headers: Optional[Dict[str, str]] = None) -> str:
         """
-        Configure a webhook for specific events.
+        Configure a webhook for export events.
         
         Args:
             endpoint: Webhook endpoint URL
-            events: List of events to trigger the webhook (e.g., ["export_complete", "import_complete"])
+            events: List of events to trigger the webhook
             headers: Optional headers to include in webhook requests
             
         Returns:
@@ -553,20 +389,21 @@ class ExportManager:
         for webhook_id, webhook in self.webhooks.items():
             if event in webhook["events"]:
                 try:
-                    response = requests.post(
-                        webhook["endpoint"],
-                        json={"event": event, "data": data},
-                        headers=webhook["headers"],
-                        timeout=10
-                    )
-                    
-                    responses.append({
-                        "webhook_id": webhook_id,
-                        "status_code": response.status_code,
-                        "response": response.text
-                    })
-                    
-                    logger.info(f"Triggered webhook {webhook_id} for event {event}: {response.status_code}")
+                    with contextlib.suppress(requests.exceptions.RequestException):
+                        response = requests.post(
+                            webhook["endpoint"],
+                            json={"event": event, "data": data},
+                            headers=webhook["headers"],
+                            timeout=10
+                        )
+                        
+                        responses.append({
+                            "webhook_id": webhook_id,
+                            "status_code": response.status_code,
+                            "response": response.text
+                        })
+                        
+                        logger.info(f"Triggered webhook {webhook_id} for event {event}: {response.status_code}")
                 except Exception as e:
                     logger.error(f"Failed to trigger webhook {webhook_id}: {str(e)}")
                     responses.append({
@@ -593,25 +430,34 @@ class ExportManager:
         Returns:
             Schedule ID
         """
-        schedule_id = f"schedule_{len(self.scheduled_exports) + 1}"
-        
-        self.scheduled_exports[schedule_id] = {
-            "data_query": data_query,
-            "format": format,
-            "schedule": schedule,
-            "template_name": template_name,
-            "created_at": datetime.now().isoformat(),
-            "last_run": None,
-            "next_run": self._calculate_next_run(schedule),
-            "enabled": True
-        }
-        
-        logger.info(f"Scheduled export {schedule_id} in {format} format")
-        
-        # Start scheduler if not already running
-        self._ensure_scheduler_running()
-        
-        return schedule_id
+        with self._lock:
+            # Validate format
+            if format not in ExportFormat.all():
+                raise ValueError(f"Unsupported export format: {format}")
+            
+            # Validate template if specified
+            if template_name and template_name not in self.templates:
+                raise ValueError(f"Template not found: {template_name}")
+            
+            schedule_id = f"schedule_{len(self.scheduled_exports) + 1}"
+            
+            self.scheduled_exports[schedule_id] = {
+                "data_query": data_query,
+                "format": format,
+                "schedule": schedule,
+                "template_name": template_name,
+                "created_at": datetime.now().isoformat(),
+                "last_run": None,
+                "next_run": self._calculate_next_run(schedule),
+                "enabled": True
+            }
+            
+            logger.info(f"Scheduled export {schedule_id} in {format} format")
+            
+            # Start scheduler if not already running
+            self._ensure_scheduler_running()
+            
+            return schedule_id
     
     def _calculate_next_run(self, schedule: Dict[str, Any]) -> datetime:
         """
@@ -641,34 +487,42 @@ class ExportManager:
     
     def _ensure_scheduler_running(self):
         """Ensure the scheduler thread is running."""
-        if not self.scheduler_thread or not self.scheduler_thread.is_alive():
-            self.scheduler_running = True
-            self.scheduler_thread = threading.Thread(target=self._scheduler_loop)
-            self.scheduler_thread.daemon = True
-            self.scheduler_thread.start()
-            logger.info("Export scheduler started")
+        with self._lock:
+            if not self.scheduler_thread or not self.scheduler_thread.is_alive():
+                self.scheduler_running = True
+                self.scheduler_thread = threading.Thread(target=self._scheduler_loop)
+                self.scheduler_thread.daemon = True
+                self.scheduler_thread.start()
+                logger.info("Export scheduler started")
     
     def _scheduler_loop(self):
         """Scheduler loop to run scheduled exports."""
         while self.scheduler_running:
             now = datetime.now()
             
-            for schedule_id, schedule_info in self.scheduled_exports.items():
-                if not schedule_info["enabled"]:
-                    continue
-                
-                next_run = datetime.fromisoformat(schedule_info["next_run"]) if isinstance(schedule_info["next_run"], str) else schedule_info["next_run"]
-                
-                if now >= next_run:
-                    try:
-                        # Run the export
-                        self._run_scheduled_export(schedule_id, schedule_info)
-                        
-                        # Update last run and calculate next run
-                        self.scheduled_exports[schedule_id]["last_run"] = now.isoformat()
-                        self.scheduled_exports[schedule_id]["next_run"] = self._calculate_next_run(schedule_info["schedule"]).isoformat()
-                    except Exception as e:
-                        logger.error(f"Scheduled export {schedule_id} failed: {str(e)}")
+            with self._lock:
+                for schedule_id, schedule_info in list(self.scheduled_exports.items()):
+                    if not schedule_info["enabled"]:
+                        continue
+                    
+                    next_run = datetime.fromisoformat(schedule_info["next_run"]) if isinstance(schedule_info["next_run"], str) else schedule_info["next_run"]
+                    
+                    if now >= next_run:
+                        try:
+                            # Run the export
+                            self._run_scheduled_export(schedule_id, schedule_info)
+                            
+                            # Update last run and calculate next run
+                            self.scheduled_exports[schedule_id]["last_run"] = now.isoformat()
+                            self.scheduled_exports[schedule_id]["next_run"] = self._calculate_next_run(schedule_info["schedule"]).isoformat()
+                        except Exception as e:
+                            logger.error(f"Scheduled export {schedule_id} failed: {str(e)}")
+                            
+                            # Trigger webhook for failure
+                            self.trigger_webhook("export_failed", {
+                                "schedule_id": schedule_id,
+                                "error": str(e)
+                            })
             
             # Sleep for a minute before checking again
             time.sleep(60)
@@ -683,10 +537,10 @@ class ExportManager:
         """
         logger.info(f"Running scheduled export {schedule_id}")
         
-        # Get data from the data provider
-        data = self.data_provider.get_data(schedule_info["data_query"])
-        
         try:
+            # Get data from the data provider
+            data = self.data_provider.get_data(schedule_info["data_query"])
+            
             # Generate filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             collection_name = schedule_info["data_query"].get("collection", "data")
@@ -716,13 +570,6 @@ class ExportManager:
             return filepath
         except Exception as e:
             logger.error(f"Scheduled export {schedule_id} failed: {str(e)}")
-            
-            # Trigger webhook for failure
-            self.trigger_webhook("export_failed", {
-                "schedule_id": schedule_id,
-                "error": str(e)
-            })
-            
             raise
     
     def set_data_provider(self, provider):
@@ -732,8 +579,9 @@ class ExportManager:
         Args:
             provider: Data provider implementing the DataProvider protocol
         """
-        self.data_provider = provider
-        logger.info(f"Set custom data provider: {provider.__class__.__name__}")
+        with self._lock:
+            self.data_provider = provider
+            logger.info(f"Set custom data provider: {provider.__class__.__name__}")
     
     def get_export_history(self) -> List[Dict[str, Any]]:
         """
@@ -791,6 +639,14 @@ class ExportManager:
                         )
         
         return results
+
+    def stop_scheduler(self):
+        """Stop the scheduler thread safely."""
+        with self._lock:
+            self.scheduler_running = False
+            if self.scheduler_thread and self.scheduler_thread.is_alive():
+                self.scheduler_thread.join(timeout=2.0)
+                logger.info("Export scheduler stopped")
 
 # Create a singleton instance
 export_manager = ExportManager()
