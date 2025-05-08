@@ -13,12 +13,12 @@ from datetime import datetime
 import time
 from ratelimit import limits, sleep_and_retry
 
-from core.plugins import PluginBase
+from core.plugins.base import PluginBase
 from core.event_system import (
     EventType, Event, publish_sync,
-    create_connector_event
+    create_connector_event, create_resource_event
 )
-from core.utils.error_handling import handle_exceptions, ConnectionError
+from core.utils.decorators import handle_exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class DataItem:
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "DataItem":
+    def from_dict(cls, data: Dict[str, Any]) -> 'DataItem':
         """
         Create a data item from a dictionary.
         
@@ -85,7 +85,7 @@ class DataItem:
             data: Dictionary representation of a data item
             
         Returns:
-            DataItem: Data item created from the dictionary
+            DataItem: New data item instance
         """
         timestamp = None
         if data.get("timestamp"):
@@ -100,8 +100,13 @@ class DataItem:
             metadata=data.get("metadata", {}),
             url=data.get("url"),
             timestamp=timestamp,
-            content_type=data.get("content_type", "text/plain")
+            content_type=data.get("content_type", "text/plain"),
+            raw_data=data.get("raw_data")
         )
+    
+    def __str__(self) -> str:
+        """String representation of the data item."""
+        return f"DataItem(source_id={self.source_id}, url={self.url})"
 
 
 class ConnectorBase(PluginBase):
@@ -131,6 +136,9 @@ class ConnectorBase(PluginBase):
         self.retry_count = self.config.get('retry_count', 3)
         self.retry_delay = self.config.get('retry_delay', 5)  # seconds
         self._initialized = False
+        self.error_count = 0
+        self.last_run_time = None
+        self.session = None
     
     @sleep_and_retry
     @limits(calls=60, period=60)  # default 60 calls per 60 seconds
@@ -164,7 +172,7 @@ class ConnectorBase(PluginBase):
         Connectors that support native async operations should override this method.
         """
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.collect, params)
+        return await loop.run_in_executor(None, lambda: self.collect(params))
     
     @handle_exceptions(error_types=[Exception], default_message="Failed to collect data with retry", log_error=True)
     async def collect_with_retry(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
@@ -222,6 +230,7 @@ class ConnectorBase(PluginBase):
             # Publish initialization event
             self._publish_initialization_success()
             
+            self._initialized = True
             return True
         except Exception as e:
             logger.error(f"Failed to initialize connector {self.name}: {e}")
@@ -242,8 +251,23 @@ class ConnectorBase(PluginBase):
         return await loop.run_in_executor(None, self.initialize)
     
     def shutdown(self) -> bool:
-        """Shutdown the connector. Return True if successful, False otherwise."""
-        return True
+        """Shutdown the connector and release resources. Return True if successful, False otherwise."""
+        try:
+            # Close any open connections or resources
+            if self.session:
+                self.session.close()
+                self.session = None
+            
+            self._initialized = False
+            logger.info(f"Shutdown connector: {self.name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error shutting down connector {self.name}: {e}")
+            return False
+    
+    def update_last_run(self) -> None:
+        """Update the last run timestamp."""
+        self.last_run_time = datetime.now()
     
     def _publish_initialization_success(self) -> None:
         """Publish connector initialization success event."""
@@ -306,6 +330,40 @@ class ConnectorBase(PluginBase):
             publish_sync(event)
         except Exception as e:
             logger.warning(f"Failed to publish connector error event: {e}")
+    
+    def validate_config(self) -> bool:
+        """
+        Validate the connector configuration.
+        
+        Returns:
+            bool: True if configuration is valid, False otherwise
+        """
+        # Basic validation - subclasses should override for specific validation
+        if not isinstance(self.config, dict):
+            logger.error(f"Invalid configuration for {self.name}: config must be a dictionary")
+            return False
+        
+        return True
+    
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get the status of the connector.
+        
+        Returns:
+            Dict[str, Any]: Status information
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "source_type": self.source_type,
+            "initialized": self._initialized,
+            "error_count": self.error_count,
+            "last_run": self.last_run_time.isoformat() if self.last_run_time else None,
+            "config": {
+                k: v for k, v in self.config.items() 
+                if k not in ["api_key", "password", "token", "secret"]  # Don't include sensitive info
+            }
+        }
 
 
 async def initialize_all_connectors(connectors: Dict[str, ConnectorBase]) -> Dict[str, bool]:
