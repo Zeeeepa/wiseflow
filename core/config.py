@@ -492,6 +492,42 @@ def validate_config():
         logger.warning("Invalid API_PORT value, using default 8000")
     if not config.get("API_HOST"):
         logger.warning("API_HOST not set, using default 0.0.0.0")
+    
+    # Validate LLM configuration
+    validate_llm_config()
+
+def validate_llm_config():
+    """
+    Validate LLM configuration.
+    
+    This function validates the LLM configuration and raises a ValueError
+    if any required settings are missing or invalid.
+    
+    Raises:
+        ValueError: If any required settings are missing or invalid
+    """
+    provider = config.get("LLM_PROVIDER", "litellm").lower()
+    
+    if provider not in ["openai", "litellm", "anthropic", "azure", "fallback"]:
+        logger.warning(f"Invalid LLM provider: {provider}. Using litellm as fallback.")
+    
+    if provider == "openai":
+        if not config.get("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY not set for OpenAI provider")
+    elif provider == "anthropic":
+        if not config.get("ANTHROPIC_API_KEY"):
+            raise ValueError("ANTHROPIC_API_KEY not set for Anthropic provider")
+    elif provider == "azure":
+        if not config.get("AZURE_API_KEY"):
+            raise ValueError("AZURE_API_KEY not set for Azure provider")
+        if not config.get("AZURE_API_BASE"):
+            raise ValueError("AZURE_API_BASE not set for Azure provider")
+    else:
+        if not config.get("LLM_API_KEY"):
+            logger.warning("LLM_API_KEY not set, this may cause issues with LLM functionality")
+    
+    if not config.get("PRIMARY_MODEL"):
+        logger.warning("PRIMARY_MODEL not set, this may cause issues with LLM functionality")
 
 def get_int_config(key: str, default: int) -> int:
     """
