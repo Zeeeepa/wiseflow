@@ -21,7 +21,7 @@ import arxiv
 import requests
 from bs4 import BeautifulSoup
 
-from core.plugins import PluginBase
+from core.plugins.base import BasePlugin
 from core.connectors import ConnectorBase, DataItem
 from core.crawl4ai.processors.pdf import extract_text_from_pdf
 
@@ -61,7 +61,12 @@ class AcademicConnector(ConnectorBase):
             await self.session.close()
             self.session = None
     
-    async def collect(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
+    def collect(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
+        """Synchronous collect method - delegates to async version."""
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(self.collect_async(params))
+    
+    async def collect_async(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
         """Collect data from academic sources."""
         params = params or {}
         source_type = params.get("source_type", "arxiv")
@@ -166,7 +171,7 @@ class AcademicConnector(ConnectorBase):
             logger.error(f"Error collecting data from arXiv: {e}")
             # Re-raise the exception to prevent silent failure
             raise
-
+    
     async def _collect_from_pubmed(self, params: Dict[str, Any]) -> List[DataItem]:
         """Collect data from PubMed."""
         query = params.get("query", "")
