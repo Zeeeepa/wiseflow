@@ -19,12 +19,15 @@ import asyncio
 import os
 import json
 import uuid
+import traceback
 from typing import Dict, List, Any, Optional, Set
 from datetime import datetime
 
 from core.utils.general_utils import get_logger
 from core.utils.pb_api import PbTalker
-from core.task import AsyncTaskManager, Task, create_task_id
+from core.task.monitor import TaskMonitor, TaskStatus
+from core.task.bridge import TaskBridge
+from core.task_manager import TaskPriority
 from core.plugins import PluginManager
 from core.plugins.connectors import ConnectorBase, DataItem
 from core.plugins.processors import ProcessorBase, ProcessedData
@@ -38,8 +41,9 @@ pb = PbTalker(wiseflow_logger)
 # Configure the maximum number of concurrent tasks
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
 
-# Initialize the task manager
-task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
+# Initialize the task monitor and bridge
+task_monitor = TaskMonitor()
+task_bridge = TaskBridge()
 
 # Initialize the plugin manager
 plugin_manager = PluginManager(plugins_dir="core")
@@ -98,202 +102,240 @@ async def save_processed_data(processed_data: ProcessedData, focus_id: str) -> b
         else:
             content_str = str(content)
         
-        # Create info record
-        info = {
-            "url": processed_data.original_item.url if processed_data.original_item else "",
-            "url_title": processed_data.original_item.metadata.get("title", "") if processed_data.original_item else "",
-            "tag": focus_id,
-            "content": content_str,
-            "metadata": json.dumps(processed_data.metadata)
-        }
-        
         # Save to database
-        info_id = pb.add(collection_name='infos', body=info)
-        if not info_id:
-            wiseflow_logger.error('Failed to add info to database')
-            # Save to cache file
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            cache_dir = os.environ.get("PROJECT_DIR", "")
-            if cache_dir:
-                cache_file = os.path.join(cache_dir, f'{timestamp}_cache_infos.json')
-                with open(cache_file, 'w', encoding='utf-8') as f:
-                    json.dump(info, f, ensure_ascii=False, indent=4)
-            return False
+        result = await pb.create_record("processed_data", {
+            "focus_id": focus_id,
+            "source_id": processed_data.source_id,
+            "source_type": processed_data.source_type,
+            "content": content_str,
+            "metadata": json.dumps(processed_data.metadata),
+            "created_at": datetime.now().isoformat()
+        })
         
-        return True
+        return bool(result)
     except Exception as e:
         wiseflow_logger.error(f"Error saving processed data: {e}")
         return False
 
-async def collect_from_connector(connector: ConnectorBase, params: Dict[str, Any]) -> List[DataItem]:
-    """Collect data from a connector."""
+async def process_focus_task(focus_id: str, focus: Dict[str, Any], sites: List[Dict[str, Any]]) -> bool:
+    """
+    Process a focus point task.
+    
+    Args:
+        focus_id: ID of the focus point
+        focus: Focus point data
+        sites: List of sites to process
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    # Register task with the bridge
+    task_id = task_bridge.register_task(
+        name=f"Process focus: {focus.get('focuspoint', '')}",
+        func=_process_focus,
+        args=(focus_id, focus, sites),
+        priority=TaskPriority.NORMAL,
+        max_retries=2,
+        retry_delay=5.0,
+        timeout=3600.0  # 1 hour timeout
+    )
+    
+    # Start task
+    task_bridge.start_task(task_id)
+    
+    # Update progress
+    task_bridge.update_task_progress(task_id, 0.1, "Task started")
+    
     try:
-        return connector.collect(params)
-    except Exception as e:
-        wiseflow_logger.error(f"Error collecting data from connector {connector.name}: {e}")
-        return []
-
-async def process_focus_point(focus: Dict[str, Any], sites: List[Dict[str, Any]]) -> bool:
-    """Process a focus point using the plugin system."""
-    focus_id = focus["id"]
-    focus_point = focus.get("focuspoint", "").strip()
-    explanation = focus.get("explanation", "").strip() if focus.get("explanation") else ""
-    
-    wiseflow_logger.info(f"Processing focus point: {focus_point}")
-    
-    # Get existing URLs to avoid duplicates
-    existing_urls = {url['url'] for url in pb.read(collection_name='infos', fields=['url'], filter=f"tag='{focus_id}'")}
-    
-    # Get references for this focus point
-    references = []
-    if focus.get("references"):
-        try:
-            references = json.loads(focus["references"])
-        except:
-            references = []
-    
-    # Process references
-    for reference in references:
-        ref_type = reference.get("type")
-        ref_content = reference.get("content")
+        # Load plugins
+        await load_plugins()
         
-        if not ref_type or not ref_content:
-            continue
+        # Update progress
+        task_bridge.update_task_progress(task_id, 0.2, "Plugins loaded")
         
-        if ref_type == "url" and ref_content not in existing_urls:
-            # Add URL to sites for processing
-            sites.append({"url": ref_content, "type": "web"})
-    
-    # Determine concurrency for this focus point
-    concurrency = focus.get("concurrency", 1)
-    if concurrency < 1:
-        concurrency = 1
-    
-    # Create a semaphore to limit concurrency
-    semaphore = asyncio.Semaphore(concurrency)
-    
-    # Process sites
-    tasks = []
-    for site in sites:
-        site_url = site.get("url")
-        site_type = site.get("type", "web")
+        # Get connectors for each site
+        connectors = []
+        for site in sites:
+            connector_name = site.get("connector")
+            if not connector_name:
+                wiseflow_logger.warning(f"No connector specified for site {site.get('name')}")
+                continue
+            
+            connector = plugin_manager.get_plugin(connector_name)
+            if not connector or not isinstance(connector, ConnectorBase):
+                wiseflow_logger.error(f"Connector {connector_name} not found or not a valid connector")
+                continue
+            
+            connectors.append((connector, site))
         
-        if not site_url:
-            continue
+        # Update progress
+        task_bridge.update_task_progress(task_id, 0.3, "Connectors initialized")
         
-        if site_url in existing_urls:
-            continue
-        
-        # Add to existing URLs to prevent duplicates
-        existing_urls.add(site_url)
-        
-        # Determine which connector to use
-        connector_name = f"{site_type}_connector"
-        connector = plugin_manager.get_plugin(connector_name)
-        
-        if not connector or not isinstance(connector, ConnectorBase):
-            wiseflow_logger.warning(f"Connector {connector_name} not found or not a valid connector")
-            continue
-        
-        # Create a task to process this site
-        tasks.append(process_site(site, connector, focus, semaphore))
-    
-    # Wait for all tasks to complete
-    if tasks:
-        await asyncio.gather(*tasks)
-    
-    wiseflow_logger.info(f"Completed processing focus point: {focus_point}")
-    return True
-
-async def process_site(site: Dict[str, Any], connector: ConnectorBase, focus: Dict[str, Any], semaphore: asyncio.Semaphore) -> None:
-    """Process a site using a connector and processor."""
-    async with semaphore:
-        site_url = site.get("url")
-        wiseflow_logger.info(f"Processing site: {site_url}")
-        
-        # Collect data from the connector
-        data_items = await collect_from_connector(connector, {"urls": [site_url]})
-        
-        if not data_items:
-            wiseflow_logger.warning(f"No data collected from {site_url}")
-            return
+        # Fetch data from each connector
+        all_data_items = []
+        for i, (connector, site) in enumerate(connectors):
+            try:
+                data_items = await connector.fetch_data(site.get("config", {}))
+                all_data_items.extend(data_items)
+                
+                # Update progress
+                progress = 0.3 + (0.3 * (i + 1) / len(connectors))
+                task_bridge.update_task_progress(task_id, progress, f"Fetched data from {site.get('name')}")
+            except Exception as e:
+                wiseflow_logger.error(f"Error fetching data from {site.get('name')}: {e}")
+                wiseflow_logger.error(traceback.format_exc())
         
         # Process each data item
-        for data_item in data_items:
-            processed_data = await process_data_item(data_item, focus)
-            
-            if processed_data:
-                # Save the processed data
-                await save_processed_data(processed_data, focus["id"])
+        processed_items = []
+        for i, data_item in enumerate(all_data_items):
+            try:
+                processed_data = await process_data_item(data_item, focus)
+                if processed_data:
+                    processed_items.append(processed_data)
+                    
+                    # Save processed data
+                    await save_processed_data(processed_data, focus_id)
+                
+                # Update progress
+                progress = 0.6 + (0.3 * (i + 1) / len(all_data_items))
+                task_bridge.update_task_progress(task_id, progress, f"Processed item {i+1}/{len(all_data_items)}")
+            except Exception as e:
+                wiseflow_logger.error(f"Error processing data item: {e}")
+                wiseflow_logger.error(traceback.format_exc())
+        
+        # Generate insights
+        insights = await generate_insights(focus_id, focus, processed_items)
+        
+        # Update progress
+        task_bridge.update_task_progress(task_id, 0.95, "Generated insights")
+        
+        # Save insights
+        await save_insights(focus_id, insights)
+        
+        # Complete task
+        task_bridge.complete_task(task_id, {
+            "processed_items": len(processed_items),
+            "insights": len(insights)
+        })
+        
+        return True
+    except Exception as e:
+        wiseflow_logger.error(f"Error processing focus task: {e}")
+        wiseflow_logger.error(traceback.format_exc())
+        
+        # Fail task
+        task_bridge.fail_task(task_id, str(e))
+        
+        return False
 
-async def schedule_task():
-    """Schedule and manage data mining tasks."""
+async def _process_focus(focus_id: str, focus: Dict[str, Any], sites: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Internal function to process a focus point.
+    
+    This function is called by the task manager and should not be called directly.
+    
+    Args:
+        focus_id: ID of the focus point
+        focus: Focus point data
+        sites: List of sites to process
+        
+    Returns:
+        Dict[str, Any]: Result data
+    """
+    # This is a placeholder for the actual implementation
+    # The real implementation is in the process_focus_task function
+    return {}
+
+async def generate_insights(focus_id: str, focus: Dict[str, Any], processed_items: List[ProcessedData]) -> List[Dict[str, Any]]:
+    """
+    Generate insights from processed data.
+    
+    Args:
+        focus_id: ID of the focus point
+        focus: Focus point data
+        processed_items: List of processed data items
+        
+    Returns:
+        List[Dict[str, Any]]: List of insights
+    """
+    # Get the insights generator
+    generator_name = "insights_generator"
+    generator = plugin_manager.get_plugin(generator_name)
+    
+    if not generator:
+        wiseflow_logger.error(f"Insights generator {generator_name} not found")
+        return []
+    
+    try:
+        # Generate insights
+        insights = generator.generate_insights(focus, processed_items)
+        return insights
+    except Exception as e:
+        wiseflow_logger.error(f"Error generating insights: {e}")
+        wiseflow_logger.error(traceback.format_exc())
+        return []
+
+async def save_insights(focus_id: str, insights: List[Dict[str, Any]]) -> bool:
+    """
+    Save insights to the database.
+    
+    Args:
+        focus_id: ID of the focus point
+        insights: List of insights
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Save each insight
+        for insight in insights:
+            await pb.create_record("insights", {
+                "focus_id": focus_id,
+                "title": insight.get("title", ""),
+                "content": insight.get("content", ""),
+                "source_ids": json.dumps(insight.get("source_ids", [])),
+                "metadata": json.dumps(insight.get("metadata", {})),
+                "created_at": datetime.now().isoformat()
+            })
+        
+        return True
+    except Exception as e:
+        wiseflow_logger.error(f"Error saving insights: {e}")
+        return False
+
+async def main():
+    """Main entry point for the task runner."""
+    # Initialize the task monitor
+    task_monitor.auto_shutdown_on_complete = True
+    task_monitor.auto_shutdown_idle_time = 1800.0  # 30 minutes
+    
     # Load plugins
     await load_plugins()
     
+    # Get focus points from database
+    focus_points = await pb.get_records("focus_points", {
+        "filter": "status='pending'"
+    })
+    
+    # Get sites from database
+    sites = await pb.get_records("sites", {
+        "filter": "active=true"
+    })
+    
+    # Process each focus point
+    for focus in focus_points:
+        await process_focus_task(focus["id"], focus, sites)
+    
+    # Wait for all tasks to complete
     while True:
-        wiseflow_logger.info("Checking for active focus points...")
+        running_tasks = task_monitor.get_tasks_by_status(TaskStatus.RUNNING)
+        if not running_tasks:
+            break
         
-        # Get active focus points
-        focus_points = pb.read('focus_points', filter='activated=True')
-        sites_record = pb.read('sites')
-        
-        for focus in focus_points:
-            # Check if there's already a task running for this focus point
-            existing_tasks = task_manager.get_tasks_by_focus(focus["id"])
-            active_tasks = [t for t in existing_tasks if t.status in ["pending", "running"]]
-            
-            if active_tasks:
-                wiseflow_logger.info(f"Focus point {focus.get('focuspoint', '')} already has active tasks")
-                continue
-            
-            # Get sites for this focus point
-            sites = [_record for _record in sites_record if _record['id'] in focus.get('sites', [])]
-            
-            # Create a new task
-            task_id = create_task_id()
-            auto_shutdown = focus.get("auto_shutdown", False)
-            
-            task = Task(
-                task_id=task_id,
-                focus_id=focus["id"],
-                function=process_focus_point,
-                args=(focus, sites),
-                auto_shutdown=auto_shutdown
-            )
-            
-            # Submit the task
-            wiseflow_logger.info(f"Submitting task {task_id} for focus point: {focus.get('focuspoint', '')}")
-            await task_manager.submit_task(task)
-            
-            # Save task to database
-            task_record = {
-                "task_id": task_id,
-                "focus_id": focus["id"],
-                "status": "pending",
-                "auto_shutdown": auto_shutdown,
-                "metadata": json.dumps({
-                    "focus_point": focus.get("focuspoint", ""),
-                    "sites_count": len(sites)
-                })
-            }
-            pb.add(collection_name='tasks', body=task_record)
-        
-        # Wait before checking again
-        wiseflow_logger.info("Waiting for 60 seconds before checking for new tasks...")
-        await asyncio.sleep(60)
-
-async def main():
-    """Main entry point."""
-    try:
-        wiseflow_logger.info("Starting Wiseflow with concurrent task management...")
-        await schedule_task()
-    except KeyboardInterrupt:
-        wiseflow_logger.info("Shutting down...")
-        await task_manager.shutdown()
-    except Exception as e:
-        wiseflow_logger.error(f"Error in main loop: {e}")
-        await task_manager.shutdown()
+        await asyncio.sleep(1.0)
+    
+    # Clean up completed tasks
+    task_monitor.cleanup_completed_tasks(3600.0)  # 1 hour
 
 if __name__ == "__main__":
     asyncio.run(main())
