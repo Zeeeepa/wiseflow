@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Event System for WiseFlow.
+Event System for Wiseflow.
 
 This module provides a central event system for communication between components.
 """
@@ -14,8 +14,6 @@ import uuid
 from typing import Dict, List, Any, Optional, Union, Callable, Awaitable, Set
 from datetime import datetime
 from enum import Enum, auto
-
-from core.config import ENABLE_EVENT_SYSTEM
 
 logger = logging.getLogger(__name__)
 
@@ -98,34 +96,41 @@ class Event:
         timestamp = datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else None
         
         return cls(
+            event_type=event_type,
+            data=data.get("data", {}),
+            source=data.get("source"),
+            timestamp=timestamp,
+            event_id=data.get("event_id")
+        )
+    
+    def __str__(self) -> str:
+        """Return a string representation of the event."""
+        return f"Event({self.event_type.name}, source={self.source}, id={self.event_id})"
+
+
 class EventBus:
+    """Event bus for the event system."""
+    
+    _instance = None
+    
+    def __new__(cls):
+        """Create a singleton instance."""
+        if cls._instance is None:
+            cls._instance = super(EventBus, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
     def __init__(self):
-        self._subscribers = {}
-        self._max_queue_size = 1000
-        self._overflow_policy = 'drop'  # or 'block'
-        self._queues = {}
-
-    async def publish(self, event: Event) -> None:
-        if not self._enabled:
+        """Initialize the event bus."""
+        if self._initialized:
             return
-
-        for subscriber in self._subscribers.get(event.event_type, []):
-            queue = self._queues.get(subscriber)
-            if not queue:
-                queue = asyncio.Queue(maxsize=self._max_queue_size)
-                self._queues[subscriber] = queue
-
-            try:
-                if self._overflow_policy == 'drop':
-                    if queue.full():
-                        logger.warning(f"Queue full for subscriber {subscriber.__name__}, dropping event")
-                        continue
-                    await queue.put_nowait(event)
-                else:  # block
-                    await queue.put(event)
-            except Exception as e:
-                logger.error(f"Error queueing event: {e}")
-        self._enabled = ENABLE_EVENT_SYSTEM
+            
+        self._subscribers: Dict[EventType, List[Callable]] = {}
+        self._event_history: List[Event] = []
+        self._max_history_size = 1000
+        self._lock = asyncio.Lock()
+        self._propagate_exceptions = False  # Default to not propagating exceptions
+        self._initialized = True
         
         # Register built-in subscribers
         self._register_built_in_subscribers()
@@ -150,9 +155,6 @@ class EventBus:
             callback: The callback function to call when the event is published
             source: Optional source identifier for the callback, useful for bulk unsubscribing
         """
-        if not self._enabled:
-            return
-            
         # Store the source with the callback for later unsubscription
         if source:
             setattr(callback, "__source__", source)
@@ -178,9 +180,6 @@ class EventBus:
             event_type: The event type to unsubscribe from
             callback: The callback function to unsubscribe
         """
-        if not self._enabled:
-            return
-            
         if event_type in self._subscribers:
             if callback in self._subscribers[event_type]:
                 self._subscribers[event_type].remove(callback)
@@ -196,9 +195,6 @@ class EventBus:
         Args:
             source: The source identifier to unsubscribe all callbacks from
         """
-        if not self._enabled:
-            return
-            
         # We need to track callbacks by source, so we'll add this information
         # when subscribing and use it here to unsubscribe
         count = 0
@@ -236,9 +232,6 @@ class EventBus:
         Args:
             event: The event to publish
         """
-        if not self._enabled:
-            return
-            
         async with self._lock:
             # Add to history
             self._event_history.append(event)
@@ -272,9 +265,6 @@ class EventBus:
         Args:
             event: The event to publish
         """
-        if not self._enabled:
-            return
-            
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -300,9 +290,6 @@ class EventBus:
         Returns:
             List of events
         """
-        if not self._enabled:
-            return []
-            
         if event_type is None:
             return self._event_history[-limit:]
         else:
@@ -310,24 +297,7 @@ class EventBus:
     
     def clear_history(self) -> None:
         """Clear event history."""
-        if not self._enabled:
-            return
-            
         self._event_history = []
-    
-    def enable(self) -> None:
-        """Enable the event bus."""
-        self._enabled = True
-        logger.info("Event bus enabled")
-    
-    def disable(self) -> None:
-        """Disable the event bus."""
-        self._enabled = False
-        logger.info("Event bus disabled")
-    
-    def is_enabled(self) -> bool:
-        """Check if the event bus is enabled."""
-        return self._enabled
 
 
 # Create a singleton instance
@@ -361,18 +331,6 @@ def get_history(event_type: Optional[EventType] = None, limit: int = 100) -> Lis
 def clear_history() -> None:
     """Clear event history."""
     event_bus.clear_history()
-
-def enable() -> None:
-    """Enable the event bus."""
-    event_bus.enable()
-
-def disable() -> None:
-    """Disable the event bus."""
-    event_bus.disable()
-
-def is_enabled() -> bool:
-    """Check if the event bus is enabled."""
-    return event_bus.is_enabled()
 
 # Helper functions for creating common events
 def create_system_startup_event(data: Optional[Dict[str, Any]] = None) -> Event:

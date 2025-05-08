@@ -1,45 +1,47 @@
-"""
-Dashboard routes for serving the dashboard UI.
-"""
-
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request, HTTPException, Depends, Query
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from typing import List, Dict, Any, Optional
 import os
-import logging
-
-from dashboard.plugins import dashboard_plugin_manager
-
-logger = logging.getLogger(__name__)
+import json
+from pathlib import Path
 
 # Create templates directory
-templates_dir = os.path.join(os.path.dirname(__file__), "templates")
-templates = Jinja2Templates(directory=templates_dir)
+templates_dir = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(templates_dir))
 
 # Create router
 router = APIRouter()
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard_home(request: Request):
-    """Serve the dashboard home page."""
+async def root(request: Request):
+    """Redirect to dashboard."""
     return templates.TemplateResponse(
         "dashboard.html", 
         {"request": request}
     )
 
-@router.get("/search", response_class=HTMLResponse)
-async def search_dashboard(request: Request):
-    """Serve the search dashboard page."""
+@router.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    """Serve the dashboard page."""
     return templates.TemplateResponse(
-        "search_dashboard.html", 
+        "dashboard.html", 
         {"request": request}
     )
 
-@router.get("/monitor", response_class=HTMLResponse)
-async def resource_monitor(request: Request):
-    """Serve the resource monitor dashboard."""
+@router.get("/focus-points", response_class=HTMLResponse)
+async def focus_points(request: Request):
+    """Serve the focus points page."""
     return templates.TemplateResponse(
-        "monitor_dashboard.html", 
+        "focus_points.html", 
+        {"request": request}
+    )
+
+@router.get("/sources", response_class=HTMLResponse)
+async def sources(request: Request):
+    """Serve the sources page."""
+    return templates.TemplateResponse(
+        "sources.html", 
         {"request": request}
     )
 
@@ -53,27 +55,26 @@ async def data_mining_dashboard(request: Request):
       
 @router.get("/database", response_class=HTMLResponse)
 async def database_management(request: Request):
-    """Serve the database management interface."""
+    """Serve the database management page."""
     return templates.TemplateResponse(
         "database_management.html", 
         {"request": request}
     )
 
-@router.get("/plugins", response_class=HTMLResponse)
-async def plugins_info(request: Request):
-    """Get information about available plugins."""
-    connectors = dashboard_plugin_manager.get_available_connectors()
-    processors = dashboard_plugin_manager.get_available_processors()
-    analyzers = dashboard_plugin_manager.get_available_analyzers()
-    
+@router.get("/insights", response_class=HTMLResponse)
+async def insights_dashboard(request: Request):
+    """Serve the insights dashboard page."""
     return templates.TemplateResponse(
-        "plugins.html",
-        {
-            "request": request,
-            "connectors": connectors,
-            "processors": processors,
-            "analyzers": analyzers
-        }
+        "insights_dashboard.html", 
+        {"request": request}
+    )
+
+@router.get("/plugins", response_class=HTMLResponse)
+async def plugins_management(request: Request):
+    """Serve the plugins management page."""
+    return templates.TemplateResponse(
+        "plugins_management.html", 
+        {"request": request}
     )
 
 @router.get("/templates", response_class=HTMLResponse)
@@ -81,14 +82,6 @@ async def templates_management(request: Request):
     """Serve the templates management page."""
     return templates.TemplateResponse(
         "templates_management.html", 
-        {"request": request}
-    )
-
-@router.get("/visualization", response_class=HTMLResponse)
-async def visualization_page(request: Request):
-    """Serve the data visualization page."""
-    return templates.TemplateResponse(
-        "visualization.html", 
         {"request": request}
     )
 
@@ -100,42 +93,51 @@ async def settings_page(request: Request):
         {"request": request}
     )
 
-@router.get("/process-selection", response_class=HTMLResponse)
-async def process_selection(request: Request):
+@router.get("/visualization", response_class=HTMLResponse)
+async def visualization_page(request: Request):
+    """Serve the data visualization page."""
+    return templates.TemplateResponse(
+        "visualization.html", 
+        {"request": request}
+    )
+
+@router.get("/data-mining/process-selection", response_class=HTMLResponse)
+async def process_selection_dialog(request: Request):
     """Serve the process selection dialog."""
     return templates.TemplateResponse(
         "process_selection_dialog.html", 
         {"request": request}
     )
 
-@router.get("/github-config", response_class=HTMLResponse)
-async def github_config(request: Request):
+@router.get("/data-mining/github-config", response_class=HTMLResponse)
+async def github_config_dialog(request: Request):
     """Serve the GitHub configuration dialog."""
     return templates.TemplateResponse(
         "github_config_dialog.html", 
         {"request": request}
     )
 
-@router.get("/websearch-config", response_class=HTMLResponse)
-async def websearch_config(request: Request):
+@router.get("/data-mining/websearch-config", response_class=HTMLResponse)
+async def websearch_config_dialog(request: Request):
     """Serve the WebSearch configuration dialog."""
     return templates.TemplateResponse(
         "websearch_config_dialog.html", 
         {"request": request}
     )
 
-@router.get("/youtube-config", response_class=HTMLResponse)
-async def youtube_config(request: Request):
+@router.get("/data-mining/youtube-config", response_class=HTMLResponse)
+async def youtube_config_dialog(request: Request):
     """Serve the YouTube configuration dialog."""
     return templates.TemplateResponse(
         "youtube_config_dialog.html", 
         {"request": request}
     )
 
-@router.get("/arxiv-config", response_class=HTMLResponse)
-async def arxiv_config(request: Request):
+@router.get("/data-mining/arxiv-config", response_class=HTMLResponse)
+async def arxiv_config_dialog(request: Request):
     """Serve the ArXiv configuration dialog."""
     return templates.TemplateResponse(
         "arxiv_dialog.html", 
         {"request": request}
     )
+

@@ -1,7 +1,7 @@
 """
-Error handling utilities for WiseFlow.
+Error handling utilities for Wiseflow.
 
-This module provides standardized error handling mechanisms for the WiseFlow system.
+This module provides standardized error handling mechanisms for the Wiseflow system.
 """
 
 import logging
@@ -12,17 +12,15 @@ import json
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable, Type, Union, List
 
-from core.config import PROJECT_DIR
-
 # Configure logging
 logger = logging.getLogger(__name__)
 
 class WiseflowError(Exception):
-    """Base class for all WiseFlow exceptions."""
+    """Base class for all Wiseflow exceptions."""
     
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         """
-        Initialize a WiseFlow error.
+        Initialize a Wiseflow error.
         
         Args:
             message: Error message
@@ -69,174 +67,130 @@ class DataProcessingError(WiseflowError):
 
 
 class ConfigurationError(WiseflowError):
-    """Error raised when there is a configuration error."""
+    """Error raised when there is a configuration issue."""
     pass
 
 
 class ResourceError(WiseflowError):
-    """Error raised when there is a resource error."""
-    pass
-
-
-class TaskError(WiseflowError):
-    """Error raised when there is a task error."""
+    """Error raised when there is a resource issue."""
     pass
 
 
 class PluginError(WiseflowError):
-    """Error raised when there is a plugin error."""
+    """Error raised when there is a plugin issue."""
     pass
 
 
-def handle_exceptions(
-    error_types: Optional[List[Type[Exception]]] = None,
-    default_message: str = "An error occurred",
-    log_error: bool = True,
-    reraise: bool = False,
-    save_to_file: bool = False
-) -> Callable:
+class LLMError(WiseflowError):
+    """Error raised when there is an LLM issue."""
+    pass
+
+
+def handle_exceptions(func=None, *, error_type=WiseflowError, reraise=False, log_level=logging.ERROR):
     """
-    Decorator for handling exceptions.
+    Decorator to handle exceptions in a standardized way.
     
     Args:
-        error_types: List of exception types to catch
-        default_message: Default error message
-        log_error: Whether to log the error
-        reraise: Whether to re-raise the exception
-        save_to_file: Whether to save the error to a file
+        func: Function to decorate
+        error_type: Type of error to raise
+        reraise: Whether to reraise the exception
+        log_level: Logging level for the error
         
     Returns:
-        Decorator function
+        Decorated function
     """
-    if error_types is None:
-        error_types = [Exception]
-    
-    def decorator(func):
-        async def async_wrapper(*args, **kwargs):
-            try:
-                return await func(*args, **kwargs)
-            except tuple(error_types) as e:
-                error_message = str(e) or default_message
-                if log_error:
-                    logger.error(f"Error in {func.__name__}: {error_message}")
-                    logger.error(traceback.format_exc())
-                
-                if save_to_file:
-                    save_error_to_file(func.__name__, error_message, traceback.format_exc())
-                
-                if reraise:
-                    raise
-                
-                # Return a default value based on the function's return annotation
-                return_annotation = func.__annotations__.get('return')
-                if return_annotation is None:
-                    return None
-                elif return_annotation is bool:
-                    return False
-                elif return_annotation is int:
-                    return 0
-                elif return_annotation is str:
-                    return ""
-                elif return_annotation is list or return_annotation is List:
-                    return []
-                elif return_annotation is dict or return_annotation is Dict:
-                    return {}
-                else:
-                    return None
-        
+    def decorator(f):
         def sync_wrapper(*args, **kwargs):
             try:
-                return func(*args, **kwargs)
-            except tuple(error_types) as e:
-                error_message = str(e) or default_message
-                if log_error:
-                    logger.error(f"Error in {func.__name__}: {error_message}")
-                    logger.error(traceback.format_exc())
-                
-                if save_to_file:
-                    save_error_to_file(func.__name__, error_message, traceback.format_exc())
-                
+                return f(*args, **kwargs)
+            except Exception as e:
+                log_error(e, log_level=log_level)
                 if reraise:
                     raise
-                
-                # Return a default value based on the function's return annotation
-                return_annotation = func.__annotations__.get('return')
-                if return_annotation is None:
+                if isinstance(e, WiseflowError):
                     return None
-                elif return_annotation is bool:
-                    return False
-                elif return_annotation is int:
-                    return 0
-                elif return_annotation is str:
-                    return ""
-                elif return_annotation is list or return_annotation is List:
-                    return []
-                elif return_annotation is dict or return_annotation is Dict:
-                    return {}
-                else:
-                    return None
+                raise error_type(str(e), {"original_error": str(e), "traceback": traceback.format_exc()})
         
-        if asyncio.iscoroutinefunction(func):
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await f(*args, **kwargs)
+            except Exception as e:
+                log_error(e, log_level=log_level)
+                if reraise:
+                    raise
+                if isinstance(e, WiseflowError):
+                    return None
+                raise error_type(str(e), {"original_error": str(e), "traceback": traceback.format_exc()})
+        
+        import inspect
+        if inspect.iscoroutinefunction(f):
             return async_wrapper
-        else:
-            return sync_wrapper
+        return sync_wrapper
     
-    return decorator
+    if func is None:
+        return decorator
+    return decorator(func)
 
 
-def log_error(error: Exception, logger_instance: Optional[logging.Logger] = None) -> None:
+def log_error(error: Exception, log_level=logging.ERROR, logger_instance=None):
     """
-    Log an error.
+    Log an error with traceback.
     
     Args:
         error: Exception to log
+        log_level: Logging level
         logger_instance: Logger instance to use
     """
     log = logger_instance or logger
+    
     if isinstance(error, WiseflowError):
         error.log(log)
     else:
-        log.error(f"{type(error).__name__}: {str(error)}")
-        log.error(traceback.format_exc())
+        log.log(log_level, f"Error: {error}")
+        log.log(log_level, f"Traceback: {traceback.format_exc()}")
 
 
-def save_error_to_file(
-    function_name: str,
-    error_message: str,
-    traceback_str: str,
-    directory: Optional[str] = None
-) -> str:
+def save_error_to_file(error: Exception, filepath: Optional[str] = None) -> str:
     """
     Save an error to a file.
     
     Args:
-        function_name: Name of the function where the error occurred
-        error_message: Error message
-        traceback_str: Traceback string
-        directory: Directory to save the file to
+        error: Exception to save
+        filepath: Path to save the error to
         
     Returns:
-        Path to the error file
+        Path to the saved error file
     """
-    if directory is None:
-        directory = os.path.join(PROJECT_DIR, "errors")
+    if filepath is None:
+        # Generate a default filepath
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        project_dir = os.environ.get("PROJECT_DIR", "")
+        if project_dir:
+            error_dir = os.path.join(project_dir, "errors")
+            os.makedirs(error_dir, exist_ok=True)
+            filepath = os.path.join(error_dir, f"error_{timestamp}.json")
+        else:
+            filepath = f"error_{timestamp}.json"
     
-    os.makedirs(directory, exist_ok=True)
+    # Create the error data
+    error_data = {
+        "timestamp": datetime.now().isoformat(),
+        "error_type": type(error).__name__,
+        "error_message": str(error),
+        "traceback": traceback.format_exc()
+    }
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"error_{function_name}_{timestamp}.log"
-    filepath = os.path.join(directory, filename)
+    # Add additional details for WiseflowError
+    if isinstance(error, WiseflowError):
+        error_data.update(error.to_dict())
     
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(f"Error in {function_name} at {datetime.now().isoformat()}\n")
-        f.write(f"Error message: {error_message}\n")
-        f.write("\nTraceback:\n")
-        f.write(traceback_str)
-    
-    logger.info(f"Error saved to {filepath}")
-    return filepath
-
-
-# Import asyncio at the end to avoid circular imports
-import asyncio
+    # Save to file
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(error_data, f, indent=2)
+        logger.info(f"Error saved to {filepath}")
+        return filepath
+    except Exception as e:
+        logger.error(f"Failed to save error to file: {e}")
+        return ""
 

@@ -1,3 +1,9 @@
+"""
+AsyncWebCrawler module for Wiseflow.
+
+This module provides an asynchronous web crawler for fetching web content.
+"""
+
 import os
 import time
 import psutil
@@ -12,26 +18,27 @@ import traceback
 from contextlib import asynccontextmanager
 
 from .async_configs import BrowserConfig, CrawlerRunConfig, CacheMode
-from .async_crawler_strategy import AsyncCrawlerStrategy
+from .async_crawler_strategy import CrawlerStrategy
 from .async_database import AsyncDatabaseManager
 from .async_logger import AsyncLogger
 from .cache_context import CacheContext
 from .models import CrawlResult
+from .ssl_certificate import get_ssl_certificate
 from .utils import (
-    create_box_message,
     sanitize_input_encode,
+    create_box_message,
     get_domain_from_url,
-    get_ssl_certificate,
-    RobotsParser,
+    get_base_url,
+    get_url_path,
 )
 
-# Initialize memory monitoring and management
+
 class AsyncWebCrawler:
     """
     Asynchronous web crawler for fetching web content.
     
-    This class provides a high-level interface for crawling web pages asynchronously,
-    with support for caching, browser configuration, and error handling.
+    This class provides an asynchronous web crawler that can fetch web content
+    with caching, error handling, and resource management.
     """
 
     _domain_last_hit = {}
@@ -56,7 +63,7 @@ class AsyncWebCrawler:
         **kwargs,
     ):
         """
-        Initialize the web crawler.
+        Initialize the AsyncWebCrawler.
         
         Args:
             config: Browser configuration
@@ -92,11 +99,10 @@ class AsyncWebCrawler:
         )
 
         # Initialize crawler strategy
-        params = {k: v for k, v in kwargs.items() if k != "always_by_pass_cache"}
-        self.crawler_strategy = AsyncCrawlerStrategy(
+        self.crawler_strategy = CrawlerStrategy(
             browser_config=self.browser_config,
             logger=self.logger,
-            **params,  # Pass remaining kwargs for backwards compatibility
+            **kwargs,  # Pass remaining kwargs for backwards compatibility
         )
 
         # If crawler strategy doesn't have logger, use crawler logger
@@ -112,6 +118,7 @@ class AsyncWebCrawler:
         os.makedirs(self.crawl4ai_folder, exist_ok=True)
 
         # Initialize robots.txt parser
+        from .utils import RobotsParser
         self.robots_parser = RobotsParser()
 
         self.ready = False
@@ -165,9 +172,9 @@ class AsyncWebCrawler:
 
     async def start(self):
         """
-        Start the web crawler.
+        Start the crawler.
         
-        This method initializes the crawler strategy and warms up the browser.
+        This method initializes the crawler and prepares it for use.
         
         Returns:
             self: The crawler instance
@@ -183,7 +190,7 @@ class AsyncWebCrawler:
 
     async def close(self):
         """
-        Close the web crawler.
+        Close the crawler.
         
         This method cleans up resources used by the crawler.
         
@@ -223,12 +230,18 @@ class AsyncWebCrawler:
         await self.close()
 
     async def awarmup(self):
-        """Warm up the browser."""
+        """
+        Warm up the crawler.
+        
+        This method prepares the crawler for use by initializing the database
+        and other components.
+        """
+        await self.async_db_manager.ainit()
         self.ready = True
         return self
 
     async def nullcontext(self):
-        """异步空上下文管理器"""
+        """Async null context manager."""
         yield
 
     async def _check_and_handle_memory(self, url: str) -> bool:
@@ -337,30 +350,27 @@ class AsyncWebCrawler:
                 cache_context = CacheContext(
                     url=url,
                     cache_mode=crawler_config.cache_mode,
+                    db_manager=self.async_db_manager,
                     logger=self.logger,
                 )
-
-                # Get the database manager
-                async_db_manager = self.async_db_manager
 
                 # Start timing
                 start_time = time.perf_counter()
 
-                # Check cache first if enabled
+                # Try to get from cache
                 html = ""
-                screenshot_data = None
-                pdf_data = None
                 cached_result = None
 
+                # Check if we should use cache
                 if cache_context.should_read():
-                    cached_result = await async_db_manager.aget_url_cache(url)
-                    if cached_result:
-                        html = cached_result.html
-                        screenshot_data = cached_result.screenshot
-                        pdf_data = cached_result.pdf
-                        # if config.screenshot and not screenshot or config.pdf and not pdf:
-                        if crawler_config.screenshot and not screenshot_data:
-                            cached_result = None
+                    # Try to get from cache
+                    cached_result = await cache_context.get_from_cache()
+                    html = cached_result.html if cached_result else ""
+                    screenshot_data = cached_result.screenshot
+                    pdf_data = cached_result.pdf
+                    # if config.screenshot and not screenshot or config.pdf and not pdf:
+                    if crawler_config.screenshot and not screenshot_data:
+                        cached_result = None
                 
                 # Fetch fresh content if needed
                 if not cached_result or not html:
@@ -369,14 +379,12 @@ class AsyncWebCrawler:
                     # Check robots.txt if enabled
                     if crawler_config and crawler_config.check_robots_txt:
                         if not await self.robots_parser.can_fetch(url, self.browser_config.user_agent):
-                            self.logger.warning(
-                                f"URL {url} is disallowed by robots.txt"
-                            )
+                            self.logger.warning(f"Robots.txt disallows crawling {url}")
                             return CrawlResult(
                                 url=url,
                                 html="",
                                 success=False,
-                                error_message="URL is disallowed by robots.txt",
+                                error_message="Robots.txt disallows crawling this URL",
                             )
 
                     # Update domain last hit time
@@ -431,23 +439,19 @@ class AsyncWebCrawler:
                     html = sanitize_input_encode(async_response.html)
                     screenshot_data = async_response.screenshot
                     pdf_data = async_response.pdf
+                    redirected_url = async_response.redirected_url or url
 
-                    # Create a CrawlResult
+                    # Create the crawl result
                     crawl_result = CrawlResult(
                         url=url,
                         html=html,
-                        markdown=async_response.markdown,
+                        redirected_url=redirected_url,
                         screenshot=screenshot_data,
                         pdf=pdf_data,
-                        media=async_response.media,
                         metadata=async_response.metadata,
-                        redirected_url=async_response.redirected_url or url,
-                        timing=time.perf_counter() - t1,
-                    )
-
-                    # Add SSL certificate
-                    crawl_result.ssl_certificate = await get_ssl_certificate(
-                        url=url, logger=self.logger
+                        media=async_response.media,
+                        markdown=async_response.markdown,
+                        ssl_certificate=get_ssl_certificate(redirected_url),
                     )  # Add SSL certificate
 
                     crawl_result.success = bool(html)
@@ -456,8 +460,8 @@ class AsyncWebCrawler:
                     self.logger.success(
                         message="{url:.50}... | Status: {status} | Total: {timing}",
                         url=url,
-                        status=crawl_result.success,
-                        timing=time.perf_counter() - start_time,
+                        status="Success" if crawl_result.success else "Failed",
+                        timing=f"{time.perf_counter() - start_time:.2f}s",
                         tag="CRAWL",
                     )
 
@@ -478,8 +482,8 @@ class AsyncWebCrawler:
                     self.logger.success(
                         message="{url:.50}... | Status: {status} | Total: {timing}",
                         url=url,
-                        status=bool(html),
-                        timing=time.perf_counter() - start_time,
+                        status="Cached",
+                        timing=f"{time.perf_counter() - start_time:.2f}s",
                         tag="CACHE",
                     )
 
@@ -496,9 +500,10 @@ class AsyncWebCrawler:
                     return cached_result
 
             except Exception as e:
+                # Handle any exceptions
                 error_message = f"Error crawling {url}: {str(e)}"
                 self.logger.error(
-                    message="{url:.50}... | Error: {error}",
+                    message="{url:.50}... | {error}",
                     url=url,
                     error=create_box_message(error_message, type="error"),
                     tag="ERROR",
@@ -513,3 +518,4 @@ class AsyncWebCrawler:
                 return CrawlResult(
                     url=url, html="", success=False, error_message=error_message
                 )
+
