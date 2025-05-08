@@ -14,6 +14,12 @@ from datetime import datetime
 from core.plugins.processors import ProcessorBase, ProcessedData
 from core.connectors import DataItem
 from core.llms.litellm_wrapper import litellm_llm
+from core.llms.exceptions import (
+    LLMException, NetworkException, AuthenticationException, RateLimitException,
+    TimeoutException, ContentFilterException, ContextLengthException,
+    InvalidRequestException, ServiceUnavailableException, QuotaExceededException,
+    UnknownException
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,14 +116,46 @@ class TextProcessor(ProcessorBase):
                     {"role": "user", "content": f"{chunk}\n\n{user_prompt}"}
                 ]
                 
-                response = litellm_llm(messages, model or self.model)
+                response = litellm_llm(
+                    messages=messages, 
+                    model=model or self.model,
+                    logger=logger,
+                    max_retries=3  # Add retry mechanism
+                )
                 
                 # Parse the response
                 parsed_results = self._parse_llm_response(response, author, publish_date)
                 results.extend(parsed_results)
                 
-            except Exception as e:
+            except LLMException as e:
                 logger.error(f"Error processing chunk with LLM: {e}")
+                error_type = type(e).__name__.replace("Exception", "")
+                
+                # Add error information to results
+                results.append({
+                    "error": str(e),
+                    "error_type": error_type,
+                    "chunk_size": len(chunk),
+                    "author": author,
+                    "publish_date": publish_date,
+                    "type": "error"
+                })
+                
+                # Don't retry for certain error types
+                if isinstance(e, (ContentFilterException, ContextLengthException, 
+                                 AuthenticationException, InvalidRequestException)):
+                    logger.warning(f"Not processing remaining chunks due to non-transient error: {error_type}")
+                    break
+            except Exception as e:
+                logger.error(f"Unexpected error processing chunk with LLM: {e}")
+                results.append({
+                    "error": str(e),
+                    "error_type": "Unexpected",
+                    "chunk_size": len(chunk),
+                    "author": author,
+                    "publish_date": publish_date,
+                    "type": "error"
+                })
         
         return results
     
