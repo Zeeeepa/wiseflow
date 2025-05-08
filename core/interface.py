@@ -8,6 +8,7 @@ of the WiseFlow system, making it easier to import and use them consistently.
 import os
 import logging
 import asyncio
+import traceback
 from typing import Dict, List, Any, Optional, Union, Callable
 
 # Configure logging
@@ -26,6 +27,11 @@ from core.event_system import (
     create_focus_point_event, create_task_event
 )
 from core.utils.error_handling import handle_exceptions, WiseflowError
+
+# Import LLM components lazily to avoid circular imports
+def _get_llm_wrapper():
+    from core.llms import get_llm_wrapper
+    return get_llm_wrapper()
 
 class WiseflowInterface:
     """
@@ -51,16 +57,23 @@ class WiseflowInterface:
         self.logger = get_logger('wiseflow_interface', self.project_dir)
         
         # Initialize components
-        self.pb = PbTalker(self.logger)
-        
-        # Initialize LLM
-        self.model = config.get("PRIMARY_MODEL", "")
-        if not self.model:
-            raise ValueError("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
-        self.secondary_model = config.get("SECONDARY_MODEL", self.model)
-        
-        # Publish system startup event
-        self._publish_startup_event()
+        try:
+            self.pb = PbTalker(self.logger)
+            
+            # Initialize LLM
+            self.model = config.get("PRIMARY_MODEL", "")
+            if not self.model:
+                self.logger.warning("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
+                self.model = "gpt-3.5-turbo"  # Default model
+                
+            self.secondary_model = config.get("SECONDARY_MODEL", self.model)
+            
+            # Publish system startup event
+            self._publish_startup_event()
+        except Exception as e:
+            self.logger.error(f"Error initializing WiseflowInterface: {e}")
+            self.logger.debug(f"Traceback:\n{traceback.format_exc()}")
+            raise
     
     def _publish_startup_event(self):
         """Publish system startup event."""
@@ -73,6 +86,7 @@ class WiseflowInterface:
             publish_sync(event)
         except Exception as e:
             self.logger.warning(f"Failed to publish startup event: {e}")
+            self.logger.debug(f"Traceback:\n{traceback.format_exc()}")
     
     @handle_exceptions(default_message="Failed to get active focus points", log_error=True)
     def get_active_focus_points(self) -> List[Dict[str, Any]]:
@@ -140,6 +154,7 @@ class WiseflowInterface:
                 publish_sync(event)
             except Exception as e:
                 self.logger.warning(f"Failed to publish data processed event: {e}")
+                self.logger.debug(f"Traceback:\n{traceback.format_exc()}")
         
         return info_id
     
@@ -172,6 +187,7 @@ class WiseflowInterface:
         # Import here to avoid circular imports
         from core.agents.get_info import get_info, pre_process
         from core.crawl4ai import AsyncWebCrawler, CacheMode
+        from core.crawl4ai.async_configs import CrawlerRunConfig
         from core.agents.get_info_prompts import get_info_prompts
         
         self.logger.info(f"Processing URL: {url}")
@@ -188,7 +204,6 @@ class WiseflowInterface:
         
         try:
             # Configure crawler
-            from core.crawl4ai.crawler_config import CrawlerRunConfig
             crawler_config = CrawlerRunConfig()
             crawler_config.cache_mode = CacheMode.ENABLED
             
@@ -233,6 +248,11 @@ class WiseflowInterface:
             
             return infos
         
+        except Exception as e:
+            self.logger.error(f"Error processing URL: {e}")
+            self.logger.debug(f"Traceback:\n{traceback.format_exc()}")
+            return []
+        
         finally:
             await crawler.close()
     
@@ -264,6 +284,7 @@ class WiseflowInterface:
                 publish_sync(event)
             except Exception as e:
                 self.logger.warning(f"Failed to publish insight generated event: {e}")
+                self.logger.debug(f"Traceback:\n{traceback.format_exc()}")
         
         return insights
     
@@ -292,7 +313,7 @@ class WiseflowInterface:
             publish_sync(event)
         except Exception as e:
             self.logger.warning(f"Failed to publish shutdown event: {e}")
+            self.logger.debug(f"Traceback:\n{traceback.format_exc()}")
 
 # Create a singleton instance for easy access
 wiseflow = WiseflowInterface()
-

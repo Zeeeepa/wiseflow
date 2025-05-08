@@ -24,6 +24,15 @@ Example usage:
     await process_focus_point(focus_id="focus_point_id")
 """
 
+import os  # Add missing import
+import json
+import asyncio
+import time
+import traceback
+from urllib.parse import urlparse
+from datetime import datetime
+import feedparser
+
 from core.imports import (
     wiseflow_logger,
     PbTalker,
@@ -53,12 +62,8 @@ from core.imports import (
     publish_sync
 )
 
-import json
-from urllib.parse import urlparse
-from datetime import datetime
-import asyncio
-import time
-import feedparser
+# Import CrawlerRunConfig
+from core.crawl4ai.async_configs import CrawlerRunConfig
 
 # Initialize PocketBase client
 pb = PbTalker(wiseflow_logger)
@@ -187,6 +192,7 @@ async def info_process(url: str,
                             wiseflow_logger.error(f"Failed to retrieve item {info_id} after {max_retries} attempts")
             except Exception as e:
                 wiseflow_logger.error(f'Error processing multimodal analysis: {e}')
+                wiseflow_logger.debug(f'Traceback: {traceback.format_exc()}')
     
     return processed_items
 
@@ -255,6 +261,7 @@ async def process_data_with_plugins(data_item: DataItem, focus: dict, get_info_p
         return processed_items
     except Exception as e:
         wiseflow_logger.error(f"Error processing data item: {e}")
+        wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
         return []
 
 
@@ -272,24 +279,25 @@ async def collect_from_connector(connector_name: str, params: dict) -> list[Data
         List of collected data items
     """
     connector = plugin_manager.get_plugin(connector_name)
-    
     if not connector or not isinstance(connector, ConnectorBase):
         wiseflow_logger.error(f"Connector {connector_name} not found or not a valid connector")
         return []
     
     try:
-        # Use the improved collect_with_retry method for better error handling
-        return await connector.collect_with_retry(params)
+        # Collect data from the connector
+        data_items = await connector.collect(params)
+        return data_items
     except Exception as e:
         wiseflow_logger.error(f"Error collecting data from connector {connector_name}: {e}")
+        wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
         return []
 
-async def process_url_with_connector(url, connector, focus, get_info_prompts, semaphore):
+async def process_url_with_connector(url: str, connector: ConnectorBase, focus: dict, get_info_prompts: list[str], semaphore: asyncio.Semaphore) -> list[str]:
     """
-    Process a URL using a connector with concurrency control.
+    Process a URL using a connector.
     
-    This function processes a URL using a connector with concurrency control
-    provided by a semaphore.
+    This function processes a URL using a connector, extracting information
+    and saving it to the database.
     
     Args:
         url: URL to process
@@ -303,14 +311,14 @@ async def process_url_with_connector(url, connector, focus, get_info_prompts, se
     """
     async with semaphore:
         try:
-            wiseflow_logger.debug(f"Processing URL with connector: {url}")
+            wiseflow_logger.info(f"Processing URL with connector: {url}")
             
             # Collect data from the connector
-            data_items = await collect_from_connector(connector.name, {"urls": [url]})
-            
-            if not data_items:
-                wiseflow_logger.warning(f"No data collected from {url}")
-                return []
+            data_items = await connector.collect({
+                "url": url,
+                "focus_point": focus.get("focuspoint", ""),
+                "explanation": focus.get("explanation", "")
+            })
             
             # Process each data item
             processed_items = []
@@ -320,15 +328,18 @@ async def process_url_with_connector(url, connector, focus, get_info_prompts, se
             
             return processed_items
         except Exception as e:
-            wiseflow_logger.error(f"Error processing URL with connector: {e}")
+            wiseflow_logger.error(f"Error processing URL with connector: {url}, error: {e}")
+            wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
             return []
 
-async def process_url_with_crawler(url, crawler, focus_id, existing_urls, get_link_prompts, get_info_prompts, recognized_img_cache, semaphore):
+async def process_url_with_crawler(url: str, crawler: AsyncWebCrawler, focus_id: str, existing_urls: set, 
+                                  get_link_prompts: list[str], get_info_prompts: list[str], 
+                                  recognized_img_cache: dict, semaphore: asyncio.Semaphore) -> list[str]:
     """
-    Process a URL using the crawler with concurrency control and improved error handling.
+    Process a URL using a crawler.
     
-    This function processes a URL using the crawler with concurrency control
-    provided by a semaphore and improved error handling.
+    This function processes a URL using a crawler, extracting information
+    and saving it to the database.
     
     Args:
         url: URL to process
@@ -345,20 +356,133 @@ async def process_url_with_crawler(url, crawler, focus_id, existing_urls, get_li
     """
     async with semaphore:
         try:
-            wiseflow_logger.debug(f"Processing URL with crawler: {url}")
+            wiseflow_logger.info(f"Processing URL with crawler: {url}")
             
-            # Validate URL before proces...(truncated from 29296 characters)...         references.append(ref)
-                # Add to reference manager
-                reference_manager.add_reference(
-                    title=ref.get("title", ""),
-                    content=ref.get("content", ""),
-                    source=ref.get("source", ""),
-                    reference_type=ref.get("type", "text"),
-                    metadata={
-                        "focus_id": focus["id"],
-                        "focus_point": focus.get("focuspoint", "")
-                    }
-                )
+            # Configure crawler
+            crawler_config = CrawlerRunConfig()
+            crawler_config.cache_mode = CacheMode.ENABLED
+            
+            # Crawl URL
+            result = await crawler.arun(url=url, config=crawler_config)
+            if not result.success:
+                wiseflow_logger.warning(f'{url} failed to crawl')
+                return []
+            
+            # Process the crawled content
+            raw_markdown = result.markdown
+            metadata_dict = result.metadata if result.metadata else {}
+            media_dict = result.media if result.media else {}
+            used_img = [d['src'] for d in media_dict.get('images', [])]
+            
+            title = metadata_dict.get('title', '')
+            base_url = metadata_dict.get('base', '')
+            author = metadata_dict.get('author', '')
+            publish_date = metadata_dict.get('publish_date', '')
+            
+            # Pre-process the content
+            link_dict, links_parts, contents, recognized_img_cache = await pre_process(
+                raw_markdown, base_url, used_img, recognized_img_cache, existing_urls
+            )
+            
+            # Process information
+            processed_items = await info_process(
+                url, title, author, publish_date, contents, link_dict, focus_id, get_info_prompts
+            )
+            
+            # Process related links if needed
+            if config.get("PROCESS_RELATED_LINKS", False) and link_dict:
+                related_urls = await get_more_related_urls(links_parts, get_link_prompts)
+                for related_url in related_urls:
+                    if related_url not in existing_urls:
+                        existing_urls.add(related_url)
+                        # Create a task to process the related URL
+                        asyncio.create_task(
+                            process_url_with_crawler(
+                                related_url, crawler, focus_id, existing_urls, 
+                                get_link_prompts, get_info_prompts, 
+                                recognized_img_cache, semaphore
+                            )
+                        )
+            
+            return processed_items
+        except Exception as e:
+            wiseflow_logger.error(f"Error processing URL with crawler: {url}, error: {e}")
+            wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
+            return []
+
+async def process_focus_point(focus_id: str) -> bool:
+    """
+    Process a focus point.
+    
+    This function processes a focus point, collecting and analyzing data from
+    various sources based on the focus point's configuration.
+    
+    Args:
+        focus_id: ID of the focus point to process
+        
+    Returns:
+        True if processing was successful, False otherwise
+    """
+    wiseflow_logger.info(f"Processing focus point: {focus_id}")
+    
+    # Get the focus point
+    focus = pb.read_one('focus_point', id=focus_id)
+    if not focus:
+        wiseflow_logger.error(f"Focus point with ID {focus_id} not found")
+        return False
+    
+    # Publish event for focus point processing start
+    start_event = Event(
+        EventType.FOCUS_POINT_PROCESSED,
+        data={
+            "focus_id": focus_id,
+            "focus_point": focus.get("focuspoint", ""),
+            "status": "started"
+        },
+        source="main_process"
+    )
+    await publish(start_event)
+    
+    # Get sites for this focus point
+    sites = pb.read('sites', filter=f'tag="{focus_id}"')
+    if not sites:
+        wiseflow_logger.warning(f"No sites found for focus point: {focus.get('focuspoint', '')}")
+        
+        # Publish event for focus point processing completion
+        end_event = Event(
+            EventType.FOCUS_POINT_PROCESSED,
+            data={
+                "focus_id": focus_id,
+                "focus_point": focus.get("focuspoint", ""),
+                "sites_count": 0,
+                "status": "completed"
+            },
+            source="main_process"
+        )
+        await publish(end_event)
+        return True
+    
+    # Get references for this focus point
+    references = []
+    if config.get("ENABLE_REFERENCES", True):
+        try:
+            references = reference_manager.get_references_for_focus(focus_id)
+        except Exception as e:
+            wiseflow_logger.error(f"Error getting references for focus point {focus_id}: {e}")
+            wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
+    
+    # Publish event for focus point processing
+    processing_event = Event(
+        EventType.FOCUS_POINT_PROCESSED,
+        data={
+            "focus_id": focus_id,
+            "focus_point": focus.get("focuspoint", ""),
+            "sites_count": len(sites),
+            "status": "processing"
+        },
+        source="main_process"
+    )
+    await publish(processing_event)
     
     # Get prompts for this focus point
     get_info_prompts = []
@@ -396,10 +520,6 @@ async def process_url_with_crawler(url, crawler, focus_id, existing_urls, get_li
         existing_urls = set()
         recognized_img_cache = {}
         
-        # Configure crawler
-        crawler_config = CrawlerRunConfig()
-        crawler_config.cache_mode = CacheMode.ENABLED
-        
         # Add sites to working list
         for site in sites:
             if site['url'] not in existing_urls and isURL(site['url']):
@@ -429,6 +549,7 @@ async def process_url_with_crawler(url, crawler, focus_id, existing_urls, get_li
                 for result in results:
                     if isinstance(result, Exception):
                         wiseflow_logger.error(f"Error processing URL: {result}")
+                        wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
                     elif result:
                         all_processed_items.extend(result)
             
@@ -474,6 +595,7 @@ async def process_url_with_crawler(url, crawler, focus_id, existing_urls, get_li
                             )
             except Exception as e:
                 wiseflow_logger.error(f"Error processing search engine: {e}")
+                wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
         
         # Process RSS feeds
         for site in sites:
@@ -496,6 +618,7 @@ async def process_url_with_crawler(url, crawler, focus_id, existing_urls, get_li
                                 )
                 except Exception as e:
                     wiseflow_logger.error(f"Error processing RSS feed: {e}")
+                    wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
     
     finally:
         # Close crawler
@@ -593,6 +716,7 @@ async def generate_insights_for_focus(focus_id: str, time_period_days: int = 7):
     
     except Exception as e:
         wiseflow_logger.error(f"Error generating insights for focus point {focus_id}: {e}")
+        wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
         
         # Publish event for insight generation failure
         error_event = Event(

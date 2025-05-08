@@ -1,25 +1,53 @@
+"""
+OpenAI wrapper for Wiseflow.
+
+This module provides a wrapper for the OpenAI API.
+"""
+
 import os
-from openai import AsyncOpenAI as OpenAI
-from openai import RateLimitError, APIError
+import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+import traceback
+from typing import List, Dict, Any, Optional, Union
 
-base_url = os.environ.get('LLM_API_BASE', "")
-token = os.environ.get('LLM_API_KEY', "")
+# Configure logging
+logger = logging.getLogger(__name__)
 
-if not base_url and not token:
-    raise ValueError("LLM_API_BASE or LLM_API_KEY must be set")
-elif base_url and not token:
-    client = OpenAI(base_url=base_url, api_key="not_use")
-elif not base_url and token:
-    client = OpenAI(api_key=token)
+# Check if OpenAI is available
+try:
+    from openai import AsyncOpenAI as OpenAI
+    from openai import RateLimitError, APIError
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    logger.warning("OpenAI is not installed. Some functionality will be limited.")
+
+# Initialize OpenAI client if available
+if OPENAI_AVAILABLE:
+    # Get configuration from environment variables
+    base_url = os.environ.get('LLM_API_BASE', "")
+    token = os.environ.get('LLM_API_KEY', "")
+
+    # Validate configuration
+    if not base_url and not token:
+        logger.warning("LLM_API_BASE or LLM_API_KEY must be set for OpenAI integration")
+        client = None
+    elif base_url and not token:
+        logger.info(f"Initializing OpenAI client with base URL: {base_url}")
+        client = OpenAI(base_url=base_url, api_key="not_use")
+    elif not base_url and token:
+        logger.info("Initializing OpenAI client with API key")
+        client = OpenAI(api_key=token)
+    else:
+        logger.info(f"Initializing OpenAI client with base URL: {base_url} and API key")
+        client = OpenAI(api_key=token, base_url=base_url)
+
+    # Set maximum concurrency based on environment variable
+    concurrent_number = os.environ.get('LLM_CONCURRENT_NUMBER', 1)
+    semaphore = asyncio.Semaphore(int(concurrent_number))
 else:
-    client = OpenAI(api_key=token, base_url=base_url)
-
-# Set maximum concurrency based on environment variable
-concurrent_number = os.environ.get('LLM_CONCURRENT_NUMBER', 1)
-semaphore = asyncio.Semaphore(int(concurrent_number))
-
+    client = None
+    semaphore = None
 
 async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **kwargs) -> str:
     """
@@ -39,8 +67,16 @@ async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **
         The content of the API response
         
     Raises:
+        ImportError: If OpenAI is not installed
+        ValueError: If client is not initialized
         Exception: If all retries fail
     """
+    if not OPENAI_AVAILABLE:
+        raise ImportError("OpenAI is not installed. Please install it with 'pip install openai'.")
+    
+    if client is None:
+        raise ValueError("OpenAI client is not initialized. Check your API configuration.")
+    
     if logger:
         logger.debug(f'messages:\n {messages}')
         logger.debug(f'model: {model}')
@@ -101,6 +137,7 @@ async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **
                 error_msg = f"Unexpected error: {str(e)}. Retry {retry+1}/{max_retries}."
                 if logger:
                     logger.error(error_msg)
+                    logger.debug(f"Traceback: {traceback.format_exc()}")
                 else:
                     print(error_msg)
 
