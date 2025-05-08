@@ -1,484 +1,434 @@
 """
-Error handling utilities for WiseFlow.
+Error handling utilities for Wiseflow.
 
-This module provides standardized error handling mechanisms for the WiseFlow system.
+This module provides utilities for handling errors, retries, and recovery
+in data processing and connector operations.
 """
 
-import traceback
-import sys
-import os
-import json
 import asyncio
-import inspect
-from datetime import datetime
-from typing import Dict, Any, Optional, Callable, Type, Union, List, TypeVar, cast
+import logging
+import time
+import functools
+import traceback
+from typing import Dict, List, Any, Optional, Union, Callable, Awaitable, TypeVar, Generic, Type
 
-from core.config import PROJECT_DIR
-from core.utils.logging_config import logger, with_context
+logger = logging.getLogger(__name__)
 
-# Type variable for function return type
 T = TypeVar('T')
-
-class WiseflowError(Exception):
-    """Base class for all WiseFlow exceptions."""
-    
-    def __init__(
-        self, 
-        message: str, 
-        details: Optional[Dict[str, Any]] = None,
-        cause: Optional[Exception] = None
-    ):
-        """
-        Initialize a WiseFlow error.
-        
-        Args:
-            message: Error message
-            details: Additional error details
-            cause: Original exception that caused this error
-        """
-        self.message = message
-        self.details = details or {}
-        self.cause = cause
-        self.timestamp = datetime.now().isoformat()
-        super().__init__(message)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert the error to a dictionary.
-        
-        Returns:
-            Dictionary representation of the error
-        """
-        error_dict = {
-            "error_type": self.__class__.__name__,
-            "message": self.message,
-            "timestamp": self.timestamp,
-            "details": self.details
-        }
-        
-        if self.cause:
-            error_dict["cause"] = {
-                "error_type": self.cause.__class__.__name__,
-                "message": str(self.cause)
-            }
-            
-        return error_dict
-    
-    def log(self, log_level: str = "error") -> None:
-        """
-        Log the error with structured context.
-        
-        Args:
-            log_level: Log level to use (default: error)
-        """
-        error_dict = self.to_dict()
-        
-        # Create a logger with error context
-        log_func = getattr(with_context(**error_dict), log_level)
-        
-        # Log the error
-        log_func(f"{self.__class__.__name__}: {self.message}")
-        
-        # Log traceback for debugging
-        if log_level in ["error", "critical"]:
-            with_context(**error_dict).debug(f"Traceback:\n{traceback.format_exc()}")
+F = TypeVar('F', bound=Callable)
 
 
-class ConnectionError(WiseflowError):
-    """Error raised when a connection fails."""
-    pass
-
-
-class DataProcessingError(WiseflowError):
-    """Error raised when data processing fails."""
-    pass
-
-
-class ConfigurationError(WiseflowError):
-    """Error raised when there is a configuration error."""
-    pass
-
-
-class ResourceError(WiseflowError):
-    """Error raised when there is a resource error."""
-    pass
-
-
-class TaskError(WiseflowError):
-    """Error raised when there is a task error."""
-    pass
-
-
-class PluginError(WiseflowError):
-    """Error raised when there is a plugin error."""
-    pass
-
-
-class ValidationError(WiseflowError):
-    """Error raised when validation fails."""
-    pass
-
-
-class AuthenticationError(WiseflowError):
-    """Error raised when authentication fails."""
-    pass
-
-
-class AuthorizationError(WiseflowError):
-    """Error raised when authorization fails."""
-    pass
-
-
-class NotFoundError(WiseflowError):
-    """Error raised when a resource is not found."""
-    pass
-
-
-def handle_exceptions(
-    error_types: Optional[List[Type[Exception]]] = None,
-    default_message: str = "An error occurred",
-    log_error: bool = True,
-    reraise: bool = False,
-    save_to_file: bool = False,
-    default_return: Any = None,
-    error_transformer: Optional[Callable[[Exception], Exception]] = None
-) -> Callable:
+def retry(
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    backoff_factor: float = 2.0,
+    exceptions: Union[Type[Exception], List[Type[Exception]]] = Exception,
+    logger_name: Optional[str] = None
+):
     """
-    Decorator for handling exceptions.
+    Decorator for retrying functions on failure.
     
     Args:
-        error_types: List of exception types to catch
-        default_message: Default error message
-        log_error: Whether to log the error
-        reraise: Whether to re-raise the exception
-        save_to_file: Whether to save the error to a file
-        default_return: Default return value if an exception occurs
-        error_transformer: Function to transform the caught exception
+        max_retries: Maximum number of retries
+        retry_delay: Initial delay between retries in seconds
+        backoff_factor: Factor to multiply delay by after each retry
+        exceptions: Exception types to catch and retry on
+        logger_name: Optional logger name to use
         
     Returns:
-        Decorator function
+        Callable: Decorated function
     """
-    if error_types is None:
-        error_types = [Exception]
-    
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        # Get function signature for better error context
-        func_signature = inspect.signature(func)
-        func_name = func.__qualname__
-        module_name = func.__module__
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            local_logger = logging.getLogger(logger_name or func.__module__)
+            
+            attempt = 0
+            while attempt < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    attempt += 1
+                    if attempt >= max_retries:
+                        local_logger.error(
+                            f"Function {func.__name__} failed after {max_retries} attempts: {e}"
+                        )
+                        raise
+                    
+                    delay = retry_delay * (backoff_factor ** (attempt - 1))
+                    local_logger.warning(
+                        f"Function {func.__name__} failed (attempt {attempt}/{max_retries}): {e}. "
+                        f"Retrying in {delay:.2f} seconds..."
+                    )
+                    time.sleep(delay)
         
-        # Determine if function is async
-        is_async = asyncio.iscoroutinefunction(func)
-        
-        async def async_wrapper(*args: Any, **kwargs: Any) -> T:
-            try:
-                return await func(*args, **kwargs)
-            except tuple(error_types) as e:
-                return _handle_error(e, args, kwargs)
-        
-        def sync_wrapper(*args: Any, **kwargs: Any) -> T:
-            try:
-                return func(*args, **kwargs)
-            except tuple(error_types) as e:
-                return _handle_error(e, args, kwargs)
-        
-        def _handle_error(e: Exception, args: Any, kwargs: Any) -> T:
-            # Create error context
-            error_context = {
-                "function": func_name,
-                "module": module_name,
-                "args": str(args),
-                "kwargs": str(kwargs)
-            }
-            
-            # Get error message
-            error_message = str(e) or default_message
-            
-            # Transform error if needed
-            if error_transformer is not None:
-                e = error_transformer(e)
-            
-            # Log the error
-            if log_error:
-                if isinstance(e, WiseflowError):
-                    e.log()
-                else:
-                    with_context(**error_context).error(f"Error in {func_name}: {error_message}")
-                    with_context(**error_context).debug(f"Traceback:\n{traceback.format_exc()}")
-            
-            # Save error to file if requested
-            if save_to_file:
-                save_error_to_file(func_name, error_message, traceback.format_exc())
-            
-            # Re-raise the exception if requested
-            if reraise:
-                raise
-            
-            # Return default value based on function's return annotation or provided default
-            if default_return is not None:
-                return cast(T, default_return)
-            
-            # Try to determine appropriate default return value
-            return_annotation = func_signature.return_annotation
-            
-            if return_annotation is inspect.Signature.empty:
-                return cast(T, None)
-            elif return_annotation is type(None):
-                return cast(T, None)
-            elif return_annotation is bool:
-                return cast(T, False)
-            elif return_annotation is int:
-                return cast(T, 0)
-            elif return_annotation is str:
-                return cast(T, "")
-            elif return_annotation is list or getattr(return_annotation, "__origin__", None) is list:
-                return cast(T, [])
-            elif return_annotation is dict or getattr(return_annotation, "__origin__", None) is dict:
-                return cast(T, {})
-            else:
-                return cast(T, None)
-        
-        # Return appropriate wrapper based on function type
-        if is_async:
-            return async_wrapper
-        else:
-            return sync_wrapper
+        return wrapper  # type: ignore
     
     return decorator
 
 
-def log_error(
-    error: Exception, 
-    log_level: str = "error",
-    context: Optional[Dict[str, Any]] = None
-) -> None:
+async def async_retry(
+    coro: Callable[..., Awaitable[T]],
+    *args,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    backoff_factor: float = 2.0,
+    exceptions: Union[Type[Exception], List[Type[Exception]]] = Exception,
+    logger_name: Optional[str] = None,
+    **kwargs
+) -> T:
     """
-    Log an error with context.
+    Retry an async coroutine on failure.
     
     Args:
-        error: Exception to log
-        log_level: Log level to use
-        context: Additional context to include in the log
-    """
-    ctx = context or {}
-    
-    if isinstance(error, WiseflowError):
-        # Use the error's built-in logging with context
-        error_with_context = type(error)(
-            error.message,
-            {**error.details, **ctx},
-            error.cause
-        )
-        error_with_context.log(log_level)
-    else:
-        # Log the error with context
-        log_func = getattr(with_context(**ctx), log_level)
-        log_func(f"{type(error).__name__}: {str(error)}")
-        
-        # Log traceback for debugging
-        if log_level in ["error", "critical"]:
-            with_context(**ctx).debug(f"Traceback:\n{traceback.format_exc()}")
-
-
-def save_error_to_file(
-    function_name: str,
-    error_message: str,
-    traceback_str: str,
-    directory: Optional[str] = None,
-    context: Optional[Dict[str, Any]] = None
-) -> str:
-    """
-    Save an error to a file.
-    
-    Args:
-        function_name: Name of the function where the error occurred
-        error_message: Error message
-        traceback_str: Traceback string
-        directory: Directory to save the file to
-        context: Additional context to include in the error file
+        coro: Coroutine function to retry
+        *args: Arguments to pass to the coroutine
+        max_retries: Maximum number of retries
+        retry_delay: Initial delay between retries in seconds
+        backoff_factor: Factor to multiply delay by after each retry
+        exceptions: Exception types to catch and retry on
+        logger_name: Optional logger name to use
+        **kwargs: Keyword arguments to pass to the coroutine
         
     Returns:
-        Path to the error file
+        T: Result of the coroutine
+        
+    Raises:
+        Exception: If all retries fail
     """
-    if directory is None:
-        directory = os.path.join(PROJECT_DIR, "errors")
+    local_logger = logging.getLogger(logger_name or coro.__module__)
     
-    os.makedirs(directory, exist_ok=True)
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            return await coro(*args, **kwargs)
+        except exceptions as e:
+            attempt += 1
+            if attempt >= max_retries:
+                local_logger.error(
+                    f"Function {coro.__name__} failed after {max_retries} attempts: {e}"
+                )
+                raise
+            
+            delay = retry_delay * (backoff_factor ** (attempt - 1))
+            local_logger.warning(
+                f"Function {coro.__name__} failed (attempt {attempt}/{max_retries}): {e}. "
+                f"Retrying in {delay:.2f} seconds..."
+            )
+            await asyncio.sleep(delay)
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"error_{function_name}_{timestamp}.log"
-    filepath = os.path.join(directory, filename)
+    # This should never be reached, but just in case
+    raise RuntimeError(f"Unexpected error in async_retry for {coro.__name__}")
+
+
+def async_retry_decorator(
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    backoff_factor: float = 2.0,
+    exceptions: Union[Type[Exception], List[Type[Exception]]] = Exception,
+    logger_name: Optional[str] = None
+):
+    """
+    Decorator for retrying async functions on failure.
     
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(f"Error in {function_name} at {datetime.now().isoformat()}\n")
-        f.write(f"Error message: {error_message}\n")
+    Args:
+        max_retries: Maximum number of retries
+        retry_delay: Initial delay between retries in seconds
+        backoff_factor: Factor to multiply delay by after each retry
+        exceptions: Exception types to catch and retry on
+        logger_name: Optional logger name to use
         
-        if context:
-            f.write("\nContext:\n")
-            f.write(json.dumps(context, indent=2))
+    Returns:
+        Callable: Decorated function
+    """
+    def decorator(coro: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
+        @functools.wraps(coro)
+        async def wrapper(*args, **kwargs) -> T:
+            return await async_retry(
+                coro,
+                *args,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                backoff_factor=backoff_factor,
+                exceptions=exceptions,
+                logger_name=logger_name,
+                **kwargs
+            )
         
-        f.write("\nTraceback:\n")
-        f.write(traceback_str)
+        return wrapper
     
-    logger.info(f"Error saved to {filepath}")
-    return filepath
+    return decorator
 
 
 class ErrorHandler:
     """
-    Context manager for handling exceptions.
+    Error handler for capturing and processing errors.
     
-    Example:
-        with ErrorHandler(default="default value") as handler:
-            result = risky_operation()
-            return result
-        
-        if handler.error_occurred:
-            # Handle error
-            print(f"Error: {handler.error}")
-        
-        return handler.result
+    This class provides utilities for capturing, logging, and recovering from errors.
     """
     
-    def __init__(
-        self,
-        error_types: Optional[List[Type[Exception]]] = None,
-        default: Any = None,
-        log_error: bool = True,
-        save_to_file: bool = False,
-        context: Optional[Dict[str, Any]] = None
-    ):
+    def __init__(self, logger_name: Optional[str] = None):
         """
         Initialize the error handler.
         
         Args:
-            error_types: List of exception types to catch
-            default: Default value to return if an exception occurs
-            log_error: Whether to log the error
-            save_to_file: Whether to save the error to a file
-            context: Additional context to include in the error log
+            logger_name: Optional logger name to use
         """
-        self.error_types = error_types or [Exception]
-        self.default = default
-        self.log_error = log_error
-        self.save_to_file = save_to_file
-        self.context = context or {}
-        
-        self.error = None
-        self.error_occurred = False
-        self.result = default
+        self.logger = logging.getLogger(logger_name or __name__)
+        self.errors: List[Dict[str, Any]] = []
+        self.max_errors = 100  # Maximum number of errors to store
     
-    def __enter__(self):
-        """Enter the context manager."""
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def capture(
+        self,
+        error: Exception,
+        context: Optional[Dict[str, Any]] = None,
+        log_level: int = logging.ERROR
+    ) -> Dict[str, Any]:
         """
-        Exit the context manager.
+        Capture and log an error.
         
         Args:
-            exc_type: Exception type
-            exc_val: Exception value
-            exc_tb: Exception traceback
+            error: Exception to capture
+            context: Optional context information
+            log_level: Logging level to use
             
         Returns:
-            True if the exception was handled, False otherwise
+            Dict[str, Any]: Error information
         """
-        if exc_type is None:
-            return False
+        error_info = {
+            "error": str(error),
+            "error_type": type(error).__name__,
+            "timestamp": time.time(),
+            "context": context or {},
+            "traceback": traceback.format_exc()
+        }
         
-        # Check if the exception is one we want to catch
-        if not any(issubclass(exc_type, error_type) for error_type in self.error_types):
-            return False
+        # Log the error
+        self.logger.log(
+            log_level,
+            f"Error: {error_info['error_type']}: {error_info['error']}",
+            exc_info=True
+        )
         
         # Store the error
-        self.error = exc_val
-        self.error_occurred = True
+        self.errors.append(error_info)
         
-        # Get the calling function name for context
-        frame = sys._getframe(1)
-        func_name = frame.f_code.co_name
-        module_name = frame.f_globals.get('__name__', 'unknown')
+        # Trim the error list if needed
+        if len(self.errors) > self.max_errors:
+            self.errors = self.errors[-self.max_errors:]
         
-        # Add function context
-        error_context = {
-            **self.context,
-            "function": func_name,
-            "module": module_name
-        }
+        return error_info
+    
+    def get_errors(
+        self,
+        error_type: Optional[Type[Exception]] = None,
+        limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get captured errors.
         
-        # Log the error
-        if self.log_error:
-            log_error(exc_val, context=error_context)
+        Args:
+            error_type: Optional error type to filter by
+            limit: Optional limit on the number of errors to return
+            
+        Returns:
+            List[Dict[str, Any]]: List of error information
+        """
+        if error_type is None:
+            errors = self.errors
+        else:
+            errors = [e for e in self.errors if e["error_type"] == error_type.__name__]
         
-        # Save the error to a file
-        if self.save_to_file:
-            save_error_to_file(
-                func_name,
-                str(exc_val),
-                traceback.format_exc(),
-                context=error_context
-            )
+        if limit is not None:
+            errors = errors[-limit:]
         
-        # Return the default value
-        self.result = self.default
+        return errors
+    
+    def clear_errors(self) -> None:
+        """Clear all captured errors."""
+        self.errors = []
+    
+    def has_errors(self) -> bool:
+        """
+        Check if any errors have been captured.
         
-        # Indicate that we've handled the exception
-        return True
+        Returns:
+            bool: True if errors have been captured, False otherwise
+        """
+        return len(self.errors) > 0
+    
+    def get_error_count(self) -> int:
+        """
+        Get the number of captured errors.
+        
+        Returns:
+            int: Number of captured errors
+        """
+        return len(self.errors)
 
 
-async def async_error_handler(
-    coro,
-    error_types: Optional[List[Type[Exception]]] = None,
-    default: Any = None,
+# Create a global error handler instance
+error_handler = ErrorHandler()
+
+
+def safe_execute(
+    func: Callable[..., T],
+    *args,
+    default_value: Optional[T] = None,
     log_error: bool = True,
-    save_to_file: bool = False,
-    context: Optional[Dict[str, Any]] = None
-):
+    error_handler: Optional[ErrorHandler] = None,
+    **kwargs
+) -> T:
     """
-    Async utility function for handling exceptions in async code.
+    Safely execute a function, catching any exceptions.
     
     Args:
-        coro: Coroutine to execute
-        error_types: List of exception types to catch
-        default: Default value to return if an exception occurs
+        func: Function to execute
+        *args: Arguments to pass to the function
+        default_value: Default value to return if an exception occurs
         log_error: Whether to log the error
-        save_to_file: Whether to save the error to a file
-        context: Additional context to include in the error log
+        error_handler: Optional error handler to use
+        **kwargs: Keyword arguments to pass to the function
         
     Returns:
-        Result of the coroutine or default value if an exception occurs
+        T: Result of the function or default value if an exception occurs
     """
-    error_types = error_types or [Exception]
-    context = context or {}
-    
     try:
-        return await coro
-    except tuple(error_types) as e:
-        # Get the calling function name for context
-        frame = sys._getframe(1)
-        func_name = frame.f_code.co_name
-        module_name = frame.f_globals.get('__name__', 'unknown')
-        
-        # Add function context
-        error_context = {
-            **context,
-            "function": func_name,
-            "module": module_name
-        }
-        
-        # Log the error
+        return func(*args, **kwargs)
+    except Exception as e:
         if log_error:
-            log_error(e, context=error_context)
+            logger.error(f"Error executing {func.__name__}: {e}", exc_info=True)
         
-        # Save the error to a file
-        if save_to_file:
-            save_error_to_file(
-                func_name,
-                str(e),
-                traceback.format_exc(),
-                context=error_context
+        if error_handler is not None:
+            error_handler.capture(
+                e,
+                context={
+                    "function": func.__name__,
+                    "args": args,
+                    "kwargs": kwargs
+                }
             )
         
-        # Return the default value
-        return default
+        return default_value  # type: ignore
+
+
+async def safe_execute_async(
+    coro: Callable[..., Awaitable[T]],
+    *args,
+    default_value: Optional[T] = None,
+    log_error: bool = True,
+    error_handler: Optional[ErrorHandler] = None,
+    **kwargs
+) -> T:
+    """
+    Safely execute an async coroutine, catching any exceptions.
+    
+    Args:
+        coro: Coroutine function to execute
+        *args: Arguments to pass to the coroutine
+        default_value: Default value to return if an exception occurs
+        log_error: Whether to log the error
+        error_handler: Optional error handler to use
+        **kwargs: Keyword arguments to pass to the coroutine
+        
+    Returns:
+        T: Result of the coroutine or default value if an exception occurs
+    """
+    try:
+        return await coro(*args, **kwargs)
+    except Exception as e:
+        if log_error:
+            logger.error(f"Error executing {coro.__name__}: {e}", exc_info=True)
+        
+        if error_handler is not None:
+            error_handler.capture(
+                e,
+                context={
+                    "function": coro.__name__,
+                    "args": args,
+                    "kwargs": kwargs
+                }
+            )
+        
+        return default_value  # type: ignore
+
+
+def handle_exceptions(
+    error_types: Union[Type[Exception], List[Type[Exception]]] = Exception,
+    default_message: str = "An error occurred",
+    log_error: bool = True,
+    reraise: bool = True
+):
+    """
+    Decorator for handling exceptions.
+    
+    Args:
+        error_types: Exception types to catch
+        default_message: Default error message
+        log_error: Whether to log the error
+        reraise: Whether to reraise the exception
+        
+    Returns:
+        Callable: Decorated function
+    """
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except error_types as e:
+                if log_error:
+                    logger.error(
+                        f"{default_message}: {e} in {func.__name__}",
+                        exc_info=True
+                    )
+                
+                if reraise:
+                    raise
+                
+                return None
+        
+        return wrapper  # type: ignore
+    
+    return decorator
+
+
+def async_handle_exceptions(
+    error_types: Union[Type[Exception], List[Type[Exception]]] = Exception,
+    default_message: str = "An error occurred",
+    log_error: bool = True,
+    reraise: bool = True
+):
+    """
+    Decorator for handling exceptions in async functions.
+    
+    Args:
+        error_types: Exception types to catch
+        default_message: Default error message
+        log_error: Whether to log the error
+        reraise: Whether to reraise the exception
+        
+    Returns:
+        Callable: Decorated function
+    """
+    def decorator(coro: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
+        @functools.wraps(coro)
+        async def wrapper(*args, **kwargs) -> T:
+            try:
+                return await coro(*args, **kwargs)
+            except error_types as e:
+                if log_error:
+                    logger.error(
+                        f"{default_message}: {e} in {coro.__name__}",
+                        exc_info=True
+                    )
+                
+                if reraise:
+                    raise
+                
+                return None  # type: ignore
+        
+        return wrapper
+    
+    return decorator
+
