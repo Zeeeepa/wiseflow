@@ -9,11 +9,13 @@ import abc
 import asyncio
 import uuid
 import logging
+import traceback
 from datetime import datetime
 import time
 from ratelimit import limits, sleep_and_retry
 
-from core.plugins import PluginBase
+# Fix import to use the correct base class
+from core.plugins.base import BasePlugin
 from core.event_system import (
     EventType, Event, publish_sync,
     create_connector_event
@@ -104,7 +106,7 @@ class DataItem:
         )
 
 
-class ConnectorBase(PluginBase):
+class ConnectorBase(BasePlugin):
     """
     Base class for data source connectors.
     
@@ -130,7 +132,8 @@ class ConnectorBase(PluginBase):
         self.connection_pool = None
         self.retry_count = self.config.get('retry_count', 3)
         self.retry_delay = self.config.get('retry_delay', 5)  # seconds
-        self._initialized = False
+        self.error_count = 0
+        self._last_run = None
     
     @sleep_and_retry
     @limits(calls=60, period=60)  # default 60 calls per 60 seconds
@@ -198,6 +201,7 @@ class ConnectorBase(PluginBase):
                 self.error_count += 1
                 last_error = e
                 logger.warning(f"Collection attempt {attempt} failed for {self.name}: {e}")
+                logger.debug(f"Traceback: {traceback.format_exc()}")
                 
                 # Publish error event
                 self._publish_collection_error(str(e), attempt)
@@ -222,13 +226,16 @@ class ConnectorBase(PluginBase):
             # Publish initialization event
             self._publish_initialization_success()
             
+            self.initialized = True
             return True
         except Exception as e:
             logger.error(f"Failed to initialize connector {self.name}: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
             
             # Publish error event
             self._publish_initialization_error(str(e))
             
+            self.error = str(e)
             return False
     
     async def initialize_async(self) -> bool:
@@ -243,7 +250,32 @@ class ConnectorBase(PluginBase):
     
     def shutdown(self) -> bool:
         """Shutdown the connector. Return True if successful, False otherwise."""
-        return True
+        try:
+            # Release any resources
+            if self.connection_pool:
+                logger.info(f"Closing connection pool for {self.name}")
+                # Close connection pool if it exists and has a close method
+                if hasattr(self.connection_pool, 'close'):
+                    self.connection_pool.close()
+                self.connection_pool = None
+            
+            # Unsubscribe from events
+            self._unsubscribe_from_all_events()
+            
+            logger.info(f"Shutdown connector: {self.name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error shutting down connector {self.name}: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+    def update_last_run(self) -> None:
+        """Update the last run timestamp."""
+        self._last_run = datetime.now()
+    
+    def get_last_run(self) -> Optional[datetime]:
+        """Get the last run timestamp."""
+        return self._last_run
     
     def _publish_initialization_success(self) -> None:
         """Publish connector initialization success event."""
@@ -335,7 +367,7 @@ async def initialize_all_connectors(connectors: Dict[str, ConnectorBase]) -> Dic
     
     return results
 
-async def initialize_connector(name: str, connector: ConnectorBase) -> tuple[str, bool]:
+async def initialize_connector(name: str, connector: ConnectorBase) -> tuple:
     """
     Initialize a single connector asynchronously.
     
@@ -350,4 +382,6 @@ async def initialize_connector(name: str, connector: ConnectorBase) -> tuple[str
         success = await connector.initialize_async()
         return name, success
     except Exception as e:
+        logger.error(f"Error initializing connector {name}: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
         return name, e

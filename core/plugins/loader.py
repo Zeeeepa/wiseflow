@@ -6,17 +6,19 @@ This module provides functions for loading and managing plugins.
 
 import os
 import logging
+import importlib
 from typing import Dict, List, Any, Optional, Union, Type
 
 # Import the plugin manager class but avoid circular imports
-from core.plugins.base import BasePlugin, ConnectorPlugin, ProcessorPlugin, AnalyzerPlugin, PluginManager
+# Avoid direct import of classes from base to prevent circular imports
+# from core.plugins.base import BasePlugin, ConnectorPlugin, ProcessorPlugin, AnalyzerPlugin, PluginManager
 
 logger = logging.getLogger(__name__)
 
 # Global plugin manager instance
-_plugin_manager: Optional[PluginManager] = None
+_plugin_manager = None
 
-def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "core/plugins/config.json") -> PluginManager:
+def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "core/plugins/config.json"):
     """
     Get the global plugin manager instance.
     
@@ -36,7 +38,7 @@ def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "co
         
     return _plugin_manager
 
-def load_all_plugins() -> Dict[str, Type[BasePlugin]]:
+def load_all_plugins():
     """
     Load all available plugins.
     
@@ -49,7 +51,7 @@ def load_all_plugins() -> Dict[str, Type[BasePlugin]]:
     # Load all plugins
     return manager.load_all_plugins()
 
-def initialize_all_plugins(configs: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, bool]:
+def initialize_all_plugins(configs: Optional[Dict[str, Dict[str, Any]]] = None):
     """
     Initialize all loaded plugins.
     
@@ -65,7 +67,7 @@ def initialize_all_plugins(configs: Optional[Dict[str, Dict[str, Any]]] = None) 
     # Initialize all plugins
     return manager.initialize_all_plugins(configs)
 
-def get_plugin(name: str) -> Optional[BasePlugin]:
+def get_plugin(name: str):
     """
     Get a plugin by name.
     
@@ -81,7 +83,7 @@ def get_plugin(name: str) -> Optional[BasePlugin]:
     # Get the plugin
     return manager.get_plugin(name)
 
-def get_processor(name: str) -> Optional[ProcessorPlugin]:
+def get_processor(name: str):
     """
     Get a processor plugin by name.
     
@@ -97,13 +99,16 @@ def get_processor(name: str) -> Optional[ProcessorPlugin]:
     # Get the plugin
     plugin = manager.get_plugin(name)
     
+    # Import here to avoid circular imports
+    from core.plugins.base import ProcessorPlugin
+    
     # Check if it's a processor
     if plugin and isinstance(plugin, ProcessorPlugin):
         return plugin
     
     return None
 
-def get_analyzer(name: str) -> Optional[AnalyzerPlugin]:
+def get_analyzer(name: str):
     """
     Get an analyzer plugin by name.
     
@@ -119,13 +124,16 @@ def get_analyzer(name: str) -> Optional[AnalyzerPlugin]:
     # Get the plugin
     plugin = manager.get_plugin(name)
     
+    # Import here to avoid circular imports
+    from core.plugins.base import AnalyzerPlugin
+    
     # Check if it's an analyzer
     if plugin and isinstance(plugin, AnalyzerPlugin):
         return plugin
     
     return None
 
-def get_connector(name: str) -> Optional[ConnectorPlugin]:
+def get_connector(name: str):
     """
     Get a connector plugin by name.
     
@@ -141,13 +149,16 @@ def get_connector(name: str) -> Optional[ConnectorPlugin]:
     # Get the plugin
     plugin = manager.get_plugin(name)
     
+    # Import here to avoid circular imports
+    from core.plugins.base import ConnectorPlugin
+    
     # Check if it's a connector
     if plugin and isinstance(plugin, ConnectorPlugin):
         return plugin
     
     return None
 
-def get_all_processors() -> Dict[str, ProcessorPlugin]:
+def get_all_processors():
     """
     Get all processor plugins.
     
@@ -160,7 +171,7 @@ def get_all_processors() -> Dict[str, ProcessorPlugin]:
     # Get all processors
     return manager.get_plugins_by_type("processors")
 
-def get_all_analyzers() -> Dict[str, AnalyzerPlugin]:
+def get_all_analyzers():
     """
     Get all analyzer plugins.
     
@@ -173,7 +184,7 @@ def get_all_analyzers() -> Dict[str, AnalyzerPlugin]:
     # Get all analyzers
     return manager.get_plugins_by_type("analyzers")
 
-def get_all_connectors() -> Dict[str, ConnectorPlugin]:
+def get_all_connectors():
     """
     Get all connector plugins.
     
