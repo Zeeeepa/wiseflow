@@ -9,8 +9,10 @@ import time
 import asyncio
 import logging
 import psutil
-from typing import Dict, Any, Optional, Callable, List
+import threading
+from typing import Dict, Any, Optional, Callable, List, Set
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 from core.config import config
 from core.event_system import (
@@ -51,25 +53,76 @@ class ResourceMonitor:
             callback: Optional callback function to call when thresholds are exceeded
         """
         self.check_interval = check_interval
-        self.cpu_threshold = cpu_threshold
-        self.memory_threshold = memory_threshold
-        self.disk_threshold = disk_threshold
+        self.thresholds = {
+            "cpu": cpu_threshold,
+            "memory": memory_threshold,
+            "disk": disk_threshold
+        }
         self.warning_threshold_factor = warning_threshold_factor
         self.history_size = history_size
-        self.callback = callback
+        self.callbacks: List[Callable[[str, float, float], None]] = []
+        if callback:
+            self.callbacks.append(callback)
         
-        self.cpu_history: List[float] = []
-        self.memory_history: List[float] = []
-        self.disk_history: List[float] = []
+        self.history = {
+            "cpu": [],
+            "memory": [],
+            "disk": []
+        }
         
         self.monitoring_task = None
         self.is_running = False
         self.last_check_time = None
         
         # Calculate warning thresholds
-        self.cpu_warning = cpu_threshold * warning_threshold_factor
-        self.memory_warning = memory_threshold * warning_threshold_factor
-        self.disk_warning = disk_threshold * warning_threshold_factor
+        self.warning_thresholds = {
+            "cpu": cpu_threshold * warning_threshold_factor,
+            "memory": memory_threshold * warning_threshold_factor,
+            "disk": disk_threshold * warning_threshold_factor
+        }
+        
+        # Thread pool for resource-intensive operations
+        self.thread_pool = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="resource_monitor"
+        )
+        
+        # Lock for thread safety
+        self._lock = threading.RLock()
+        
+        # Track resource alerts to prevent alert storms
+        self._last_alert_time = {
+            "cpu": 0,
+            "memory": 0,
+            "disk": 0
+        }
+        self._alert_cooldown = 300  # 5 minutes
+        
+        # Track optimal thread count recommendations
+        self._optimal_thread_count = os.cpu_count() or 4
+        self._thread_count_history = []
+    
+    def add_callback(self, callback: Callable[[str, float, float], None]) -> None:
+        """
+        Add a callback function to be called when thresholds are exceeded.
+        
+        Args:
+            callback: Callback function to call when thresholds are exceeded
+        """
+        with self._lock:
+            if callback not in self.callbacks:
+                self.callbacks.append(callback)
+    
+    def remove_callback(self, callback: Callable[[str, float, float], None]) -> None:
+        """
+        Remove a callback function.
+        
+        Args:
+            callback: Callback function to remove
+        """
+        with self._lock:
+            if callback in self.callbacks:
+                self.callbacks.remove(callback)
     
     async def start(self):
         """Start the resource monitor."""
@@ -95,6 +148,9 @@ class ResourceMonitor:
             except asyncio.CancelledError:
                 pass
         
+        # Shutdown thread pool
+        self.thread_pool.shutdown(wait=False)
+        
         logger.info("Resource monitor stopped")
     
     async def _monitor_resources(self):
@@ -112,17 +168,37 @@ class ResourceMonitor:
         """Check system resources and trigger actions if thresholds are exceeded."""
         try:
             # Get current resource usage
-            cpu_percent = psutil.cpu_percent(interval=1)
-            memory_percent = psutil.virtual_memory().percent
-            disk_percent = psutil.disk_usage('/').percent
+            loop = asyncio.get_event_loop()
             
-            # Update history
-            self._update_history(cpu_percent, memory_percent, disk_percent)
+            # Run CPU-intensive operations in thread pool
+            cpu_percent = await loop.run_in_executor(
+                self.thread_pool,
+                lambda: psutil.cpu_percent(interval=1)
+            )
             
-            # Calculate average usage
-            avg_cpu = sum(self.cpu_history) / len(self.cpu_history) if self.cpu_history else cpu_percent
-            avg_memory = sum(self.memory_history) / len(self.memory_history) if self.memory_history else memory_percent
-            avg_disk = sum(self.disk_history) / len(self.disk_history) if self.disk_history else disk_percent
+            memory = await loop.run_in_executor(
+                self.thread_pool,
+                psutil.virtual_memory
+            )
+            
+            disk = await loop.run_in_executor(
+                self.thread_pool,
+                lambda: psutil.disk_usage('/')
+            )
+            
+            memory_percent = memory.percent
+            disk_percent = disk.percent
+            
+            # Update history with thread safety
+            with self._lock:
+                self._update_history("cpu", cpu_percent)
+                self._update_history("memory", memory_percent)
+                self._update_history("disk", disk_percent)
+                
+                # Calculate average usage
+                avg_cpu = self._calculate_average("cpu")
+                avg_memory = self._calculate_average("memory")
+                avg_disk = self._calculate_average("disk")
             
             # Log resource usage
             logger.debug(
@@ -131,48 +207,123 @@ class ResourceMonitor:
                 f"Disk: {disk_percent:.1f}% (avg: {avg_disk:.1f}%)"
             )
             
+            # Update optimal thread count based on resource usage
+            self._update_optimal_thread_count(avg_cpu, avg_memory)
+            
             # Check for critical thresholds
-            if avg_cpu >= self.cpu_threshold:
-                self._handle_threshold_exceeded("CPU", avg_cpu, self.cpu_threshold, True)
-            elif avg_cpu >= self.cpu_warning:
-                self._handle_threshold_exceeded("CPU", avg_cpu, self.cpu_warning, False)
+            if avg_cpu >= self.thresholds["cpu"]:
+                await self._handle_threshold_exceeded("cpu", avg_cpu, self.thresholds["cpu"], True)
+            elif avg_cpu >= self.warning_thresholds["cpu"]:
+                await self._handle_threshold_exceeded("cpu", avg_cpu, self.warning_thresholds["cpu"], False)
             
-            if avg_memory >= self.memory_threshold:
-                self._handle_threshold_exceeded("Memory", avg_memory, self.memory_threshold, True)
-            elif avg_memory >= self.memory_warning:
-                self._handle_threshold_exceeded("Memory", avg_memory, self.memory_warning, False)
+            if avg_memory >= self.thresholds["memory"]:
+                await self._handle_threshold_exceeded("memory", avg_memory, self.thresholds["memory"], True)
+            elif avg_memory >= self.warning_thresholds["memory"]:
+                await self._handle_threshold_exceeded("memory", avg_memory, self.warning_thresholds["memory"], False)
             
-            if avg_disk >= self.disk_threshold:
-                self._handle_threshold_exceeded("Disk", avg_disk, self.disk_threshold, True)
-            elif avg_disk >= self.disk_warning:
-                self._handle_threshold_exceeded("Disk", avg_disk, self.disk_warning, False)
+            if avg_disk >= self.thresholds["disk"]:
+                await self._handle_threshold_exceeded("disk", avg_disk, self.thresholds["disk"], True)
+            elif avg_disk >= self.warning_thresholds["disk"]:
+                await self._handle_threshold_exceeded("disk", avg_disk, self.warning_thresholds["disk"], False)
             
             # Update last check time
             self.last_check_time = datetime.now()
         except Exception as e:
             logger.error(f"Error checking resources: {e}")
     
-    def _update_history(self, cpu_percent: float, memory_percent: float, disk_percent: float):
-        """Update resource usage history."""
-        self.cpu_history.append(cpu_percent)
-        self.memory_history.append(memory_percent)
-        self.disk_history.append(disk_percent)
+    def _update_history(self, resource_type: str, value: float):
+        """
+        Update resource usage history.
+        
+        Args:
+            resource_type: Type of resource (cpu, memory, disk)
+            value: Current usage value
+        """
+        self.history[resource_type].append(value)
         
         # Trim history if needed
-        if len(self.cpu_history) > self.history_size:
-            self.cpu_history = self.cpu_history[-self.history_size:]
-        if len(self.memory_history) > self.history_size:
-            self.memory_history = self.memory_history[-self.history_size:]
-        if len(self.disk_history) > self.history_size:
-            self.disk_history = self.disk_history[-self.history_size:]
+        if len(self.history[resource_type]) > self.history_size:
+            self.history[resource_type] = self.history[resource_type][-self.history_size:]
     
-    def _handle_threshold_exceeded(self, resource_type: str, value: float, threshold: float, is_critical: bool):
-        """Handle a threshold being exceeded."""
+    def _calculate_average(self, resource_type: str) -> float:
+        """
+        Calculate average resource usage.
+        
+        Args:
+            resource_type: Type of resource (cpu, memory, disk)
+            
+        Returns:
+            Average usage value
+        """
+        history = self.history[resource_type]
+        return sum(history) / len(history) if history else 0.0
+    
+    def _update_optimal_thread_count(self, avg_cpu: float, avg_memory: float):
+        """
+        Update the optimal thread count based on resource usage.
+        
+        Args:
+            avg_cpu: Average CPU usage
+            avg_memory: Average memory usage
+        """
+        # Get current CPU count
+        cpu_count = os.cpu_count() or 4
+        
+        # Calculate optimal thread count based on resource usage
+        if avg_cpu > 90 or avg_memory > 90:
+            # Severe resource constraint - use minimal threads
+            optimal = max(1, cpu_count // 4)
+        elif avg_cpu > 75 or avg_memory > 75:
+            # High resource usage - use fewer threads
+            optimal = max(2, cpu_count // 2)
+        elif avg_cpu < 30 and avg_memory < 50:
+            # Low resource usage - can use more threads
+            optimal = cpu_count
+        else:
+            # Moderate resource usage - use default thread count
+            optimal = max(2, cpu_count - 1)
+        
+        # Add to history
+        self._thread_count_history.append(optimal)
+        if len(self._thread_count_history) > 5:
+            self._thread_count_history = self._thread_count_history[-5:]
+        
+        # Use the average of recent recommendations to avoid oscillation
+        self._optimal_thread_count = int(sum(self._thread_count_history) / len(self._thread_count_history))
+    
+    def calculate_optimal_thread_count(self) -> int:
+        """
+        Get the recommended optimal thread count based on resource usage.
+        
+        Returns:
+            Optimal thread count
+        """
+        return self._optimal_thread_count
+    
+    async def _handle_threshold_exceeded(self, resource_type: str, value: float, threshold: float, is_critical: bool):
+        """
+        Handle a threshold being exceeded.
+        
+        Args:
+            resource_type: Type of resource (cpu, memory, disk)
+            value: Current usage value
+            threshold: Threshold that was exceeded
+            is_critical: Whether this is a critical threshold
+        """
+        # Check if we're in cooldown for this resource type
+        current_time = time.time()
+        if current_time - self._last_alert_time[resource_type] < self._alert_cooldown:
+            # Still in cooldown, don't alert again
+            return
+        
+        # Update last alert time
+        self._last_alert_time[resource_type] = current_time
+        
         if is_critical:
-            logger.warning(f"{resource_type} usage critical: {value:.1f}% (threshold: {threshold:.1f}%)")
+            logger.warning(f"{resource_type.upper()} usage critical: {value:.1f}% (threshold: {threshold:.1f}%)")
             event_type = EventType.RESOURCE_CRITICAL
         else:
-            logger.info(f"{resource_type} usage warning: {value:.1f}% (threshold: {threshold:.1f}%)")
+            logger.info(f"{resource_type.upper()} usage warning: {value:.1f}% (threshold: {threshold:.1f}%)")
             event_type = EventType.RESOURCE_WARNING
         
         # Publish event
@@ -187,10 +338,15 @@ class ResourceMonitor:
         except Exception as e:
             logger.warning(f"Failed to publish resource event: {e}")
         
-        # Call callback if provided
-        if self.callback:
+        # Call callbacks
+        for callback in self.callbacks:
             try:
-                self.callback(resource_type, value, threshold)
+                # Run callback in thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    self.thread_pool,
+                    lambda: callback(resource_type, value, threshold)
+                )
             except Exception as e:
                 logger.error(f"Error in resource monitor callback: {e}")
     
@@ -205,32 +361,58 @@ class ResourceMonitor:
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         
-        return {
-            "cpu": {
-                "percent": cpu_percent,
-                "average": sum(self.cpu_history) / len(self.cpu_history) if self.cpu_history else cpu_percent,
-                "threshold": self.cpu_threshold,
-                "warning": self.cpu_warning
-            },
-            "memory": {
-                "percent": memory.percent,
-                "used": memory.used,
-                "total": memory.total,
-                "average": sum(self.memory_history) / len(self.memory_history) if self.memory_history else memory.percent,
-                "threshold": self.memory_threshold,
-                "warning": self.memory_warning
-            },
-            "disk": {
-                "percent": disk.percent,
-                "used": disk.used,
-                "total": disk.total,
-                "average": sum(self.disk_history) / len(self.disk_history) if self.disk_history else disk.percent,
-                "threshold": self.disk_threshold,
-                "warning": self.disk_warning
-            },
-            "last_check": self.last_check_time.isoformat() if self.last_check_time else None,
-            "is_running": self.is_running
-        }
+        with self._lock:
+            return {
+                "cpu": {
+                    "percent": cpu_percent,
+                    "average": self._calculate_average("cpu"),
+                    "threshold": self.thresholds["cpu"],
+                    "warning": self.warning_thresholds["cpu"]
+                },
+                "memory": {
+                    "percent": memory.percent,
+                    "used": memory.used,
+                    "total": memory.total,
+                    "average": self._calculate_average("memory"),
+                    "threshold": self.thresholds["memory"],
+                    "warning": self.warning_thresholds["memory"]
+                },
+                "disk": {
+                    "percent": disk.percent,
+                    "used": disk.used,
+                    "total": disk.total,
+                    "average": self._calculate_average("disk"),
+                    "threshold": self.thresholds["disk"],
+                    "warning": self.warning_thresholds["disk"]
+                },
+                "last_check": self.last_check_time.isoformat() if self.last_check_time else None,
+                "is_running": self.is_running,
+                "optimal_thread_count": self._optimal_thread_count
+            }
+    
+    def set_thresholds(self, cpu: Optional[float] = None, memory: Optional[float] = None, disk: Optional[float] = None):
+        """
+        Set resource thresholds.
+        
+        Args:
+            cpu: CPU usage threshold in percent
+            memory: Memory usage threshold in percent
+            disk: Disk usage threshold in percent
+        """
+        with self._lock:
+            if cpu is not None:
+                self.thresholds["cpu"] = cpu
+                self.warning_thresholds["cpu"] = cpu * self.warning_threshold_factor
+            
+            if memory is not None:
+                self.thresholds["memory"] = memory
+                self.warning_thresholds["memory"] = memory * self.warning_threshold_factor
+            
+            if disk is not None:
+                self.thresholds["disk"] = disk
+                self.warning_thresholds["disk"] = disk * self.warning_threshold_factor
+        
+        logger.info(f"Resource thresholds updated: CPU={self.thresholds['cpu']}%, Memory={self.thresholds['memory']}%, Disk={self.thresholds['disk']}%")
 
 # Create a singleton instance
 resource_monitor = ResourceMonitor(
@@ -239,4 +421,3 @@ resource_monitor = ResourceMonitor(
     memory_threshold=config.get("MEMORY_THRESHOLD", 85.0),
     disk_threshold=config.get("DISK_THRESHOLD", 90.0)
 )
-
