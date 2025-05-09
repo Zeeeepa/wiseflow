@@ -108,7 +108,7 @@ class AsyncWebCrawler:
         self._memory_monitor_task = None
 
         # Initialize directories
-        self.crawl4ai_folder = os.path.join(base_directory, ".craw4ai-de")
+        self.crawl4ai_folder = os.path.join(base_directory, ".crawl4ai")
         os.makedirs(self.crawl4ai_folder, exist_ok=True)
 
         # Initialize robots.txt parser
