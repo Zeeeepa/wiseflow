@@ -16,7 +16,8 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 import asyncio
 
-from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
+# Replace the import from litellm_wrapper with the new interface
+from core.llms.llm_interface import generate
 
 logger = logging.getLogger(__name__)
 
@@ -541,27 +542,40 @@ class SpecializedPromptProcessor:
                 {"role": "user", "content": prompt}
             ]
             
-            response = await litellm_llm_async(messages, model, temperature, max_tokens)
+            # Use the new LLM interface
+            response_data = await generate(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            # Check for errors
+            if "error" in response_data:
+                logger.error(f"Error processing with LLM: {response_data['error']}")
+                return {
+                    "error": response_data["error"],
+                    "error_type": response_data.get("error_type", "Unknown"),
+                    "metadata": response_data["metadata"]
+                }
             
             # Parse the response
-            result = self._parse_llm_response(response)
+            result = self._parse_llm_response(response_data["text"])
             
             # Add metadata
-            result["metadata"] = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
+            result["metadata"] = response_data["metadata"]
+            result["metadata"].update({
                 "prompt_template": template_name,
                 "content_type": content_type,
-                "task": task,
-                "timestamp": datetime.now().isoformat()
-            }
+                "task": task
+            })
             
             return result
         except Exception as e:
             logger.error(f"Error processing with LLM: {e}")
             return {
                 "error": str(e),
+                "error_type": type(e).__name__,
                 "metadata": {
                     "model": model,
                     "temperature": temperature,
