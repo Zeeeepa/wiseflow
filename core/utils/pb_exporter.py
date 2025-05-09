@@ -1,8 +1,9 @@
 import pandas as pd
-from typing import List, Dict, Optional, Union
+from typing import List, Optional, Union
 from pathlib import Path
 from pb_api import PbTalker
 from dotenv import load_dotenv
+
 env_path = Path(__file__).parent.parent / '.env'
 print(".env is loc in:", Path(__file__).parent.parent)
 if env_path.exists():

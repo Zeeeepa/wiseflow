@@ -1,5 +1,4 @@
 from urllib.parse import urlparse, urljoin
-import os
 import re
 import logging
 from pathlib import Path
@@ -8,7 +7,7 @@ from typing import Optional
 # Import our new logging configuration
 from core.utils.logging_config import logger, get_logger
 
-url_pattern = r'((?:https?://|www\.)[-A-Za-z0-9+&@#/%?=~_|!:,.;]*[-A-Za-z0-9+&@#/%=~_|])'
+url_pattern = r'((?:https?://|www\\.)[-A-Za-z0-9+&@#/%?=~_|!:,.;]*[-A-Za-z0-9+&@#/%=~_|])'
 
 def normalize_url(url: str, base_url: str) -> str:
     """
@@ -44,20 +43,17 @@ def normalize_url(url: str, base_url: str) -> str:
         return _ss[0] + '//' + '/'.join(_ss[1:])
 
 
-def isURL(string: str) -> bool:
+def is_url(url: str) -> bool:
     """
     Check if a string is a valid URL.
     
     Args:
-        string: String to check
+        url: String to check
         
     Returns:
-        True if the string is a valid URL, False otherwise
+        True if the string is a URL, False otherwise
     """
-    if string.startswith("www."):
-        string = f"https://{string}"
-    result = urlparse(string)
-    return result.scheme != '' and result.netloc != ''
+    return bool(re.match(url_pattern, url))
 
 
 def extract_urls(text: str) -> set:
@@ -90,7 +86,7 @@ def extract_urls(text: str) -> set:
     return cleaned_urls
 
 
-def isChinesePunctuation(char: str) -> bool:
+def is_chinese_punctuation(char: str) -> bool:
     """
     Check if a character is Chinese punctuation.
     
@@ -172,27 +168,3 @@ def get_logger(logger_name: str, logger_file_path: str = None):
     """
     # Use our new logging system
     return get_logger(logger_name)
-
-
-"""
-def compare_phrase_with_list(target_phrase, phrase_list, threshold):
-
-    Compare the similarity of a target phrase to each phrase in the phrase list.
-
-    : Param target_phrase: target phrase (str)
-    : Param phrase_list: list of str
-    : param threshold: similarity threshold (float)
-    : Return: list of phrases that satisfy the similarity condition (list of str)
-
-    if not target_phrase:
-        return []  # The target phrase is empty, and the empty list is returned directly.
-
-    # Preprocessing: Segmentation of the target phrase and each phrase in the phrase list
-    target_tokens = set(jieba.lcut(target_phrase))
-    tokenized_phrases = {phrase: set(jieba.lcut(phrase)) for phrase in phrase_list}
-
-    similar_phrases = [phrase for phrase, tokens in tokenized_phrases.items()
-                       if len(target_tokens & tokens) / min(len(target_tokens), len(tokens)) > threshold]
-
-    return similar_phrases
-"""
