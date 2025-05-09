@@ -2,7 +2,12 @@ import os
 from openai import AsyncOpenAI as OpenAI
 from openai import RateLimitError, APIError
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Union
+
+from .error_handling import with_retries, LLMError
+from .caching import cached_llm_call
+from .token_management import token_counter, token_optimizer, token_usage_tracker
+from .model_management import with_model_fallback, failover_manager
 
 base_url = os.environ.get('LLM_API_BASE', "")
 token = os.environ.get('LLM_API_KEY', "")
@@ -21,13 +26,12 @@ concurrent_number = os.environ.get('LLM_CONCURRENT_NUMBER', 1)
 semaphore = asyncio.Semaphore(int(concurrent_number))
 
 
-async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **kwargs) -> str:
+async def openai_llm_raw(messages: List[Dict[str, Any]], model: str, logger=None, **kwargs) -> str:
     """
-    Make an asynchronous call to the OpenAI API.
+    Make a raw asynchronous call to the OpenAI API without any error handling or retries.
     
-    This function makes an asynchronous call to the OpenAI API, handling rate
-    limiting, error handling, and retries. It uses a semaphore to limit the
-    number of concurrent API calls.
+    This function is used internally by the higher-level functions that add error handling,
+    retries, caching, and other features.
     
     Args:
         messages: List of message dictionaries to send to the API
@@ -39,7 +43,7 @@ async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **
         The content of the API response
         
     Raises:
-        Exception: If all retries fail
+        Exception: If the API call fails
     """
     if logger:
         logger.debug(f'messages:\n {messages}')
@@ -47,73 +51,197 @@ async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **
         logger.debug(f'kwargs:\n {kwargs}')
 
     async with semaphore:  # Use semaphore to control concurrency
-        # Maximum number of retries
-        max_retries = 3
-        # Initial wait time (seconds)
-        wait_time = 30
+        start_time = asyncio.get_event_loop().time()
         
-        for retry in range(max_retries):
-            try:
-                response = await client.chat.completions.create(
-                    messages=messages,
-                    model=model,
-                    **kwargs
-                )
-                
-                if logger:
-                    logger.debug(f'choices:\n {response.choices}')
-                    logger.debug(f'usage:\n {response.usage}')
-                return response.choices[0].message.content
-                
-            except RateLimitError as e:
-                # Rate limit error needs to be retried
-                error_msg = f"Rate limit error: {str(e)}. Retry {retry+1}/{max_retries}."
-                if logger:
-                    logger.warning(error_msg)
-                else:
-                    print(error_msg)
-            except APIError as e:
-                if hasattr(e, 'status_code'):
-                    if e.status_code in [400, 401]:
-                        # Client errors don't need to be retried
-                        error_msg = f"Client error: {e.status_code}. Detail: {str(e)}"
-                        if logger:
-                            logger.error(error_msg)
-                        else:
-                            print(error_msg)
-                        return ''
-                    else:
-                        # Other API errors need to be retried
-                        error_msg = f"API error: {e.status_code}. Retry {retry+1}/{max_retries}."
-                        if logger:
-                            logger.warning(error_msg)
-                        else:
-                            print(error_msg)
-                else:
-                    # Unknown API errors need to be retried
-                    error_msg = f"Unknown API error: {str(e)}. Retry {retry+1}/{max_retries}."
-                    if logger:
-                        logger.warning(error_msg)
-                    else:
-                        print(error_msg)
-            except Exception as e:
-                # Other exceptions need to be retried
-                error_msg = f"Unexpected error: {str(e)}. Retry {retry+1}/{max_retries}."
-                if logger:
-                    logger.error(error_msg)
-                else:
-                    print(error_msg)
+        response = await client.chat.completions.create(
+            messages=messages,
+            model=model,
+            **kwargs
+        )
+        
+        end_time = asyncio.get_event_loop().time()
+        duration_ms = (end_time - start_time) * 1000
+        
+        if logger:
+            logger.debug(f'choices:\n {response.choices}')
+            logger.debug(f'usage:\n {response.usage}')
+            logger.debug(f'duration: {duration_ms:.2f}ms')
+        
+        # Track token usage
+        if hasattr(response, 'usage'):
+            token_usage_tracker.track_usage(
+                model=model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                success=True
+            )
+        
+        return response.choices[0].message.content
 
-            if retry < max_retries - 1:
-                # Exponential backoff strategy
-                await asyncio.sleep(wait_time)
-                # Double the wait time for the next retry
-                wait_time *= 2
 
-    # If all retries fail
-    error_msg = "Maximum retries reached, still unable to get a valid response."
+async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, use_cache: bool = True, **kwargs) -> str:
+    """
+    Make an asynchronous call to the OpenAI API with error handling, retries, and caching.
+    
+    This function makes an asynchronous call to the OpenAI API, handling rate
+    limiting, error handling, retries, and caching. It uses a semaphore to limit the
+    number of concurrent API calls.
+    
+    Args:
+        messages: List of message dictionaries to send to the API
+        model: Model name to use for the API call
+        logger: Optional logger for logging API calls and errors
+        use_cache: Whether to use the cache
+        **kwargs: Additional keyword arguments to pass to the API
+        
+    Returns:
+        The content of the API response
+        
+    Raises:
+        Exception: If all retries fail
+    """
+    # Use cached_llm_call to handle caching
+    return await cached_llm_call(
+        # Use with_retries to handle error handling and retries
+        lambda msgs, mdl, **kw: with_retries(
+            openai_llm_raw,
+            msgs, mdl, logger=logger, **kw
+        ),
+        messages, model, use_cache=use_cache, logger=logger, **kwargs
+    )
+
+
+async def openai_llm_with_fallback(
+    messages: List[Dict[str, Any]],
+    primary_model: str,
+    task_type: str = "general",
+    logger=None,
+    use_cache: bool = True,
+    **kwargs
+) -> Tuple[str, str]:
+    """
+    Make an asynchronous call to the OpenAI API with automatic model fallback.
+    
+    This function makes an asynchronous call to the OpenAI API, with automatic
+    fallback to alternative models if the primary model fails.
+    
+    Args:
+        messages: List of message dictionaries to send to the API
+        primary_model: Primary model to use
+        task_type: Type of task (used for model selection)
+        logger: Optional logger for logging API calls and errors
+        use_cache: Whether to use the cache
+        **kwargs: Additional keyword arguments to pass to the API
+        
+    Returns:
+        Tuple of (response, model_used)
+        
+    Raises:
+        Exception: If all models fail
+    """
+    # Count tokens for model selection
+    token_count = token_counter.count_message_tokens(messages, primary_model)
+    
+    # Use with_model_fallback to handle model fallback
+    return await with_model_fallback(
+        # Use cached_llm_call to handle caching
+        lambda msgs, mdl, **kw: cached_llm_call(
+            # Use with_retries to handle error handling and retries
+            lambda m, md, **k: with_retries(
+                openai_llm_raw,
+                m, md, logger=logger, **k
+            ),
+            msgs, mdl, use_cache=use_cache, logger=logger, **kw
+        ),
+        messages, primary_model, failover_manager,
+        task_type=task_type, token_count=token_count,
+        logger=logger, **kwargs
+    )
+
+
+async def openai_llm_streaming(
+    messages: List[Dict[str, Any]],
+    model: str,
+    callback,
+    logger=None,
+    **kwargs
+) -> str:
+    """
+    Make an asynchronous streaming call to the OpenAI API.
+    
+    This function makes an asynchronous streaming call to the OpenAI API,
+    calling the provided callback function with each chunk of the response.
+    
+    Args:
+        messages: List of message dictionaries to send to the API
+        model: Model name to use for the API call
+        callback: Function to call with each chunk of the response
+        logger: Optional logger for logging API calls and errors
+        **kwargs: Additional keyword arguments to pass to the API
+        
+    Returns:
+        The complete content of the API response
+        
+    Raises:
+        Exception: If the API call fails
+    """
     if logger:
-        logger.error(error_msg)
-    else:
-        print(error_msg)
-    return ''
+        logger.debug(f'Streaming messages:\n {messages}')
+        logger.debug(f'model: {model}')
+        logger.debug(f'kwargs:\n {kwargs}')
+    
+    async with semaphore:  # Use semaphore to control concurrency
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            response = await client.chat.completions.create(
+                messages=messages,
+                model=model,
+                stream=True,
+                **kwargs
+            )
+            
+            full_content = ""
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    content_chunk = chunk.choices[0].delta.content
+                    full_content += content_chunk
+                    await callback(content_chunk)
+            
+            end_time = asyncio.get_event_loop().time()
+            duration_ms = (end_time - start_time) * 1000
+            
+            if logger:
+                logger.debug(f'Streaming completed in {duration_ms:.2f}ms')
+            
+            # Estimate token usage since streaming doesn't provide usage info
+            prompt_tokens = token_counter.count_message_tokens(messages, model)
+            completion_tokens = token_counter.count_tokens(full_content, model)
+            
+            # Track token usage
+            token_usage_tracker.track_usage(
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                success=True
+            )
+            
+            return full_content
+        except Exception as e:
+            end_time = asyncio.get_event_loop().time()
+            duration_ms = (end_time - start_time) * 1000
+            
+            if logger:
+                logger.error(f"Error in streaming LLM call after {duration_ms:.2f}ms: {e}")
+            
+            # Track token usage for the failed call
+            prompt_tokens = token_counter.count_message_tokens(messages, model)
+            
+            token_usage_tracker.track_usage(
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,
+                success=False
+            )
+            
+            raise
