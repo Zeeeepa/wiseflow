@@ -19,6 +19,13 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
+# Define colors for terminal output
+class Colors:
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
 
 def parse_requirements(file_path: str) -> Dict[str, str]:
     """Parse a requirements file and return a dictionary of package names and versions."""
@@ -47,7 +54,6 @@ def parse_requirements(file_path: str) -> Dict[str, str]:
     
     return packages
 
-
 def find_imports_in_file(file_path: str) -> Set[str]:
     """Extract import statements from a Python file."""
     imports = set()
@@ -69,7 +75,6 @@ def find_imports_in_file(file_path: str) -> Set[str]:
     
     return imports
 
-
 def find_all_imports(directory: str) -> Set[str]:
     """Find all imports in Python files in the given directory."""
     all_imports = set()
@@ -85,7 +90,6 @@ def find_all_imports(directory: str) -> Set[str]:
                     print(f"Error processing {file_path}: {e}")
     
     return all_imports
-
 
 def is_standard_library(module_name: str) -> bool:
     """Check if a module is part of the Python standard library."""
@@ -105,6 +109,19 @@ def is_standard_library(module_name: str) -> bool:
     except (ImportError, AttributeError):
         return False
 
+def get_import_name_mapping() -> Dict[str, str]:
+    """Get a mapping of package names to import names."""
+    return {
+        'beautifulsoup4': 'bs4',
+        'scikit-learn': 'sklearn',
+        'python-dotenv': 'dotenv',
+        'pillow': 'PIL',
+        'pyopenssl': 'OpenSSL',
+        'pypdf2': 'PyPDF2',
+        'tf-playwright-stealth': 'playwright_stealth',
+        'google-api-python-client': 'googleapiclient',
+        'python-docx': 'docx',
+    }
 
 def check_outdated_packages() -> List[Tuple[str, str, str]]:
     """Check for outdated packages using pip."""
@@ -126,7 +143,6 @@ def check_outdated_packages() -> List[Tuple[str, str, str]]:
         print(f"Error parsing pip output: {result.stdout}")
         return []
 
-
 def main():
     parser = argparse.ArgumentParser(description="WiseFlow Dependency Management Tool")
     parser.add_argument("--check-outdated", action="store_true", help="Check for outdated packages")
@@ -147,7 +163,7 @@ def main():
     
     # Check for outdated packages
     if args.check_outdated or args.all:
-        print("\n=== Checking for outdated packages ===")
+        print(f"\n{Colors.BOLD}=== Checking for outdated packages ==={Colors.RESET}")
         outdated = check_outdated_packages()
         if outdated:
             print(f"Found {len(outdated)} outdated packages:")
@@ -158,7 +174,7 @@ def main():
     
     # Find unused dependencies
     if args.find_unused or args.all:
-        print("\n=== Checking for unused dependencies ===")
+        print(f"\n{Colors.BOLD}=== Checking for unused dependencies ==={Colors.RESET}")
         
         # Parse requirements files
         req_files = [
@@ -184,12 +200,20 @@ def main():
         non_std_imports = {imp for imp in all_imports if not is_standard_library(imp)}
         print(f"Found {len(non_std_imports)} non-standard library imports")
         
+        # Get import name mapping
+        import_name_mapping = get_import_name_mapping()
+        
         # Find unused dependencies
         unused_deps = []
         for req in all_requirements:
             # Handle package name variations
             req_variations = [req, req.replace("-", "_")]
-            if not any(var in non_std_imports for var in req_variations):
+            
+            # Check if the package has a different import name
+            if req.lower() in import_name_mapping:
+                req_variations.append(import_name_mapping[req.lower()])
+            
+            if not any(var.lower() in [imp.lower() for imp in non_std_imports] for var in req_variations):
                 unused_deps.append(req)
         
         if unused_deps:
@@ -201,7 +225,7 @@ def main():
     
     # Find missing dependencies
     if args.find_missing or args.all:
-        print("\n=== Checking for missing dependencies ===")
+        print(f"\n{Colors.BOLD}=== Checking for missing dependencies ==={Colors.RESET}")
         
         # Parse requirements files
         req_files = [
@@ -224,12 +248,25 @@ def main():
         # Filter out standard library imports
         non_std_imports = {imp for imp in all_imports if not is_standard_library(imp)}
         
+        # Get import name mapping (reversed)
+        import_name_mapping = get_import_name_mapping()
+        reversed_mapping = {v: k for k, v in import_name_mapping.items()}
+        
         # Find missing dependencies
         missing_deps = []
         for imp in non_std_imports:
+            # Skip internal modules
+            if imp.startswith(("core.", "dashboard.", "utils.", "general_", "get_", "pb_", "openai_wrapper", "llms", "agents", "analysis", "prompts", "scrapers", "crawl4ai", "tranlsation_")):
+                continue
+                
             # Handle package name variations
             imp_variations = [imp, imp.replace("_", "-")]
-            if not any(var in all_requirements for var in imp_variations):
+            
+            # Check if the import has a different package name
+            if imp.lower() in reversed_mapping:
+                imp_variations.append(reversed_mapping[imp.lower()])
+            
+            if not any(var.lower() in [req.lower() for req in all_requirements] for var in imp_variations):
                 missing_deps.append(imp)
         
         if missing_deps:
@@ -241,7 +278,7 @@ def main():
     
     # Validate version constraints
     if args.validate_versions or args.all:
-        print("\n=== Validating version constraints ===")
+        print(f"\n{Colors.BOLD}=== Validating version constraints ==={Colors.RESET}")
         
         # Parse requirements files
         req_files = [
@@ -271,7 +308,6 @@ def main():
                 print(f"  {pkg}: {ver1} vs {ver2} in {file}")
         else:
             print("No version conflicts found!")
-
 
 if __name__ == "__main__":
     main()

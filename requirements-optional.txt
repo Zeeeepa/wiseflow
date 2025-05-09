@@ -1,3 +1,6 @@
+# Optional dependencies for WiseFlow
+# These are not required for core functionality but enable additional features
+
 # Include base requirements
 -r requirements-base.txt
 
@@ -12,11 +15,11 @@ reportlab>=4.0.0,<5.0.0  # For PDF generation
 weasyprint>=60.0,<61.0  # For HTML to PDF conversion
 
 # Optional API integrations
-googleapiclient>=2.0.0,<3.0.0  # For Google API integration
+google-api-python-client>=2.0.0,<3.0.0  # For Google API integration (renamed from googleapiclient)
 
 # Optional messaging
 websockets>=12.0,<13.0  # For WebSocket support
 
 # Optional database connectors
-# Add any database connectors here
+# Add any database connectors here as needed
 

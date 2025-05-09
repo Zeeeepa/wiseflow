@@ -5,5 +5,8 @@
 -r ../requirements-base.txt
 
 # WebSocket support for real-time communication
+# Note: websockets is already included in requirements-optional.txt
+# If you only need WeChat Mini Program functionality without other optional features,
+# you can install just this file instead of the full optional requirements
 websockets>=12.0,<13.0
 
