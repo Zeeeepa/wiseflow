@@ -9,33 +9,44 @@ import logging
 from typing import Dict, List, Any, Optional, Union
 import json
 import asyncio
+import traceback
 
+# Try to import litellm, but provide a fallback if it's not available
 try:
     import litellm
     from litellm import completion
+    LITELLM_AVAILABLE = True
 except ImportError:
-    raise ImportError("LiteLLM is not installed. Please install it with 'pip install litellm'.")
+    LITELLM_AVAILABLE = False
+    logging.getLogger(__name__).warning("LiteLLM is not installed. Some functionality will be limited.")
 
 logger = logging.getLogger(__name__)
 
 class LiteLLMWrapper:
-    """Wrapper for the LiteLLM library."""
+    """LiteLLM wrapper for Wiseflow."""
     
     def __init__(self, default_model: Optional[str] = None):
         """Initialize the LiteLLM wrapper."""
+        if not LITELLM_AVAILABLE:
+            raise ImportError("LiteLLM is not installed. Please install it with 'pip install litellm'.")
+            
         self.default_model = default_model or os.environ.get("PRIMARY_MODEL", "")
         if not self.default_model:
             logger.warning("No default model specified for LiteLLM wrapper")
     
     def generate(self, prompt: str, model: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 1000) -> str:
         """Generate text using LiteLLM."""
+        if not LITELLM_AVAILABLE:
+            error_msg = "LiteLLM is not installed. Please install it with 'pip install litellm'."
+            logger.error(error_msg)
+            raise ImportError(error_msg)
+        
         try:
             model = model or self.default_model
             if not model:
-                raise ValueError("No model specified for generation")
+                raise ValueError("No model specified for LiteLLM wrapper")
             
             messages = [
-                {"role": "system", "content": "You are an expert information extractor."},
                 {"role": "user", "content": prompt}
             ]
             
@@ -49,10 +60,17 @@ class LiteLLMWrapper:
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Error generating text with LiteLLM: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
             raise
 
 def litellm_llm(messages: List[Dict[str, str]], model: str, temperature: float = 0.7, max_tokens: int = 1000, logger=None) -> str:
     """Generate text using LiteLLM."""
+    if not LITELLM_AVAILABLE:
+        error_msg = "LiteLLM is not installed. Please install it with 'pip install litellm'."
+        if logger:
+            logger.error(error_msg)
+        raise ImportError(error_msg)
+    
     try:
         response = completion(
             model=model,
@@ -69,11 +87,17 @@ def litellm_llm(messages: List[Dict[str, str]], model: str, temperature: float =
 
 async def litellm_llm_async(messages: List[Dict[str, str]], model: str, temperature: float = 0.7, max_tokens: int = 1000, logger=None) -> str:
     """Generate text using LiteLLM asynchronously."""
+    if not LITELLM_AVAILABLE:
+        error_msg = "LiteLLM is not installed. Please install it with 'pip install litellm'."
+        if logger:
+            logger.error(error_msg)
+        raise ImportError(error_msg)
+    
     try:
         # Run in a thread to avoid blocking the event loop
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
-            None, 
+            None,
             lambda: completion(
                 model=model,
                 messages=messages,
@@ -86,4 +110,5 @@ async def litellm_llm_async(messages: List[Dict[str, str]], model: str, temperat
     except Exception as e:
         if logger:
             logger.error(f"Error generating text with LiteLLM async: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
         raise

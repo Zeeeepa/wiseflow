@@ -1,53 +1,109 @@
 """
-Plugin loader utility for Wiseflow.
+Plugin loader for Wiseflow.
 
-This module provides functions for loading and managing plugins.
+This module provides functions for loading plugins.
 """
 
 import os
+import importlib
+import inspect
 import logging
 from typing import Dict, List, Any, Optional, Union, Type
 
-# Import the plugin manager class but avoid circular imports
-from core.plugins.base import BasePlugin, ConnectorPlugin, ProcessorPlugin, AnalyzerPlugin, PluginManager
+# Import the base plugin classes and plugin manager
+# Avoid circular imports by importing from base directly
+from core.plugins.base import (
+    BasePlugin,
+    ConnectorPlugin,
+    ProcessorPlugin,
+    AnalyzerPlugin,
+    PluginManager,
+    plugin_manager
+)
 
 logger = logging.getLogger(__name__)
 
-# Global plugin manager instance
-_plugin_manager: Optional[PluginManager] = None
-
-def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "core/plugins/config.json") -> PluginManager:
+def get_plugin_manager() -> PluginManager:
     """
     Get the global plugin manager instance.
     
-    Args:
-        plugins_dir: Directory containing plugins
-        config_file: Path to plugin configuration file
-        
     Returns:
         PluginManager instance
     """
-    global _plugin_manager
-    
-    if _plugin_manager is None:
-        # Create a new plugin manager
-        from core.plugins.base import PluginManager
-        _plugin_manager = PluginManager(plugins_dir, config_file)
-        
-    return _plugin_manager
+    return plugin_manager
 
 def load_all_plugins() -> Dict[str, Type[BasePlugin]]:
     """
-    Load all available plugins.
+    Load all plugins.
     
     Returns:
-        Dictionary of loaded plugin classes
+        Dictionary of plugin classes
     """
-    # Get the plugin manager
-    manager = get_plugin_manager()
+    return plugin_manager.load_all_plugins()
+
+def load_plugin_from_module(module_name: str) -> List[Type[BasePlugin]]:
+    """
+    Load plugins from a module.
     
-    # Load all plugins
-    return manager.load_all_plugins()
+    Args:
+        module_name: Name of the module to load plugins from
+        
+    Returns:
+        List of plugin classes
+    """
+    try:
+        module = importlib.import_module(module_name)
+        
+        # Find all plugin classes in the module
+        plugin_classes = []
+        for name, obj in inspect.getmembers(module):
+            if inspect.isclass(obj) and issubclass(obj, BasePlugin) and obj != BasePlugin:
+                plugin_classes.append(obj)
+        
+        return plugin_classes
+    except ImportError as e:
+        logger.error(f"Failed to import module {module_name}: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Error loading plugins from module {module_name}: {e}")
+        return []
+
+def load_plugin_from_file(file_path: str) -> List[Type[BasePlugin]]:
+    """
+    Load plugins from a file.
+    
+    Args:
+        file_path: Path to the file to load plugins from
+        
+    Returns:
+        List of plugin classes
+    """
+    try:
+        # Convert file path to module name
+        module_name = os.path.splitext(os.path.basename(file_path))[0]
+        
+        # Load the module
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        if spec is None:
+            logger.error(f"Failed to load module from file {file_path}")
+            return []
+        
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        
+        # Find all plugin classes in the module
+        plugin_classes = []
+        for name, obj in inspect.getmembers(module):
+            if inspect.isclass(obj) and issubclass(obj, BasePlugin) and obj != BasePlugin:
+                plugin_classes.append(obj)
+        
+        return plugin_classes
+    except ImportError as e:
+        logger.error(f"Failed to import module from file {file_path}: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Error loading plugins from file {file_path}: {e}")
+        return []
 
 def initialize_all_plugins(configs: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, bool]:
     """
