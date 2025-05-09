@@ -1,9 +1,12 @@
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Depends, Query, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from __init__ import BackendService
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from dashboard.visualization import Dashboard, Visualization, DashboardManager
 from dashboard.visualization.knowledge_graph import visualize_knowledge_graph, filter_knowledge_graph
 from dashboard.visualization.trends import visualize_trend, detect_trend_patterns
@@ -13,15 +16,23 @@ from dashboard.routes import router as dashboard_router
 from dashboard.search_api import router as search_api_router
 from dashboard.data_mining_api import router as data_mining_api_router
 from core.utils.pb_api import PbTalker
-import logging
+from core.utils.error_handling import (
+    WiseflowError, ValidationError, APIError, 
+    AuthenticationError, AuthorizationError, NotFoundError,
+    handle_error, log_error
+)
+from core.utils.logging_config import get_logger, configure_logging
 import os
 
-logger = logging.getLogger(__name__)
+# Use the configured logger instead of the basic one
+logger = get_logger("dashboard")
 
-class InvalidInputException(HTTPException):
-    def __init__(self, detail: str):
-        super().__init__(status_code=442, detail=detail)
-
+class InvalidInputException(ValidationError):
+    """Error raised when input validation fails in the dashboard."""
+    
+    def __init__(self, message: str, details: dict = None):
+        """Initialize the error."""
+        super().__init__(message, details)
 
 class TranslateRequest(BaseModel):
     article_ids: list[str]
@@ -99,14 +110,62 @@ dashboard_plugin_manager.initialize()
 # Mount static files directory
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
-# Include dashboard router
-app.include_router(dashboard_router, prefix="/dashboard")
+# Add global exception handlers
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors."""
+    error_details = {"errors": exc.errors()}
+    error = ValidationError("Request validation error", details=error_details)
+    error.log()
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=handle_error(error, logger)
+    )
 
-# Include search API router
-app.include_router(search_api_router, prefix="/search")
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Handle HTTP exceptions."""
+    error = APIError(exc.detail)
+    error.log()
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=handle_error(error, logger)
+    )
 
-# Include data mining API router
-app.include_router(data_mining_api_router, prefix="/data-mining")
+@app.exception_handler(WiseflowError)
+async def wiseflow_exception_handler(request: Request, exc: WiseflowError):
+    """Handle Wiseflow custom exceptions."""
+    exc.log()
+    
+    # Map error types to status codes
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    if isinstance(exc, ValidationError):
+        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    elif isinstance(exc, AuthenticationError):
+        status_code = status.HTTP_401_UNAUTHORIZED
+    elif isinstance(exc, AuthorizationError):
+        status_code = status.HTTP_403_FORBIDDEN
+    elif isinstance(exc, NotFoundError):
+        status_code = status.HTTP_404_NOT_FOUND
+    
+    return JSONResponse(
+        status_code=status_code,
+        content=handle_error(exc, logger)
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle general exceptions."""
+    # Convert to APIError for consistent handling
+    error = APIError(f"Unexpected error: {str(exc)}", cause=exc)
+    error.log(log_level="critical")
+    
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=handle_error(error, logger)
+    )
 
 # Dashboard endpoints
 @app.get("/")
