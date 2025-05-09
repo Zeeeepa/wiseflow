@@ -1,67 +1,39 @@
+#!/usr/bin/env python3
 """
-Webhook Module for Wiseflow.
+Webhook management for WiseFlow.
 
-This module provides functionality for integrating with external systems via webhooks.
+This module provides functionality for managing webhooks.
 """
 
-import logging
 import json
-import os
-import time
-import threading
-import requests
-from typing import Dict, List, Any, Optional, Callable
-from datetime import datetime
-import hmac
-import hashlib
-import base64
+import logging
+import uuid
+import asyncio
+import aiohttp
+from typing import Dict, List, Any, Optional, Union
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 class WebhookManager:
-    """Manager for webhook operations."""
+    """Manager for webhooks."""
     
-    def __init__(self, config_path: str = "webhooks.json"):
-        """
-        Initialize the webhook manager.
-        
-        Args:
-            config_path: Path to the webhook configuration file
-        """
-        self.config_path = config_path
+    def __init__(self):
+        """Initialize the webhook manager."""
         self.webhooks = {}
-        self.secret_key = os.environ.get("WEBHOOK_SECRET_KEY", "wiseflow-webhook-secret")
-        
-        # Load webhooks if config file exists
-        self._load_webhooks()
     
-    def _load_webhooks(self):
-        """Load webhooks from the configuration file if it exists."""
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    self.webhooks = json.load(f)
-                    
-                logger.info(f"Loaded {len(self.webhooks)} webhooks")
-            except Exception as e:
-                logger.error(f"Failed to load webhooks: {str(e)}")
-    
-    def _save_webhooks(self):
-        """Save webhooks to the configuration file."""
-        try:
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                json.dump(self.webhooks, f, indent=2)
-                
-            logger.info(f"Saved {len(self.webhooks)} webhooks")
-        except Exception as e:
-            logger.error(f"Failed to save webhooks: {str(e)}")
-    
-    def register_webhook(self, 
-                        endpoint: str, 
-                        events: List[str], 
-                        headers: Optional[Dict[str, str]] = None,
-                        secret: Optional[str] = None,
-                        description: Optional[str] = None) -> str:
+    def register_webhook(
+        self,
+        endpoint: str,
+        events: List[str],
+        headers: Optional[Dict[str, str]] = None,
+        secret: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> str:
         """
         Register a new webhook.
         
@@ -73,74 +45,91 @@ class WebhookManager:
             description: Optional description of the webhook
             
         Returns:
-            Webhook ID
+            str: Webhook ID
         """
-        webhook_id = f"webhook_{len(self.webhooks) + 1}"
+        webhook_id = str(uuid.uuid4())
         
         self.webhooks[webhook_id] = {
             "endpoint": endpoint,
             "events": events,
             "headers": headers or {},
             "secret": secret,
-            "description": description or f"Webhook for {', '.join(events)}",
-            "created_at": datetime.now().isoformat(),
-            "last_triggered": None,
-            "success_count": 0,
-            "failure_count": 0
+            "description": description,
         }
         
-        self._save_webhooks()
+        logger.info(f"Registered webhook {webhook_id} for events {events}")
         
-        logger.info(f"Registered webhook {webhook_id} for events: {', '.join(events)}")
         return webhook_id
     
-    def update_webhook(self, 
-                      webhook_id: str, 
-                      endpoint: Optional[str] = None,
-                      events: Optional[List[str]] = None,
-                      headers: Optional[Dict[str, str]] = None,
-                      secret: Optional[str] = None,
-                      description: Optional[str] = None) -> bool:
+    def list_webhooks(self) -> List[Dict[str, Any]]:
+        """
+        List all registered webhooks.
+        
+        Returns:
+            List[Dict[str, Any]]: List of webhook configurations
+        """
+        return [
+            {"webhook_id": webhook_id, **webhook}
+            for webhook_id, webhook in self.webhooks.items()
+        ]
+    
+    def get_webhook(self, webhook_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a webhook by ID.
+        
+        Args:
+            webhook_id: Webhook ID
+            
+        Returns:
+            Optional[Dict[str, Any]]: Webhook configuration or None if not found
+        """
+        return self.webhooks.get(webhook_id)
+    
+    def update_webhook(
+        self,
+        webhook_id: str,
+        endpoint: Optional[str] = None,
+        events: Optional[List[str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        secret: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> bool:
         """
         Update an existing webhook.
         
         Args:
             webhook_id: ID of the webhook to update
-            endpoint: New endpoint URL (optional)
-            events: New list of events (optional)
-            headers: New headers (optional)
-            secret: New secret (optional)
-            description: New description (optional)
+            endpoint: New endpoint URL
+            events: New list of events
+            headers: New headers
+            secret: New secret
+            description: New description
             
         Returns:
-            True if updated, False otherwise
+            bool: True if successful, False otherwise
         """
         if webhook_id not in self.webhooks:
-            logger.error(f"Webhook not found: {webhook_id}")
             return False
         
         webhook = self.webhooks[webhook_id]
         
-        if endpoint:
+        if endpoint is not None:
             webhook["endpoint"] = endpoint
         
-        if events:
+        if events is not None:
             webhook["events"] = events
         
-        if headers:
+        if headers is not None:
             webhook["headers"] = headers
         
-        if secret is not None:  # Allow setting to empty string to remove secret
+        if secret is not None:
             webhook["secret"] = secret
         
-        if description:
+        if description is not None:
             webhook["description"] = description
         
-        webhook["updated_at"] = datetime.now().isoformat()
-        
-        self._save_webhooks()
-        
         logger.info(f"Updated webhook {webhook_id}")
+        
         return True
     
     def delete_webhook(self, webhook_id: str) -> bool:
@@ -151,55 +140,23 @@ class WebhookManager:
             webhook_id: ID of the webhook to delete
             
         Returns:
-            True if deleted, False otherwise
+            bool: True if successful, False otherwise
         """
         if webhook_id not in self.webhooks:
-            logger.error(f"Webhook not found: {webhook_id}")
             return False
         
         del self.webhooks[webhook_id]
-        self._save_webhooks()
         
         logger.info(f"Deleted webhook {webhook_id}")
+        
         return True
     
-    def get_webhook(self, webhook_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a webhook by ID.
-        
-        Args:
-            webhook_id: Webhook ID
-            
-        Returns:
-            Webhook configuration if found, None otherwise
-        """
-        return self.webhooks.get(webhook_id)
-    
-    def list_webhooks(self) -> List[Dict[str, Any]]:
-        """
-        List all registered webhooks.
-        
-        Returns:
-            List of webhook configurations
-        """
-        return [
-            {
-                "id": webhook_id,
-                "endpoint": webhook["endpoint"],
-                "events": webhook["events"],
-                "description": webhook.get("description", ""),
-                "created_at": webhook["created_at"],
-                "last_triggered": webhook.get("last_triggered"),
-                "success_count": webhook.get("success_count", 0),
-                "failure_count": webhook.get("failure_count", 0)
-            }
-            for webhook_id, webhook in self.webhooks.items()
-        ]
-    
-    def trigger_webhook(self, 
-                       event: str, 
-                       data: Dict[str, Any],
-                       async_mode: bool = True) -> List[Dict[str, Any]]:
+    def trigger_webhook(
+        self,
+        event: str,
+        data: Dict[str, Any],
+        async_mode: bool = True
+    ) -> List[Dict[str, Any]]:
         """
         Trigger webhooks for a specific event.
         
@@ -209,168 +166,139 @@ class WebhookManager:
             async_mode: Whether to trigger webhooks asynchronously
             
         Returns:
-            List of webhook responses (only for synchronous mode)
+            List[Dict[str, Any]]: List of webhook responses
         """
-        # Find webhooks that should be triggered for this event
-        matching_webhooks = {
-            webhook_id: webhook
+        # Find webhooks that match the event
+        matching_webhooks = [
+            (webhook_id, webhook)
             for webhook_id, webhook in self.webhooks.items()
             if event in webhook["events"]
-        }
+        ]
         
         if not matching_webhooks:
-            logger.info(f"No webhooks registered for event: {event}")
+            logger.info(f"No webhooks found for event {event}")
             return []
         
-        logger.info(f"Triggering {len(matching_webhooks)} webhooks for event: {event}")
+        logger.info(f"Triggering {len(matching_webhooks)} webhooks for event {event}")
         
         if async_mode:
             # Trigger webhooks asynchronously
-            for webhook_id, webhook in matching_webhooks.items():
-                thread = threading.Thread(
-                    target=self._send_webhook_request,
-                    args=(webhook_id, webhook, event, data)
-                )
-                thread.daemon = True
-                thread.start()
-            
+            asyncio.create_task(self._trigger_webhooks_async(event, data, matching_webhooks))
             return []
         else:
             # Trigger webhooks synchronously
-            responses = []
-            
-            for webhook_id, webhook in matching_webhooks.items():
-                response = self._send_webhook_request(webhook_id, webhook, event, data)
-                responses.append(response)
-            
-            return responses
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(self._trigger_webhooks_async(event, data, matching_webhooks))
     
-    def _send_webhook_request(self, 
-                             webhook_id: str, 
-                             webhook: Dict[str, Any], 
-                             event: str, 
-                             data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _trigger_webhooks_async(
+        self,
+        event: str,
+        data: Dict[str, Any],
+        matching_webhooks: List[tuple]
+    ) -> List[Dict[str, Any]]:
         """
-        Send a webhook request.
+        Trigger webhooks asynchronously.
         
         Args:
+            event: Event name
+            data: Data to send
+            matching_webhooks: List of (webhook_id, webhook) tuples
+            
+        Returns:
+            List[Dict[str, Any]]: List of webhook responses
+        """
+        responses = []
+        
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            
+            for webhook_id, webhook in matching_webhooks:
+                task = self._trigger_single_webhook(session, webhook_id, webhook, event, data)
+                tasks.append(task)
+            
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        return [
+            response for response in responses
+            if not isinstance(response, Exception)
+        ]
+    
+    async def _trigger_single_webhook(
+        self,
+        session: aiohttp.ClientSession,
+        webhook_id: str,
+        webhook: Dict[str, Any],
+        event: str,
+        data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Trigger a single webhook.
+        
+        Args:
+            session: aiohttp client session
             webhook_id: Webhook ID
             webhook: Webhook configuration
             event: Event name
             data: Data to send
             
         Returns:
-            Response information
+            Dict[str, Any]: Webhook response
         """
         endpoint = webhook["endpoint"]
-        headers = webhook.get("headers", {}).copy()
+        headers = webhook["headers"].copy()
+        headers["Content-Type"] = "application/json"
         
-        # Prepare payload
         payload = {
             "event": event,
             "data": data,
-            "timestamp": datetime.now().isoformat(),
-            "webhook_id": webhook_id
-        }
-        
-        # Add signature if secret is provided
-        if webhook.get("secret"):
-            signature = self._generate_signature(payload, webhook["secret"])
-            headers["X-Webhook-Signature"] = signature
-        
-        # Add default headers
-        headers.setdefault("Content-Type", "application/json")
-        headers.setdefault("User-Agent", "Wiseflow-Webhook/1.0")
-        
-        response_info = {
-            "webhook_id": webhook_id,
-            "event": event,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": None  # Will be filled in by the API server
         }
         
         try:
-            response = requests.post(
+            async with session.post(
                 endpoint,
-                json=payload,
                 headers=headers,
+                json=payload,
                 timeout=10
-            )
-            
-            # Update webhook stats
-            self.webhooks[webhook_id]["last_triggered"] = datetime.now().isoformat()
-            
-            if response.status_code >= 200 and response.status_code < 300:
-                self.webhooks[webhook_id]["success_count"] = self.webhooks[webhook_id].get("success_count", 0) + 1
-                logger.info(f"Webhook {webhook_id} triggered successfully: {response.status_code}")
-            else:
-                self.webhooks[webhook_id]["failure_count"] = self.webhooks[webhook_id].get("failure_count", 0) + 1
-                logger.warning(f"Webhook {webhook_id} failed with status code: {response.status_code}")
-            
-            response_info.update({
-                "status_code": response.status_code,
-                "response": response.text[:1000],  # Limit response text
-                "success": response.status_code >= 200 and response.status_code < 300
-            })
-            
+            ) as response:
+                status_code = response.status
+                response_text = await response.text()
+                
+                try:
+                    response_json = json.loads(response_text)
+                except json.JSONDecodeError:
+                    response_json = {"text": response_text}
+                
+                logger.info(f"Webhook {webhook_id} response: {status_code}")
+                
+                return {
+                    "webhook_id": webhook_id,
+                    "status_code": status_code,
+                    "response": response_json,
+                }
         except Exception as e:
-            self.webhooks[webhook_id]["failure_count"] = self.webhooks[webhook_id].get("failure_count", 0) + 1
-            logger.error(f"Failed to trigger webhook {webhook_id}: {str(e)}")
+            logger.error(f"Error triggering webhook {webhook_id}: {str(e)}")
             
-            response_info.update({
+            return {
+                "webhook_id": webhook_id,
+                "status_code": 0,
                 "error": str(e),
-                "success": False
-            })
-        
-        # Save updated webhook stats
-        self._save_webhooks()
-        
-        return response_info
-    
-    def _generate_signature(self, payload: Dict[str, Any], secret: str) -> str:
-        """
-        Generate a signature for the webhook payload.
-        
-        Args:
-            payload: Webhook payload
-            secret: Secret key
-            
-        Returns:
-            Signature string
-        """
-        payload_str = json.dumps(payload, sort_keys=True)
-        hmac_obj = hmac.new(
-            secret.encode('utf-8'),
-            payload_str.encode('utf-8'),
-            hashlib.sha256
-        )
-        return base64.b64encode(hmac_obj.digest()).decode('utf-8')
-    
-    def verify_signature(self, 
-                        payload: Dict[str, Any], 
-                        signature: str, 
-                        secret: str) -> bool:
-        """
-        Verify a webhook signature.
-        
-        Args:
-            payload: Webhook payload
-            signature: Signature to verify
-            secret: Secret key
-            
-        Returns:
-            True if signature is valid, False otherwise
-        """
-        expected_signature = self._generate_signature(payload, secret)
-        return hmac.compare_digest(signature, expected_signature)
+            }
 
-# Create a singleton instance
-webhook_manager = WebhookManager()
+# Singleton instance
+_webhook_manager = None
 
 def get_webhook_manager() -> WebhookManager:
     """
-    Get the webhook manager instance.
+    Get the singleton webhook manager instance.
     
     Returns:
-        Webhook manager instance
+        WebhookManager: Webhook manager instance
     """
-    return webhook_manager
+    global _webhook_manager
+    
+    if _webhook_manager is None:
+        _webhook_manager = WebhookManager()
+    
+    return _webhook_manager
+
