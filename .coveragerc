@@ -1,0 +1,25 @@
+[run]
+source = core, dashboard, api_server.py
+omit = 
+    */tests/*
+    */test/*
+    */examples/*
+    */scripts/*
+    */weixin_mp/*
+    */core/crawl4ai/*
+    */core/utils/export_example.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    pass
+    raise ImportError
+    except ImportError
+    def __str__
+
+[html]
+directory = coverage_html_report
+
