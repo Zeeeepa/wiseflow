@@ -10,7 +10,10 @@ import logging
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
-from flask import Flask, render_template, jsonify, request, redirect, url_for
+from fastapi import APIRouter, Request, HTTPException, Depends, BackgroundTasks
+from fastapi.responses import JSONResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 # Add the parent directory to the path so we can import the core modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,26 +26,37 @@ from core.utils.pb_api import PbTalker
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
-app = Flask(__name__)
+# Create router
+router = APIRouter()
 
-# Initialize PocketBase connector
-pb = PbTalker(logger)
+# Initialize templates
+templates_dir = os.path.join(os.path.dirname(__file__), "templates")
+templates = Jinja2Templates(directory=templates_dir)
 
 # Global variables for task manager and resource monitor
 task_manager = None
 resource_monitor = None
+pb = None
 
+# Pydantic models for request/response validation
+class ShutdownTaskRequest(BaseModel):
+    user: str = Field("dashboard", description="User initiating the shutdown")
 
-def initialize(task_mgr: Any) -> None:
+class SettingsRequest(BaseModel):
+    settings: Dict[str, Any] = Field(..., description="Resource monitor settings")
+    user: str = Field("dashboard", description="User updating the settings")
+
+def initialize(task_mgr: Any, pb_talker: PbTalker = None) -> None:
     """Initialize the dashboard with a task manager.
     
     Args:
         task_mgr: Task manager instance
+        pb_talker: PocketBase talker instance
     """
-    global task_manager, resource_monitor
+    global task_manager, resource_monitor, pb
     
     task_manager = task_mgr
+    pb = pb_talker or PbTalker(logger)
     
     # Initialize resource monitor
     config = {
@@ -60,40 +74,44 @@ def initialize(task_mgr: Any) -> None:
     logger.info("Resource monitor dashboard initialized")
 
 
-@app.route('/')
-def index():
+@router.get('/')
+async def index(request: Request):
     """Render the main dashboard page."""
-    return render_template('monitor_dashboard.html')
+    return templates.TemplateResponse('monitor_dashboard.html', {"request": request})
 
 
-@app.route('/api/resources/current')
-def get_current_resources():
+@router.get('/api/resources/current')
+async def get_current_resources():
     """Get current resource usage."""
     resources = monitor_resources()
-    return jsonify(resources)
+    return resources
 
 
-@app.route('/api/resources/history')
-def get_resource_history():
+@router.get('/api/resources/history')
+async def get_resource_history():
     """Get resource usage history."""
+    global resource_monitor, pb
+    
     if resource_monitor:
         history = resource_monitor.get_resource_usage_history()
-        return jsonify(history)
+        return history
     
     # If no resource monitor is available, get from database
     try:
         records = pb.read('resource_usage', filter='', fields=['timestamp', 'cpu_percent', 'memory_mb', 'memory_percent', 'network_sent_mbps', 'network_recv_mbps'])
-        return jsonify(records)
+        return records
     except Exception as e:
         logger.error(f"Error getting resource history: {e}")
-        return jsonify([])
+        return []
 
 
-@app.route('/api/tasks')
-def get_tasks():
+@router.get('/api/tasks')
+async def get_tasks():
     """Get all tasks."""
+    global task_manager
+    
     if not task_manager:
-        return jsonify({"error": "Task manager not initialized"})
+        raise HTTPException(status_code=500, detail="Task manager not initialized")
     
     tasks = []
     for task in task_manager.get_all_tasks():
@@ -113,113 +131,129 @@ def get_tasks():
         
         tasks.append(task_data)
     
-    return jsonify(tasks)
+    return tasks
 
 
-@app.route('/api/tasks/<task_id>')
-def get_task(task_id):
+@router.get('/api/tasks/{task_id}')
+async def get_task(task_id: str):
     """Get a specific task."""
+    global task_manager
+    
     if not task_manager:
-        return jsonify({"error": "Task manager not initialized"})
+        raise HTTPException(status_code=500, detail="Task manager not initialized")
     
     task_status = check_task_status(task_id, task_manager)
-    return jsonify(task_status)
+    return task_status
 
 
-@app.route('/api/tasks/idle')
-def get_idle_tasks():
+@router.get('/api/tasks/idle')
+async def get_idle_tasks(timeout: int = 3600):
     """Get idle tasks."""
-    if not task_manager:
-        return jsonify({"error": "Task manager not initialized"})
+    global task_manager
     
-    timeout = request.args.get('timeout', default=3600, type=int)
-    idle_tasks = detect_idle_tasks(timeout, task_manager)
-    return jsonify(idle_tasks)
-
-
-@app.route('/api/tasks/<task_id>/shutdown', methods=['POST'])
-def shutdown_task_api(task_id):
-    """Shut down a specific task."""
     if not task_manager:
-        return jsonify({"error": "Task manager not initialized", "success": False})
+        raise HTTPException(status_code=500, detail="Task manager not initialized")
+    
+    idle_tasks = detect_idle_tasks(timeout, task_manager)
+    return idle_tasks
+
+
+@router.post('/api/tasks/{task_id}/shutdown')
+async def shutdown_task_api(task_id: str, request: ShutdownTaskRequest, background_tasks: BackgroundTasks):
+    """Shut down a specific task."""
+    global task_manager, pb
+    
+    if not task_manager:
+        raise HTTPException(status_code=500, detail="Task manager not initialized")
     
     success = shutdown_task(task_id, task_manager)
     
     if success:
         # Log the shutdown event
-        try:
-            record = {
-                "timestamp": datetime.now().isoformat(),
-                "task_id": task_id,
-                "reason": "manual_shutdown",
-                "event_type": "shutdown",
-                "user": request.form.get('user', 'dashboard')
-            }
-            
-            pb.add(collection_name='shutdown_events', body=record)
-        except Exception as e:
-            logger.error(f"Error logging shutdown event: {e}")
+        background_tasks.add_task(
+            log_shutdown_event,
+            task_id=task_id,
+            reason="manual_shutdown",
+            user=request.user
+        )
     
-    return jsonify({"success": success})
+    return {"success": success}
 
 
-@app.route('/api/settings', methods=['GET', 'POST'])
-def manage_settings():
-    """Get or update auto-shutdown settings."""
-    if request.method == 'POST':
-        try:
-            settings = request.json
-            updated_settings = configure_shutdown_settings(settings, resource_monitor)
-            
-            # Store settings in database
-            try:
-                record = {
-                    "timestamp": datetime.now().isoformat(),
-                    "settings": json.dumps(updated_settings),
-                    "user": request.form.get('user', 'dashboard')
-                }
-                
-                pb.add(collection_name='settings', body=record)
-            except Exception as e:
-                logger.error(f"Error storing settings: {e}")
-            
-            return jsonify(updated_settings)
-        except Exception as e:
-            logger.error(f"Error updating settings: {e}")
-            return jsonify({"error": str(e)}), 400
+async def log_shutdown_event(task_id: str, reason: str, user: str):
+    """Log a shutdown event to the database."""
+    global pb
+    
+    try:
+        record = {
+            "timestamp": datetime.now().isoformat(),
+            "task_id": task_id,
+            "reason": reason,
+            "event_type": "shutdown",
+            "user": user
+        }
+        
+        pb.add(collection_name='shutdown_events', body=record)
+    except Exception as e:
+        logger.error(f"Error logging shutdown event: {e}")
+
+
+@router.get('/api/settings')
+async def get_settings():
+    """Get auto-shutdown settings."""
+    global resource_monitor
+    
+    if resource_monitor:
+        return resource_monitor.config
     else:
-        # Get current settings
-        if resource_monitor:
-            return jsonify(resource_monitor.config)
-        else:
-            return jsonify({})
+        return {}
 
 
-@app.route('/api/events')
-def get_events():
+@router.post('/api/settings')
+async def update_settings(request: SettingsRequest, background_tasks: BackgroundTasks):
+    """Update auto-shutdown settings."""
+    global resource_monitor, pb
+    
+    try:
+        updated_settings = configure_shutdown_settings(request.settings, resource_monitor)
+        
+        # Store settings in database
+        background_tasks.add_task(
+            store_settings,
+            settings=updated_settings,
+            user=request.user
+        )
+        
+        return updated_settings
+    except Exception as e:
+        logger.error(f"Error updating settings: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+async def store_settings(settings: Dict[str, Any], user: str):
+    """Store settings in the database."""
+    global pb
+    
+    try:
+        record = {
+            "timestamp": datetime.now().isoformat(),
+            "settings": json.dumps(settings),
+            "user": user
+        }
+        
+        pb.add(collection_name='settings', body=record)
+    except Exception as e:
+        logger.error(f"Error storing settings: {e}")
+
+
+@router.get('/api/events')
+async def get_events():
     """Get shutdown events."""
+    global pb
+    
     try:
         records = pb.read('shutdown_events', filter='', fields=['timestamp', 'event_type', 'message', 'metadata'])
-        return jsonify(records)
+        return records
     except Exception as e:
         logger.error(f"Error getting events: {e}")
-        return jsonify([])
-
-
-def run_dashboard(host='0.0.0.0', port=5000, debug=False):
-    """Run the dashboard server."""
-    app.run(host=host, port=port, debug=debug)
-
-
-if __name__ == '__main__':
-    # This is for standalone testing
-    from core.task import TaskManager
-    
-    # Create a dummy task manager
-    test_task_manager = TaskManager(max_workers=4)
-    
-    # Initialize the dashboard
-    initialize(test_task_manager)
-    
-    # Run the dashboard
-    run_dashboard(debug=True)
+        return []

@@ -1,500 +1,122 @@
 """
-WiseFlow API Client.
+API client for dashboard-API server integration.
 
-This module provides a client for interacting with the WiseFlow API.
+This module provides a client for the dashboard to communicate with the API server.
 """
 
+import os
 import json
 import logging
-import aiohttp
-import requests
+import asyncio
 from typing import Dict, List, Any, Optional, Union
+from datetime import datetime
+
+import aiohttp
+from pydantic import ValidationError
+
+from core.api.data_models import (
+    ContentData,
+    ProcessingResult,
+    ApiResponse,
+    ErrorResponse
+)
 
 logger = logging.getLogger(__name__)
 
-class WiseFlowClient:
-    """Client for interacting with the WiseFlow API."""
+class ApiClientError(Exception):
+    """Exception raised for API client errors."""
+    pass
+
+class ApiClient:
+    """Client for interacting with the WiseFlow API server."""
     
-    def __init__(self, base_url: str, api_key: str):
-        """
-        Initialize the WiseFlow API client.
+    def __init__(
+        self,
+        base_url: str = None,
+        api_key: str = None,
+        timeout: int = 30
+    ):
+        """Initialize the API client.
         
         Args:
-            base_url: Base URL of the WiseFlow API
+            base_url: Base URL of the API server
             api_key: API key for authentication
+            timeout: Request timeout in seconds
         """
-        self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
-        self.headers = {
-            "X-API-Key": api_key,
-            "Content-Type": "application/json"
-        }
+        self.base_url = base_url or os.environ.get("API_SERVER_URL", "http://localhost:8000")
+        self.api_key = api_key or os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
+        self.timeout = timeout
+        self.session = None
     
-    def _get_url(self, endpoint: str) -> str:
-        """
-        Get the full URL for an endpoint.
-        
-        Args:
-            endpoint: API endpoint
-            
-        Returns:
-            str: Full URL
-        """
-        return f"{self.base_url}/{endpoint.lstrip('/')}"
+    async def __aenter__(self):
+        """Enter async context manager."""
+        self.session = aiohttp.ClientSession(
+            headers={"X-API-Key": self.api_key}
+        )
+        return self
     
-    def health_check(self) -> Dict[str, Any]:
-        """
-        Check the health of the API.
-        
-        Returns:
-            Dict[str, Any]: Health check response
-        """
-        url = self._get_url("/health")
-        
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Health check failed: {str(e)}")
-            return {"status": "error", "message": str(e)}
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit async context manager."""
+        if self.session:
+            await self.session.close()
+            self.session = None
     
-    def process_content(
+    def _get_session(self):
+        """Get the aiohttp session, creating one if needed."""
+        if self.session is None:
+            self.session = aiohttp.ClientSession(
+                headers={"X-API-Key": self.api_key}
+            )
+        return self.session
+    
+    async def _request(
         self,
-        content: str,
-        focus_point: str,
-        explanation: str = "",
-        content_type: str = "text",
-        use_multi_step_reasoning: bool = False,
-        references: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Process content using specialized prompting strategies.
-        
-        Args:
-            content: The content to process
-            focus_point: The focus point for extraction
-            explanation: Additional explanation or context
-            content_type: The type of content
-            use_multi_step_reasoning: Whether to use multi-step reasoning
-            references: Optional reference materials for contextual understanding
-            metadata: Additional metadata
-            
-        Returns:
-            Dict[str, Any]: The processing result
-        """
-        url = self._get_url("/api/v1/process")
-        
-        payload = {
-            "content": content,
-            "focus_point": focus_point,
-            "explanation": explanation,
-            "content_type": content_type,
-            "use_multi_step_reasoning": use_multi_step_reasoning,
-            "references": references,
-            "metadata": metadata or {}
-        }
-        
-        try:
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Content processing failed: {str(e)}")
-            return {"error": str(e)}
-    
-    def batch_process(
-        self,
-        items: List[Dict[str, Any]],
-        focus_point: str,
-        explanation: str = "",
-        use_multi_step_reasoning: bool = False,
-        max_concurrency: int = 5
-    ) -> List[Dict[str, Any]]:
-        """
-        Process multiple items concurrently.
-        
-        Args:
-            items: List of items to process
-            focus_point: The focus point for extraction
-            explanation: Additional explanation or context
-            use_multi_step_reasoning: Whether to use multi-step reasoning
-            max_concurrency: Maximum number of concurrent processes
-            
-        Returns:
-            List[Dict[str, Any]]: The processing results
-        """
-        url = self._get_url("/api/v1/batch-process")
-        
-        payload = {
-            "items": items,
-            "focus_point": focus_point,
-            "explanation": explanation,
-            "use_multi_step_reasoning": use_multi_step_reasoning,
-            "max_concurrency": max_concurrency
-        }
-        
-        try:
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Batch processing failed: {str(e)}")
-            return [{"error": str(e)}]
-    
-    def extract_information(
-        self,
-        content: str,
-        focus_point: str,
-        explanation: str = "",
-        content_type: str = "text",
-        references: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Extract information from content.
-        
-        Args:
-            content: The content to process
-            focus_point: The focus point for extraction
-            explanation: Additional explanation or context
-            content_type: The type of content
-            references: Optional reference materials for contextual understanding
-            metadata: Additional metadata
-            
-        Returns:
-            Dict[str, Any]: The extraction result
-        """
-        url = self._get_url("/api/v1/integration/extract")
-        
-        payload = {
-            "content": content,
-            "focus_point": focus_point,
-            "explanation": explanation,
-            "content_type": content_type,
-            "use_multi_step_reasoning": False,
-            "references": references,
-            "metadata": metadata or {}
-        }
-        
-        try:
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Information extraction failed: {str(e)}")
-            return {"error": str(e)}
-    
-    def analyze_content(
-        self,
-        content: str,
-        focus_point: str,
-        explanation: str = "",
-        content_type: str = "text",
-        references: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Analyze content using multi-step reasoning.
-        
-        Args:
-            content: The content to process
-            focus_point: The focus point for extraction
-            explanation: Additional explanation or context
-            content_type: The type of content
-            references: Optional reference materials for contextual understanding
-            metadata: Additional metadata
-            
-        Returns:
-            Dict[str, Any]: The analysis result
-        """
-        url = self._get_url("/api/v1/integration/analyze")
-        
-        payload = {
-            "content": content,
-            "focus_point": focus_point,
-            "explanation": explanation,
-            "content_type": content_type,
-            "use_multi_step_reasoning": True,
-            "references": references,
-            "metadata": metadata or {}
-        }
-        
-        try:
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Content analysis failed: {str(e)}")
-            return {"error": str(e)}
-    
-    def contextual_understanding(
-        self,
-        content: str,
-        focus_point: str,
-        references: str,
-        explanation: str = "",
-        content_type: str = "text",
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Process content with contextual understanding.
-        
-        Args:
-            content: The content to process
-            focus_point: The focus point for extraction
-            references: Reference materials for contextual understanding
-            explanation: Additional explanation or context
-            content_type: The type of content
-            metadata: Additional metadata
-            
-        Returns:
-            Dict[str, Any]: The contextual understanding result
-        """
-        url = self._get_url("/api/v1/integration/contextual")
-        
-        payload = {
-            "content": content,
-            "focus_point": focus_point,
-            "explanation": explanation,
-            "content_type": content_type,
-            "use_multi_step_reasoning": False,
-            "references": references,
-            "metadata": metadata or {}
-        }
-        
-        try:
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Contextual understanding failed: {str(e)}")
-            return {"error": str(e)}
-    
-    # Webhook management methods
-    def list_webhooks(self) -> List[Dict[str, Any]]:
-        """
-        List all registered webhooks.
-        
-        Returns:
-            List[Dict[str, Any]]: List of webhook configurations
-        """
-        url = self._get_url("/api/v1/webhooks")
-        
-        try:
-            response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Failed to list webhooks: {str(e)}")
-            return []
-    
-    def register_webhook(
-        self,
+        method: str,
         endpoint: str,
-        events: List[str],
-        headers: Optional[Dict[str, str]] = None,
-        secret: Optional[str] = None,
-        description: Optional[str] = None
+        data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Register a new webhook.
+        """Make a request to the API server.
         
         Args:
-            endpoint: Webhook endpoint URL
-            events: List of events to trigger the webhook
-            headers: Optional headers to include in webhook requests
-            secret: Optional secret for signing webhook payloads
-            description: Optional description of the webhook
-            
-        Returns:
-            Dict[str, Any]: Webhook registration result
-        """
-        url = self._get_url("/api/v1/webhooks")
-        
-        payload = {
-            "endpoint": endpoint,
-            "events": events,
-            "headers": headers or {},
-            "secret": secret,
-            "description": description
-        }
-        
-        try:
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Failed to register webhook: {str(e)}")
-            return {"error": str(e)}
-    
-    def get_webhook(self, webhook_id: str) -> Dict[str, Any]:
-        """
-        Get a webhook by ID.
-        
-        Args:
-            webhook_id: Webhook ID
-            
-        Returns:
-            Dict[str, Any]: Webhook configuration
-        """
-        url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
-        
-        try:
-            response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Failed to get webhook: {str(e)}")
-            return {"error": str(e)}
-    
-    def update_webhook(
-        self,
-        webhook_id: str,
-        endpoint: Optional[str] = None,
-        events: Optional[List[str]] = None,
-        headers: Optional[Dict[str, str]] = None,
-        secret: Optional[str] = None,
-        description: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Update an existing webhook.
-        
-        Args:
-            webhook_id: ID of the webhook to update
-            endpoint: New endpoint URL (optional)
-            events: New list of events (optional)
-            headers: New headers (optional)
-            secret: New secret (optional)
-            description: New description (optional)
-            
-        Returns:
-            Dict[str, Any]: Webhook update result
-        """
-        url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
-        
-        payload = {}
-        if endpoint is not None:
-            payload["endpoint"] = endpoint
-        if events is not None:
-            payload["events"] = events
-        if headers is not None:
-            payload["headers"] = headers
-        if secret is not None:
-            payload["secret"] = secret
-        if description is not None:
-            payload["description"] = description
-        
-        try:
-            response = requests.put(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Failed to update webhook: {str(e)}")
-            return {"error": str(e)}
-    
-    def delete_webhook(self, webhook_id: str) -> Dict[str, Any]:
-        """
-        Delete a webhook.
-        
-        Args:
-            webhook_id: ID of the webhook to delete
-            
-        Returns:
-            Dict[str, Any]: Webhook deletion result
-        """
-        url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
-        
-        try:
-            response = requests.delete(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Failed to delete webhook: {str(e)}")
-            return {"error": str(e)}
-    
-    def trigger_webhook(
-        self,
-        event: str,
-        data: Dict[str, Any],
-        async_mode: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Trigger webhooks for a specific event.
-        
-        Args:
-            event: Event name
-            data: Data to send
-            async_mode: Whether to trigger webhooks asynchronously
-            
-        Returns:
-            Dict[str, Any]: Webhook trigger result
-        """
-        url = self._get_url("/api/v1/webhooks/trigger")
-        
-        payload = {
-            "event": event,
-            "data": data,
-            "async_mode": async_mode
-        }
-        
-        try:
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Failed to trigger webhook: {str(e)}")
-            return {"error": str(e)}
-
-
-class AsyncWiseFlowClient:
-    """Asynchronous client for interacting with the WiseFlow API."""
-    
-    def __init__(self, base_url: str, api_key: str):
-        """
-        Initialize the asynchronous WiseFlow API client.
-        
-        Args:
-            base_url: Base URL of the WiseFlow API
-            api_key: API key for authentication
-        """
-        self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
-        self.headers = {
-            "X-API-Key": api_key,
-            "Content-Type": "application/json"
-        }
-    
-    def _get_url(self, endpoint: str) -> str:
-        """
-        Get the full URL for an endpoint.
-        
-        Args:
+            method: HTTP method (GET, POST, PUT, DELETE)
             endpoint: API endpoint
+            data: Request data
+            params: Query parameters
             
         Returns:
-            str: Full URL
+            Dict[str, Any]: Response data
+            
+        Raises:
+            ApiClientError: If the request fails
         """
-        return f"{self.base_url}/{endpoint.lstrip('/')}"
-    
-    async def health_check(self) -> Dict[str, Any]:
-        """
-        Check the health of the API.
-        
-        Returns:
-            Dict[str, Any]: Health check response
-        """
-        url = self._get_url("/health")
+        session = self._get_session()
+        url = f"{self.base_url}{endpoint}"
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    response.raise_for_status()
-                    return await response.json()
+            async with session.request(
+                method=method,
+                url=url,
+                json=data,
+                params=params,
+                timeout=self.timeout
+            ) as response:
+                response_data = await response.json()
+                
+                if response.status >= 400:
+                    try:
+                        error = ErrorResponse(**response_data)
+                        raise ApiClientError(f"API error: {error.message}")
+                    except ValidationError:
+                        raise ApiClientError(f"API error: {response_data}")
+                
+                return response_data
+        except aiohttp.ClientError as e:
+            raise ApiClientError(f"Request error: {str(e)}")
+        except asyncio.TimeoutError:
+            raise ApiClientError(f"Request timed out after {self.timeout} seconds")
         except Exception as e:
-            logger.error(f"Health check failed: {str(e)}")
-            return {"status": "error", "message": str(e)}
+            raise ApiClientError(f"Unexpected error: {str(e)}")
     
     async def process_content(
         self,
@@ -505,9 +127,8 @@ class AsyncWiseFlowClient:
         use_multi_step_reasoning: bool = False,
         references: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Process content using specialized prompting strategies.
+    ) -> ProcessingResult:
+        """Process content using the API server.
         
         Args:
             content: The content to process
@@ -515,32 +136,32 @@ class AsyncWiseFlowClient:
             explanation: Additional explanation or context
             content_type: The type of content
             use_multi_step_reasoning: Whether to use multi-step reasoning
-            references: Optional reference materials for contextual understanding
+            references: Optional reference materials
             metadata: Additional metadata
             
         Returns:
-            Dict[str, Any]: The processing result
+            ProcessingResult: The processing result
+            
+        Raises:
+            ApiClientError: If the request fails
         """
-        url = self._get_url("/api/v1/process")
-        
-        payload = {
+        data = {
             "content": content,
             "focus_point": focus_point,
             "explanation": explanation,
             "content_type": content_type,
             "use_multi_step_reasoning": use_multi_step_reasoning,
             "references": references,
-            "metadata": metadata or {}
+            "metadata": metadata
         }
         
+        response_data = await self._request("POST", "/api/v1/process", data=data)
+        
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Content processing failed: {str(e)}")
-            return {"error": str(e)}
+            return ProcessingResult(**response_data)
+        except ValidationError as e:
+            logger.error(f"Error parsing processing result: {e}")
+            raise ApiClientError(f"Invalid response format: {e}")
     
     async def batch_process(
         self,
@@ -549,9 +170,8 @@ class AsyncWiseFlowClient:
         explanation: str = "",
         use_multi_step_reasoning: bool = False,
         max_concurrency: int = 5
-    ) -> List[Dict[str, Any]]:
-        """
-        Process multiple items concurrently.
+    ) -> List[ProcessingResult]:
+        """Process multiple items using the API server.
         
         Args:
             items: List of items to process
@@ -561,11 +181,12 @@ class AsyncWiseFlowClient:
             max_concurrency: Maximum number of concurrent processes
             
         Returns:
-            List[Dict[str, Any]]: The processing results
+            List[ProcessingResult]: The processing results
+            
+        Raises:
+            ApiClientError: If the request fails
         """
-        url = self._get_url("/api/v1/batch-process")
-        
-        payload = {
+        data = {
             "items": items,
             "focus_point": focus_point,
             "explanation": explanation,
@@ -573,16 +194,14 @@ class AsyncWiseFlowClient:
             "max_concurrency": max_concurrency
         }
         
+        response_data = await self._request("POST", "/api/v1/batch-process", data=data)
+        
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Batch processing failed: {str(e)}")
-            return [{"error": str(e)}]
+            return [ProcessingResult(**item) for item in response_data]
+        except ValidationError as e:
+            logger.error(f"Error parsing batch processing results: {e}")
+            raise ApiClientError(f"Invalid response format: {e}")
     
-    # Integration endpoints
     async def extract_information(
         self,
         content: str,
@@ -592,40 +211,32 @@ class AsyncWiseFlowClient:
         references: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Extract information from content.
+        """Extract information from content using the API server.
         
         Args:
             content: The content to process
             focus_point: The focus point for extraction
             explanation: Additional explanation or context
             content_type: The type of content
-            references: Optional reference materials for contextual understanding
+            references: Optional reference materials
             metadata: Additional metadata
             
         Returns:
             Dict[str, Any]: The extraction result
+            
+        Raises:
+            ApiClientError: If the request fails
         """
-        url = self._get_url("/api/v1/integration/extract")
-        
-        payload = {
+        data = {
             "content": content,
             "focus_point": focus_point,
             "explanation": explanation,
             "content_type": content_type,
-            "use_multi_step_reasoning": False,
             "references": references,
-            "metadata": metadata or {}
+            "metadata": metadata
         }
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Information extraction failed: {str(e)}")
-            return {"error": str(e)}
+        return await self._request("POST", "/api/v1/integration/extract", data=data)
     
     async def analyze_content(
         self,
@@ -636,40 +247,32 @@ class AsyncWiseFlowClient:
         references: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Analyze content using multi-step reasoning.
+        """Analyze content using the API server.
         
         Args:
             content: The content to process
             focus_point: The focus point for extraction
             explanation: Additional explanation or context
             content_type: The type of content
-            references: Optional reference materials for contextual understanding
+            references: Optional reference materials
             metadata: Additional metadata
             
         Returns:
             Dict[str, Any]: The analysis result
+            
+        Raises:
+            ApiClientError: If the request fails
         """
-        url = self._get_url("/api/v1/integration/analyze")
-        
-        payload = {
+        data = {
             "content": content,
             "focus_point": focus_point,
             "explanation": explanation,
             "content_type": content_type,
-            "use_multi_step_reasoning": True,
             "references": references,
-            "metadata": metadata or {}
+            "metadata": metadata
         }
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Content analysis failed: {str(e)}")
-            return {"error": str(e)}
+        return await self._request("POST", "/api/v1/integration/analyze", data=data)
     
     async def contextual_understanding(
         self,
@@ -680,8 +283,7 @@ class AsyncWiseFlowClient:
         content_type: str = "text",
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Process content with contextual understanding.
+        """Process content with contextual understanding using the API server.
         
         Args:
             content: The content to process
@@ -693,205 +295,30 @@ class AsyncWiseFlowClient:
             
         Returns:
             Dict[str, Any]: The contextual understanding result
+            
+        Raises:
+            ApiClientError: If the request fails
         """
-        url = self._get_url("/api/v1/integration/contextual")
-        
-        payload = {
+        data = {
             "content": content,
             "focus_point": focus_point,
             "explanation": explanation,
             "content_type": content_type,
-            "use_multi_step_reasoning": False,
             "references": references,
-            "metadata": metadata or {}
+            "metadata": metadata
         }
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Contextual understanding failed: {str(e)}")
-            return {"error": str(e)}
+        return await self._request("POST", "/api/v1/integration/contextual", data=data)
     
-    # Webhook management methods
-    async def list_webhooks(self) -> List[Dict[str, Any]]:
-        """
-        List all registered webhooks.
+    async def health_check(self) -> Dict[str, Any]:
+        """Check the health of the API server.
         
         Returns:
-            List[Dict[str, Any]]: List of webhook configurations
-        """
-        url = self._get_url("/api/v1/webhooks")
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Failed to list webhooks: {str(e)}")
-            return []
-    
-    async def register_webhook(
-        self,
-        endpoint: str,
-        events: List[str],
-        headers: Optional[Dict[str, str]] = None,
-        secret: Optional[str] = None,
-        description: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Register a new webhook.
-        
-        Args:
-            endpoint: Webhook endpoint URL
-            events: List of events to trigger the webhook
-            headers: Optional headers to include in webhook requests
-            secret: Optional secret for signing webhook payloads
-            description: Optional description of the webhook
+            Dict[str, Any]: Health check result
             
-        Returns:
-            Dict[str, Any]: Webhook registration result
+        Raises:
+            ApiClientError: If the request fails
         """
-        url = self._get_url("/api/v1/webhooks")
-        
-        payload = {
-            "endpoint": endpoint,
-            "events": events,
-            "headers": headers or {},
-            "secret": secret,
-            "description": description
-        }
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Failed to register webhook: {str(e)}")
-            return {"error": str(e)}
-    
-    async def get_webhook(self, webhook_id: str) -> Dict[str, Any]:
-        """
-        Get a webhook by ID.
-        
-        Args:
-            webhook_id: Webhook ID
-            
-        Returns:
-            Dict[str, Any]: Webhook configuration
-        """
-        url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Failed to get webhook: {str(e)}")
-            return {"error": str(e)}
-    
-    async def update_webhook(
-        self,
-        webhook_id: str,
-        endpoint: Optional[str] = None,
-        events: Optional[List[str]] = None,
-        headers: Optional[Dict[str, str]] = None,
-        secret: Optional[str] = None,
-        description: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Update an existing webhook.
-        
-        Args:
-            webhook_id: ID of the webhook to update
-            endpoint: New endpoint URL (optional)
-            events: New list of events (optional)
-            headers: New headers (optional)
-            secret: New secret (optional)
-            description: New description (optional)
-            
-        Returns:
-            Dict[str, Any]: Webhook update result
-        """
-        url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
-        
-        payload = {}
-        if endpoint is not None:
-            payload["endpoint"] = endpoint
-        if events is not None:
-            payload["events"] = events
-        if headers is not None:
-            payload["headers"] = headers
-        if secret is not None:
-            payload["secret"] = secret
-        if description is not None:
-            payload["description"] = description
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.put(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Failed to update webhook: {str(e)}")
-            return {"error": str(e)}
-    
-    async def delete_webhook(self, webhook_id: str) -> Dict[str, Any]:
-        """
-        Delete a webhook.
-        
-        Args:
-            webhook_id: ID of the webhook to delete
-            
-        Returns:
-            Dict[str, Any]: Webhook deletion result
-        """
-        url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.delete(url, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Failed to delete webhook: {str(e)}")
-            return {"error": str(e)}
-    
-    async def trigger_webhook(
-        self,
-        event: str,
-        data: Dict[str, Any],
-        async_mode: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Trigger webhooks for a specific event.
-        
-        Args:
-            event: Event name
-            data: Data to send
-            async_mode: Whether to trigger webhooks asynchronously
-            
-        Returns:
-            Dict[str, Any]: Webhook trigger result
-        """
-        url = self._get_url("/api/v1/webhooks/trigger")
-        
-        payload = {
-            "event": event,
-            "data": data,
-            "async_mode": async_mode
-        }
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
-            logger.error(f"Failed to trigger webhook: {str(e)}")
-            return {"error": str(e)}
+        return await self._request("GET", "/health")
+"""
+

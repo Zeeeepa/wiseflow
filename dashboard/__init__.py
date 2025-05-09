@@ -2,10 +2,13 @@ import os
 import time
 import json
 import uuid
-from get_report import get_report, logger, pb
-from get_search import search_insight
-from tranlsation_volcengine import text_translate
+import logging
+from dashboard.get_report import get_report, pb
+from dashboard.get_search import search_insight
+from dashboard.tranlsation_volcengine import text_translate
 
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class BackendService:
     def __init__(self):

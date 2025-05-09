@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Depends, Query, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from __init__ import BackendService
+from dashboard import BackendService
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dashboard.visualization import Dashboard, Visualization, DashboardManager
@@ -12,9 +12,13 @@ from dashboard.plugins import dashboard_plugin_manager
 from dashboard.routes import router as dashboard_router
 from dashboard.search_api import router as search_api_router
 from dashboard.data_mining_api import router as data_mining_api_router
+from dashboard.error_handlers import setup_error_handlers, DashboardError, NotFoundError, ValidationError, ApiError
 from core.utils.pb_api import PbTalker
+from core.api import ApiClient, ApiClientError
+from core.cache import cached, cached_async, start_cache_cleanup
 import logging
 import os
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +81,9 @@ app = FastAPI(
     version="0.2",
     openapi_url="/openapi.json"
 )
+
+# Set up error handlers
+setup_error_handlers(app)
 
 app.add_middleware(
         CORSMiddleware,
@@ -144,6 +151,7 @@ def create_dashboard(request: DashboardRequest):
 
 
 @app.get("/dashboards", response_model=List[Dict[str, Any]])
+@cached(ttl=60)  # Cache for 60 seconds
 def get_dashboards(user_id: Optional[str] = None):
     """Get all dashboards for a user."""
     dashboards = dashboard_manager.get_all_dashboards(user_id)
@@ -157,7 +165,7 @@ def get_dashboard(dashboard_id: str):
     dashboard = dashboard_manager.get_dashboard(dashboard_id)
     
     if not dashboard:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+        raise NotFoundError(f"Dashboard not found: {dashboard_id}")
     
     return dashboard.to_dict()
 
@@ -168,7 +176,7 @@ def delete_dashboard(dashboard_id: str):
     success = dashboard_manager.delete_dashboard(dashboard_id)
     
     if not success:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+        raise NotFoundError(f"Dashboard not found: {dashboard_id}")
     
     return {"success": success}
 
@@ -179,7 +187,7 @@ def add_visualization(dashboard_id: str, request: VisualizationRequest):
     dashboard = dashboard_manager.get_dashboard(dashboard_id)
     
     if not dashboard:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+        raise NotFoundError(f"Dashboard not found: {dashboard_id}")
     
     # Create visualization based on type
     if request.type == "knowledge_graph":
@@ -214,7 +222,7 @@ def add_visualization(dashboard_id: str, request: VisualizationRequest):
     success = dashboard_manager.add_visualization(dashboard_id, visualization)
     
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to add visualization")
+        raise DashboardError("Failed to add visualization", error_code="visualization_error")
     
     # Get updated dashboard
     dashboard = dashboard_manager.get_dashboard(dashboard_id)
@@ -241,16 +249,36 @@ def get_dashboard_templates():
 
 # Plugin system integration endpoints
 @app.post("/analyze", response_model=Dict[str, Any])
-def analyze_text(request: AnalysisRequest):
+async def analyze_text(request: AnalysisRequest, background_tasks: BackgroundTasks):
     """Analyze text using the specified analyzer."""
-    if request.analyzer_type == "entity":
-        result = dashboard_plugin_manager.analyze_entities(request.text, **(request.config or {}))
-    elif request.analyzer_type == "trend":
-        result = dashboard_plugin_manager.analyze_trends(request.text, **(request.config or {}))
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported analyzer type: {request.analyzer_type}")
-    
-    return result
+    try:
+        # Use API client for analysis if available
+        client = get_api_client()
+        
+        try:
+            # Try to use the API server for analysis
+            result = await client.analyze_content(
+                content=request.text,
+                focus_point=f"Analyze this text using {request.analyzer_type} analysis",
+                content_type="text",
+                metadata=request.config or {}
+            )
+            return result
+        except ApiClientError as e:
+            logger.warning(f"API client error: {e}. Falling back to local analysis.")
+            
+            # Fall back to local analysis
+            if request.analyzer_type == "entity":
+                result = dashboard_plugin_manager.analyze_entities(request.text, **(request.config or {}))
+            elif request.analyzer_type == "trend":
+                result = dashboard_plugin_manager.analyze_trends(request.text, **(request.config or {}))
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported analyzer type: {request.analyzer_type}")
+            
+            return result
+    except Exception as e:
+        logger.error(f"Error analyzing text: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/visualize/knowledge-graph", response_model=Dict[str, Any])
@@ -435,3 +463,23 @@ def configure_notification_settings(request: NotificationSettingsRequest):
     settings = configure_notifications(request.settings)
     
     return settings
+
+
+# Initialize API client
+api_client = None
+
+def get_api_client():
+    """Get the API client instance."""
+    global api_client
+    if api_client is None:
+        api_base_url = os.environ.get("API_SERVER_URL", "http://localhost:8000")
+        api_key = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
+        api_client = ApiClient(base_url=api_base_url, api_key=api_key)
+    return api_client
+
+@app.on_event("startup")
+async def startup_event():
+    """Run startup tasks."""
+    # Start cache cleanup task
+    asyncio.create_task(start_cache_cleanup())
+    logger.info("Cache cleanup task started")
