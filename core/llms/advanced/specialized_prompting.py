@@ -17,6 +17,12 @@ from datetime import datetime
 import asyncio
 
 from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
+from core.llms.exceptions import (
+    LLMException, NetworkException, AuthenticationException, RateLimitException,
+    TimeoutException, ContentFilterException, ContextLengthException,
+    InvalidRequestException, ServiceUnavailableException, QuotaExceededException,
+    UnknownException
+)
 
 logger = logging.getLogger(__name__)
 
@@ -382,7 +388,7 @@ class ContentTypePromptStrategy:
             input_variables=["focus_point", "explanation", "content", "references"]
         )
     
-    def get_strategy_for_content(self, content_type: str, task: str) -> str:
+    def _get_template_name(self, content_type: str, task: str) -> str:
         """
         Get the appropriate prompt template name for a given content type and task.
         
@@ -479,7 +485,7 @@ class SpecializedPromptProcessor:
         max_tokens: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Process content using specialized prompting strategies.
+        Process content with specialized prompting.
         
         Args:
             content: The content to process
@@ -495,19 +501,19 @@ class SpecializedPromptProcessor:
         Returns:
             Dict[str, Any]: The processing result
         """
-        metadata = metadata or {}
         model = model or self.default_model
         temperature = temperature if temperature is not None else self.default_temperature
         max_tokens = max_tokens or self.default_max_tokens
+        metadata = metadata or {}
         
-        # Get the appropriate prompt template
-        template_name = self.prompt_strategy.get_strategy_for_content(content_type, task)
+        # Determine the template to use
+        template_name = self._get_template_name(content_type, task)
         
         # Prepare template variables
         template_vars = {
+            "content": content,
             "focus_point": focus_point,
-            "explanation": explanation,
-            "content": content
+            "explanation": explanation
         }
         
         # Add additional variables based on content type
@@ -541,7 +547,13 @@ class SpecializedPromptProcessor:
                 {"role": "user", "content": prompt}
             ]
             
-            response = await litellm_llm_async(messages, model, temperature, max_tokens)
+            response = await litellm_llm_async(
+                messages=messages, 
+                model=model, 
+                temperature=temperature, 
+                max_tokens=max_tokens,
+                logger=logger
+            )
             
             # Parse the response
             result = self._parse_llm_response(response)
@@ -558,10 +570,27 @@ class SpecializedPromptProcessor:
             }
             
             return result
-        except Exception as e:
+        except LLMException as e:
             logger.error(f"Error processing with LLM: {e}")
+            error_type = type(e).__name__.replace("Exception", "")
             return {
                 "error": str(e),
+                "error_type": error_type,
+                "metadata": {
+                    "model": model,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "prompt_template": template_name,
+                    "content_type": content_type,
+                    "task": task,
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error processing with LLM: {e}")
+            return {
+                "error": str(e),
+                "error_type": "Unexpected",
                 "metadata": {
                     "model": model,
                     "temperature": temperature,
