@@ -1,268 +1,451 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Example usage of the WiseFlow error handling and logging system.
+Example script demonstrating the improved error handling and logging in WiseFlow.
 
-This file demonstrates how to use the error handling and logging system in WiseFlow.
+This script shows how to use the various error handling and logging utilities
+provided by WiseFlow to create robust and well-logged applications.
 """
 
+import os
+import sys
+import time
 import asyncio
 import random
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, List, Optional
 
-# Import logging and error handling utilities
-from core.utils.logging_config import logger, get_logger, with_context, LogContext
+# Add the project root to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Import WiseFlow utilities
+from core.utils.logging_config import (
+    logger, get_logger, with_context, LogContext,
+    log_execution, log_method_calls, configure_logging
+)
 from core.utils.error_handling import (
-    WiseflowError,
-    ConnectionError,
-    DataProcessingError,
-    ValidationError,
-    handle_exceptions,
-    ErrorHandler,
-    async_error_handler,
-    log_error
+    WiseflowError, ValidationError, ConnectionError, DataProcessingError,
+    handle_exceptions, ErrorHandler, async_error_handler, retry,
+    log_error, save_error_to_file
 )
 
-# Get a module-specific logger
-module_logger = get_logger(__name__)
-
-# Example 1: Basic logging
-def basic_logging_example():
-    """Demonstrate basic logging functionality."""
-    module_logger.info("Starting basic logging example")
-    
-    module_logger.debug("This is a debug message")
-    module_logger.info("This is an info message")
-    module_logger.success("This is a success message")
-    module_logger.warning("This is a warning message")
-    module_logger.error("This is an error message")
-    module_logger.critical("This is a critical message")
-    
-    module_logger.info("Finished basic logging example")
-
-# Example 2: Contextual logging
-def contextual_logging_example(user_id: str, action: str):
-    """
-    Demonstrate contextual logging.
-    
-    Args:
-        user_id: User ID for context
-        action: Action being performed
-    """
-    module_logger.info("Starting contextual logging example")
-    
-    # Add context to logger
-    user_logger = with_context(user_id=user_id, action=action)
-    
-    user_logger.info("User action started")
-    
-    # Use context manager for temporary context
-    with LogContext(request_id="req-123", endpoint="/api/data"):
-        logger.info("Processing request")
-        logger.debug("Request details: ...")
-        logger.success("Request processed successfully")
-    
-    user_logger.success("User action completed")
-    
-    module_logger.info("Finished contextual logging example")
-
-# Example 3: Error handling with decorator
-@handle_exceptions(
-    error_types=[ValueError, TypeError],
-    default_message="Error validating user data",
-    log_error=True,
-    default_return=False
+# Configure logging for this example
+configure_logging(
+    log_level="DEBUG",
+    log_to_console=True,
+    log_to_file=True,
+    app_name="error_handling_example",
+    structured_logging=False,
+    enhanced_format=True
 )
-def validate_user_data(data: Dict[str, Any]) -> bool:
+
+# Get a logger for this module
+example_logger = get_logger("error_handling_example")
+
+# Example data
+SAMPLE_DATA = {
+    "users": [
+        {"id": 1, "name": "Alice", "email": "alice@example.com"},
+        {"id": 2, "name": "Bob", "email": "bob@example.com"},
+        {"id": 3, "name": "Charlie", "email": "charlie@example.com"}
+    ],
+    "products": [
+        {"id": 101, "name": "Laptop", "price": 999.99},
+        {"id": 102, "name": "Phone", "price": 499.99},
+        {"id": 103, "name": "Tablet", "price": 299.99}
+    ]
+}
+
+# Example 1: Basic error handling with WiseflowError classes
+def validate_user(user_data: Dict[str, Any]) -> bool:
     """
-    Validate user data with error handling.
+    Validate user data.
     
     Args:
-        data: User data to validate
+        user_data: User data to validate
         
     Returns:
-        True if data is valid, False otherwise
+        True if the user data is valid
+        
+    Raises:
+        ValidationError: If the user data is invalid
     """
-    if not isinstance(data, dict):
-        raise TypeError("Data must be a dictionary")
+    if not isinstance(user_data, dict):
+        raise ValidationError("User data must be a dictionary", {"provided_type": type(user_data).__name__})
     
-    if "name" not in data:
-        raise ValidationError("Name is required", {"field": "name"})
+    required_fields = ["id", "name", "email"]
+    for field in required_fields:
+        if field not in user_data:
+            raise ValidationError(f"Missing required field: {field}", {"user_data": user_data})
     
-    if "age" in data and not isinstance(data["age"], int):
-        raise ValidationError("Age must be an integer", {"field": "age", "value": data["age"]})
+    if not isinstance(user_data["id"], int):
+        raise ValidationError("User ID must be an integer", {"provided_id": user_data["id"]})
     
-    if "email" in data and "@" not in data["email"]:
-        raise ValidationError("Invalid email format", {"field": "email", "value": data["email"]})
+    if not isinstance(user_data["name"], str) or not user_data["name"]:
+        raise ValidationError("User name must be a non-empty string", {"provided_name": user_data["name"]})
+    
+    if not isinstance(user_data["email"], str) or "@" not in user_data["email"]:
+        raise ValidationError("User email must be a valid email address", {"provided_email": user_data["email"]})
     
     return True
 
-# Example 4: Error handling with context manager
-def process_payment(payment_id: str, amount: float) -> Dict[str, Any]:
+# Example 2: Using the handle_exceptions decorator
+@handle_exceptions(
+    error_types=[ValidationError, KeyError, TypeError],
+    default_message="Failed to process user",
+    log_error=True,
+    reraise=False,
+    default_return=None
+)
+def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
     """
-    Process a payment with error handling using context manager.
+    Get a user by ID.
     
     Args:
-        payment_id: Payment ID
-        amount: Payment amount
+        user_id: User ID to look up
         
     Returns:
-        Payment result
+        User data if found, None otherwise
     """
-    module_logger.info(f"Processing payment {payment_id} for {amount}")
+    if not isinstance(user_id, int):
+        raise ValidationError("User ID must be an integer", {"provided_id": user_id})
     
+    for user in SAMPLE_DATA["users"]:
+        if user["id"] == user_id:
+            return user
+    
+    raise ValidationError(f"User not found with ID: {user_id}")
+
+# Example 3: Using the retry decorator
+@retry(
+    max_retries=3,
+    retry_delay=1,
+    retry_backoff=2.0,
+    retry_exceptions=[ConnectionError, TimeoutError],
+    retry_condition=lambda e: isinstance(e, ConnectionError) and random.random() < 0.7
+)
+def fetch_external_api(url: str) -> Dict[str, Any]:
+    """
+    Fetch data from an external API.
+    
+    Args:
+        url: URL to fetch data from
+        
+    Returns:
+        API response data
+        
+    Raises:
+        ConnectionError: If the API request fails
+    """
+    example_logger.info(f"Fetching data from {url}")
+    
+    # Simulate API request with random failure
+    if random.random() < 0.7:
+        raise ConnectionError(
+            f"Failed to connect to API: {url}",
+            {"url": url, "attempt": time.time()},
+            retry_after=1
+        )
+    
+    # Simulate successful API response
+    return {"status": "success", "data": {"timestamp": time.time()}}
+
+# Example 4: Using the ErrorHandler context manager
+def process_product(product_id: int) -> Dict[str, Any]:
+    """
+    Process a product by ID.
+    
+    Args:
+        product_id: Product ID to process
+        
+    Returns:
+        Processed product data
+    """
     with ErrorHandler(
-        error_types=[ConnectionError, ValueError],
-        default={"status": "failed", "reason": "Payment processing error"},
-        context={"payment_id": payment_id, "amount": amount}
+        error_types=[ValidationError, KeyError, TypeError],
+        default={"status": "error", "message": "Failed to process product"},
+        log_error=True,
+        context={"product_id": product_id}
     ) as handler:
-        # Simulate payment processing
-        if amount <= 0:
-            raise ValueError("Amount must be positive")
+        # Find the product
+        product = None
+        for p in SAMPLE_DATA["products"]:
+            if p["id"] == product_id:
+                product = p
+                break
         
-        if random.random() < 0.3:
-            raise ConnectionError("Payment gateway connection failed", {"gateway": "example"})
+        if not product:
+            raise ValidationError(f"Product not found with ID: {product_id}")
         
-        # Successful payment
-        return {"status": "success", "payment_id": payment_id, "amount": amount}
+        # Process the product
+        processed_product = {
+            "id": product["id"],
+            "name": product["name"],
+            "price": product["price"],
+            "price_with_tax": product["price"] * 1.1,
+            "currency": "USD",
+            "in_stock": True
+        }
+        
+        return processed_product
     
+    # If we get here, an error occurred
     if handler.error_occurred:
-        module_logger.warning(f"Payment {payment_id} failed: {handler.error}")
+        example_logger.warning(f"Error processing product {product_id}: {handler.error}")
     
     return handler.result
 
-# Example 5: Async error handling
-async def fetch_user_profile(user_id: str) -> Dict[str, Any]:
+# Example 5: Using async_error_handler for async functions
+async def fetch_user_async(user_id: int) -> Optional[Dict[str, Any]]:
     """
-    Fetch a user profile with async error handling.
+    Fetch a user asynchronously.
     
     Args:
+        user_id: User ID to fetch
+        
+    Returns:
+        User data if found, None otherwise
+    """
+    # Simulate async operation
+    await asyncio.sleep(0.1)
+    
+    # Simulate random failure
+    if random.random() < 0.3:
+        raise ConnectionError(f"Failed to fetch user with ID: {user_id}")
+    
+    # Find the user
+    for user in SAMPLE_DATA["users"]:
+        if user["id"] == user_id:
+            return user
+    
+    raise ValidationError(f"User not found with ID: {user_id}")
+
+async def process_users_async(user_ids: List[int]) -> List[Dict[str, Any]]:
+    """
+    Process multiple users asynchronously.
+    
+    Args:
+        user_ids: List of user IDs to process
+        
+    Returns:
+        List of processed user data
+    """
+    results = []
+    
+    for user_id in user_ids:
+        user = await async_error_handler(
+            fetch_user_async(user_id),
+            error_types=[ConnectionError, ValidationError],
+            default=None,
+            log_error=True,
+            retry_count=2,
+            retry_delay=0.5,
+            context={"user_id": user_id}
+        )
+        
+        if user:
+            results.append(user)
+    
+    return results
+
+# Example 6: Using log_execution decorator
+@log_execution(log_args=True, log_result=True, level="INFO")
+def calculate_total_price(products: List[Dict[str, Any]]) -> float:
+    """
+    Calculate the total price of products.
+    
+    Args:
+        products: List of products
+        
+    Returns:
+        Total price
+    """
+    return sum(product["price"] for product in products)
+
+# Example 7: Using log_method_calls decorator
+@log_method_calls(exclude=["__init__"], level="DEBUG")
+class UserService:
+    """Service for managing users."""
+    
+    def __init__(self):
+        """Initialize the user service."""
+        self.users = SAMPLE_DATA["users"]
+    
+    def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a user by ID.
+        
+        Args:
+            user_id: User ID to look up
+            
+        Returns:
+            User data if found, None otherwise
+        """
+        for user in self.users:
+            if user["id"] == user_id:
+                return user
+        return None
+    
+    def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a new user.
+        
+        Args:
+            user_data: User data to create
+            
+        Returns:
+            Created user data
+        """
+        # Validate user data
+        validate_user(user_data)
+        
+        # Check if user already exists
+        for user in self.users:
+            if user["id"] == user_data["id"]:
+                raise ValidationError(f"User already exists with ID: {user_data['id']}")
+        
+        # Add user
+        self.users.append(user_data)
+        return user_data
+    
+    def update_user(self, user_id: int, user_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Update a user.
+        
+        Args:
+            user_id: User ID to update
+            user_data: User data to update
+            
+        Returns:
+            Updated user data if found, None otherwise
+        """
+        for i, user in enumerate(self.users):
+            if user["id"] == user_id:
+                # Update user
+                updated_user = {**user, **user_data}
+                self.users[i] = updated_user
+                return updated_user
+        return None
+
+# Example 8: Using LogContext for structured logging
+def process_order(order_id: str, user_id: int, products: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Process an order.
+    
+    Args:
+        order_id: Order ID
         user_id: User ID
+        products: List of products
         
     Returns:
-        User profile data
+        Processed order data
     """
-    module_logger.info(f"Fetching profile for user {user_id}")
-    
-    # Simulate API call
-    async def api_call():
-        await asyncio.sleep(0.5)
-        if random.random() < 0.3:
-            raise ConnectionError("API connection failed", {"endpoint": "/users"})
-        return {"id": user_id, "name": "Example User", "email": "user@example.com"}
-    
-    # Use async error handler
-    result = await async_error_handler(
-        api_call(),
-        error_types=[ConnectionError, TimeoutError],
-        default={"id": user_id, "error": "Failed to fetch profile"},
-        context={"user_id": user_id, "operation": "fetch_profile"}
-    )
-    
-    return result
-
-# Example 6: Custom error class
-class PaymentError(WiseflowError):
-    """Error raised when a payment operation fails."""
-    
-    def __init__(
-        self, 
-        message: str, 
-        payment_id: Optional[str] = None, 
-        amount: Optional[float] = None, 
-        cause: Optional[Exception] = None
-    ):
-        details = {
-            "payment_id": payment_id,
-            "amount": amount
+    with LogContext(order_id=order_id, user_id=user_id, product_count=len(products)):
+        logger.info("Processing order")
+        
+        # Get user
+        user = get_user_by_id(user_id)
+        if not user:
+            logger.error(f"User not found with ID: {user_id}")
+            return {"status": "error", "message": "User not found"}
+        
+        # Calculate total
+        total = calculate_total_price(products)
+        
+        # Create order
+        order = {
+            "id": order_id,
+            "user": user,
+            "products": products,
+            "total": total,
+            "status": "processed",
+            "timestamp": time.time()
         }
-        super().__init__(message, details, cause)
-
-def process_refund(payment_id: str, amount: float) -> Dict[str, Any]:
-    """
-    Process a refund with custom error handling.
-    
-    Args:
-        payment_id: Payment ID
-        amount: Refund amount
         
-    Returns:
-        Refund result
-    """
-    module_logger.info(f"Processing refund for payment {payment_id}")
+        logger.info(f"Order processed successfully with total: {total}")
+        return order
+
+# Main function to run the examples
+async def main():
+    """Run the examples."""
+    example_logger.info("Starting error handling and logging examples")
+    
+    # Example 1: Basic error handling with WiseflowError classes
+    example_logger.info("Example 1: Basic error handling with WiseflowError classes")
+    try:
+        validate_user(SAMPLE_DATA["users"][0])
+        example_logger.info("User validation successful")
+    except ValidationError as e:
+        log_error(e)
     
     try:
-        # Validate refund
-        if amount <= 0:
-            raise ValueError("Refund amount must be positive")
-        
-        # Simulate refund processing
-        if random.random() < 0.3:
-            raise ConnectionError("Refund gateway connection failed", {"gateway": "example"})
-        
-        # Successful refund
-        return {"status": "success", "payment_id": payment_id, "refund_amount": amount}
+        validate_user("not a user")
+        example_logger.info("User validation successful")
+    except ValidationError as e:
+        log_error(e)
     
-    except Exception as e:
-        # Create and log custom error
-        error = PaymentError(
-            "Refund processing failed",
-            payment_id=payment_id,
-            amount=amount,
-            cause=e
-        )
-        error.log()
-        
-        # Return error response
-        return {"status": "failed", "reason": str(error), "payment_id": payment_id}
+    # Example 2: Using the handle_exceptions decorator
+    example_logger.info("Example 2: Using the handle_exceptions decorator")
+    user = get_user_by_id(1)
+    example_logger.info(f"Found user: {user}")
+    
+    user = get_user_by_id("not an id")
+    example_logger.info(f"Result with invalid ID: {user}")
+    
+    user = get_user_by_id(999)
+    example_logger.info(f"Result with non-existent ID: {user}")
+    
+    # Example 3: Using the retry decorator
+    example_logger.info("Example 3: Using the retry decorator")
+    try:
+        result = fetch_external_api("https://api.example.com/data")
+        example_logger.info(f"API result: {result}")
+    except ConnectionError as e:
+        log_error(e)
+    
+    # Example 4: Using the ErrorHandler context manager
+    example_logger.info("Example 4: Using the ErrorHandler context manager")
+    product = process_product(101)
+    example_logger.info(f"Processed product: {product}")
+    
+    product = process_product(999)
+    example_logger.info(f"Result with non-existent product ID: {product}")
+    
+    # Example 5: Using async_error_handler for async functions
+    example_logger.info("Example 5: Using async_error_handler for async functions")
+    users = await process_users_async([1, 2, 3, 999])
+    example_logger.info(f"Processed users: {users}")
+    
+    # Example 6: Using log_execution decorator
+    example_logger.info("Example 6: Using log_execution decorator")
+    total = calculate_total_price(SAMPLE_DATA["products"])
+    example_logger.info(f"Total price: {total}")
+    
+    # Example 7: Using log_method_calls decorator
+    example_logger.info("Example 7: Using log_method_calls decorator")
+    user_service = UserService()
+    user = user_service.get_user(1)
+    example_logger.info(f"Found user: {user}")
+    
+    try:
+        new_user = user_service.create_user({
+            "id": 4,
+            "name": "Dave",
+            "email": "dave@example.com"
+        })
+        example_logger.info(f"Created user: {new_user}")
+    except ValidationError as e:
+        log_error(e)
+    
+    updated_user = user_service.update_user(1, {"name": "Alice Smith"})
+    example_logger.info(f"Updated user: {updated_user}")
+    
+    # Example 8: Using LogContext for structured logging
+    example_logger.info("Example 8: Using LogContext for structured logging")
+    order = process_order("ORD-123", 1, SAMPLE_DATA["products"])
+    example_logger.info(f"Processed order: {order}")
+    
+    example_logger.info("All examples completed")
 
-# Main function to run all examples
-async def main():
-    """Run all examples."""
-    module_logger.info("Starting error handling and logging examples")
-    
-    # Example 1: Basic logging
-    basic_logging_example()
-    
-    # Example 2: Contextual logging
-    contextual_logging_example("user-123", "login")
-    
-    # Example 3: Error handling with decorator
-    valid_data = {"name": "John", "age": 30, "email": "john@example.com"}
-    invalid_data = {"age": "thirty"}
-    
-    module_logger.info("Validating valid user data")
-    result1 = validate_user_data(valid_data)
-    module_logger.info(f"Validation result: {result1}")
-    
-    module_logger.info("Validating invalid user data")
-    result2 = validate_user_data(invalid_data)
-    module_logger.info(f"Validation result: {result2}")
-    
-    # Example 4: Error handling with context manager
-    module_logger.info("Processing payments")
-    payment1 = process_payment("payment-123", 100.0)
-    payment2 = process_payment("payment-456", -50.0)
-    module_logger.info(f"Payment 1 result: {payment1}")
-    module_logger.info(f"Payment 2 result: {payment2}")
-    
-    # Example 5: Async error handling
-    module_logger.info("Fetching user profiles")
-    profile1 = await fetch_user_profile("user-123")
-    profile2 = await fetch_user_profile("user-456")
-    module_logger.info(f"Profile 1: {profile1}")
-    module_logger.info(f"Profile 2: {profile2}")
-    
-    # Example 6: Custom error class
-    module_logger.info("Processing refunds")
-    refund1 = process_refund("payment-123", 50.0)
-    refund2 = process_refund("payment-456", -25.0)
-    module_logger.info(f"Refund 1 result: {refund1}")
-    module_logger.info(f"Refund 2 result: {refund2}")
-    
-    module_logger.info("Finished error handling and logging examples")
-
-# Run the examples
 if __name__ == "__main__":
     asyncio.run(main())
 

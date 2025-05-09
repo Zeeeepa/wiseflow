@@ -10,9 +10,13 @@ It uses loguru for all logging needs and provides consistent formatting and conf
 import os
 import sys
 import json
+import socket
+import platform
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, List
+from typing import Dict, Any, Optional, Union, List, Callable
 from datetime import datetime
+from functools import wraps
+import asyncio
 
 from loguru import logger
 
@@ -39,6 +43,16 @@ DEFAULT_FORMAT = (
     "{extra}"
 )
 
+# Enhanced log format with more context
+ENHANCED_FORMAT = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+    "<level>{level: <8}</level> | "
+    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+    "<magenta>{process.name}[{process.id}]</magenta>:<yellow>{thread.name}</yellow> | "
+    "<level>{message}</level> | "
+    "{extra}"
+)
+
 # JSON log format for structured logging
 JSON_FORMAT = lambda record: json.dumps({
     "timestamp": record["time"].strftime("%Y-%m-%d %H:%M:%S.%f"),
@@ -48,7 +62,10 @@ JSON_FORMAT = lambda record: json.dumps({
     "function": record["function"],
     "line": record["line"],
     "process_id": record["process"].id,
+    "process_name": record["process"].name,
     "thread_id": record["thread"].id,
+    "thread_name": record["thread"].name,
+    "hostname": socket.gethostname(),
     "extra": record["extra"]
 })
 
@@ -61,7 +78,9 @@ def configure_logging(
     structured_logging: bool = False,
     rotation: str = "50 MB",
     retention: str = "10 days",
-    log_format: str = None
+    log_format: str = None,
+    enhanced_format: bool = False,
+    include_system_info: bool = True
 ) -> None:
     """
     Configure the logging system.
@@ -76,6 +95,8 @@ def configure_logging(
         rotation: When to rotate log files (default: 50 MB)
         retention: How long to keep log files (default: 10 days)
         log_format: Custom log format string
+        enhanced_format: Whether to use enhanced format with more context
+        include_system_info: Whether to include system information in logs
     """
     # Remove default handlers
     logger.remove()
@@ -91,7 +112,22 @@ def configure_logging(
     
     # Determine log format
     if log_format is None:
-        log_format = JSON_FORMAT if structured_logging else DEFAULT_FORMAT
+        if structured_logging:
+            log_format = JSON_FORMAT
+        elif enhanced_format:
+            log_format = ENHANCED_FORMAT
+        else:
+            log_format = DEFAULT_FORMAT
+    
+    # Add system info to logger context if requested
+    if include_system_info:
+        system_info = {
+            "hostname": socket.gethostname(),
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "app_name": app_name
+        }
+        logger = logger.bind(**system_info)
     
     # Add console handler if requested
     if log_to_console:
@@ -140,6 +176,20 @@ def configure_logging(
             diagnose=True,
             filter=lambda record: record["level"].no >= LOG_LEVELS["ERROR"]
         )
+        
+        # Add separate log file for each level if configured
+        if config.get("SEPARATE_LOG_FILES_BY_LEVEL", False):
+            for level in ["DEBUG", "INFO", "WARNING"]:
+                level_log_file = os.path.join(log_dir, f"{app_name}_{level.lower()}.log")
+                logger.add(
+                    level_log_file,
+                    format=log_format,
+                    level=level,
+                    rotation=rotation,
+                    retention=retention,
+                    compression="zip",
+                    filter=lambda record, level=level: record["level"].name == level
+                )
 
 def get_logger(name: str) -> logger:
     """
@@ -187,16 +237,129 @@ class LogContext:
         """Remove context when exiting the block."""
         logger.remove(self.token)
 
+def log_execution(log_args: bool = True, log_result: bool = False, level: str = "DEBUG"):
+    """
+    Decorator to log function execution with arguments and result.
+    
+    Args:
+        log_args: Whether to log function arguments
+        log_result: Whether to log function result
+        level: Log level to use
+        
+    Returns:
+        Decorator function
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            func_name = func.__qualname__
+            module_name = func.__module__
+            
+            # Create context
+            context = {
+                "function": func_name,
+                "module": module_name
+            }
+            
+            # Log function call with arguments if requested
+            if log_args:
+                # Safely convert args and kwargs to strings to avoid serialization issues
+                args_str = ", ".join([str(arg) for arg in args])
+                kwargs_str = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
+                params_str = f"{args_str}{', ' if args_str and kwargs_str else ''}{kwargs_str}"
+                
+                with_context(**context).log(level, f"Executing {func_name}({params_str})")
+            else:
+                with_context(**context).log(level, f"Executing {func_name}")
+            
+            # Execute function
+            result = func(*args, **kwargs)
+            
+            # Log result if requested
+            if log_result:
+                with_context(**context).log(level, f"{func_name} returned: {result}")
+            else:
+                with_context(**context).log(level, f"{func_name} completed")
+            
+            return result
+        
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            func_name = func.__qualname__
+            module_name = func.__module__
+            
+            # Create context
+            context = {
+                "function": func_name,
+                "module": module_name
+            }
+            
+            # Log function call with arguments if requested
+            if log_args:
+                # Safely convert args and kwargs to strings to avoid serialization issues
+                args_str = ", ".join([str(arg) for arg in args])
+                kwargs_str = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
+                params_str = f"{args_str}{', ' if args_str and kwargs_str else ''}{kwargs_str}"
+                
+                with_context(**context).log(level, f"Executing async {func_name}({params_str})")
+            else:
+                with_context(**context).log(level, f"Executing async {func_name}")
+            
+            # Execute function
+            result = await func(*args, **kwargs)
+            
+            # Log result if requested
+            if log_result:
+                with_context(**context).log(level, f"Async {func_name} returned: {result}")
+            else:
+                with_context(**context).log(level, f"Async {func_name} completed")
+            
+            return result
+        
+        # Return appropriate wrapper based on function type
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return wrapper
+    
+    return decorator
+
+def log_method_calls(cls=None, *, exclude=None, level="DEBUG"):
+    """
+    Class decorator to log all method calls.
+    
+    Args:
+        cls: Class to decorate
+        exclude: List of method names to exclude from logging
+        level: Log level to use
+        
+    Returns:
+        Decorated class
+    """
+    exclude = exclude or []
+    
+    def decorator(cls):
+        for name, method in cls.__dict__.items():
+            if callable(method) and name not in exclude and not name.startswith("__"):
+                setattr(cls, name, log_execution(level=level)(method))
+        return cls
+    
+    if cls is None:
+        return decorator
+    return decorator(cls)
+
 # Configure logging on module import
 configure_logging(
     log_level=config.get("LOG_LEVEL", "INFO"),
     log_to_console=True,
     log_to_file=True,
-    structured_logging=config.get("STRUCTURED_LOGGING", False)
+    structured_logging=config.get("STRUCTURED_LOGGING", False),
+    enhanced_format=config.get("ENHANCED_LOG_FORMAT", False),
+    include_system_info=config.get("INCLUDE_SYSTEM_INFO", True)
 )
 
 # Export commonly used functions and classes
 __all__ = [
-    "logger", "get_logger", "with_context", "LogContext", "configure_logging"
+    "logger", "get_logger", "with_context", "LogContext", "configure_logging",
+    "log_execution", "log_method_calls"
 ]
-
