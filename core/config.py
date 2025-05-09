@@ -40,7 +40,8 @@ Example usage:
 import os
 import json
 import logging
-from typing import Dict, Any, Optional, List, Union
+import base64
+from typing import Dict, Any, Optional, List, Union, Type, TypeVar, cast
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -52,13 +53,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
-env_path = Path(__file__).parent / '.env'
+env_path = Path(__file__).parent.parent / '.env'
 if env_path.exists():
+    logger.info(f"Loading environment variables from {env_path}")
     load_dotenv(env_path)
+else:
+    logger.warning(f"No .env file found at {env_path}")
+    # Try loading from core/.env as a fallback
+    env_path = Path(__file__).parent / '.env'
+    if env_path.exists():
+        logger.info(f"Loading environment variables from {env_path}")
+        load_dotenv(env_path)
 
-# Add to imports
-from cryptography.fernet import Fernet
-from base64 import b64encode
+# Import cryptography for sensitive value encryption
+try:
+    from cryptography.fernet import Fernet
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    logger.warning("cryptography package not available, sensitive values will not be encrypted")
+    CRYPTOGRAPHY_AVAILABLE = False
+
+# Type variable for configuration values
+T = TypeVar('T')
 
 class ConfigValidationError(Exception):
     """
@@ -87,8 +103,12 @@ def validate_config_value(key: str, value: Any) -> Any:
     Raises:
         ConfigValidationError: If validation fails
     """
+    # Skip validation for None values (they'll use defaults)
+    if value is None:
+        return None
+        
     # Memory thresholds
-    if key in ['memory_threshold_percent', 'memory_warning_percent']:
+    if key in ['MEMORY_THRESHOLD_PERCENT', 'MEMORY_WARNING_PERCENT']:
         try:
             float_value = float(value)
             if not (0 <= float_value <= 100):
@@ -98,7 +118,7 @@ def validate_config_value(key: str, value: Any) -> Any:
             raise ConfigValidationError(f"{key} must be a number")
     
     # Concurrency settings
-    if key in ['LLM_CONCURRENT_NUMBER', 'MAX_CONCURRENT_TASKS']:
+    if key in ['LLM_CONCURRENT_NUMBER', 'MAX_CONCURRENT_TASKS', 'MAX_CONCURRENT_REQUESTS']:
         try:
             int_value = int(value)
             if int_value < 1:
@@ -108,7 +128,8 @@ def validate_config_value(key: str, value: Any) -> Any:
             raise ConfigValidationError(f"{key} must be an integer")
     
     # Timeout settings
-    if key in ['CRAWLER_TIMEOUT', 'AUTO_SHUTDOWN_IDLE_TIME', 'AUTO_SHUTDOWN_CHECK_INTERVAL']:
+    if key in ['CRAWLER_TIMEOUT', 'AUTO_SHUTDOWN_IDLE_TIME', 'AUTO_SHUTDOWN_CHECK_INTERVAL',
+               'CRAWLER_MAX_DEPTH', 'CRAWLER_MAX_PAGES']:
         try:
             int_value = int(value)
             if int_value < 0:
@@ -117,16 +138,27 @@ def validate_config_value(key: str, value: Any) -> Any:
         except ValueError:
             raise ConfigValidationError(f"{key} must be an integer")
     
+    # Port validation
+    if key == 'API_PORT':
+        try:
+            int_value = int(value)
+            if not (1024 <= int_value <= 65535):
+                raise ConfigValidationError(f"{key} must be between 1024 and 65535")
+            return int_value
+        except ValueError:
+            raise ConfigValidationError(f"{key} must be an integer")
+    
     # Boolean settings
     if key in ['VERBOSE', 'AUTO_SHUTDOWN_ENABLED', 'ENABLE_MULTIMODAL', 
                'ENABLE_KNOWLEDGE_GRAPH', 'ENABLE_INSIGHTS', 'ENABLE_REFERENCES',
-               'STRUCTURED_LOGGING', 'LOG_TO_FILE', 'LOG_TO_CONSOLE']:
+               'STRUCTURED_LOGGING', 'LOG_TO_FILE', 'LOG_TO_CONSOLE',
+               'ENABLE_EVENT_SYSTEM', 'API_RELOAD']:
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
-            if value.lower() in ['true', 'yes', '1', 'on']:
+            if value.lower() in ['true', 'yes', '1', 'on', 'y']:
                 return True
-            if value.lower() in ['false', 'no', '0', 'off']:
+            if value.lower() in ['false', 'no', '0', 'off', 'n']:
                 return False
         raise ConfigValidationError(f"{key} must be a boolean value")
     
@@ -137,6 +169,15 @@ def validate_config_value(key: str, value: Any) -> Any:
             if value.upper() in valid_levels:
                 return value.upper()
             raise ConfigValidationError(f"{key} must be one of {valid_levels}")
+    
+    # URL validation for API bases
+    if key in ['LLM_API_BASE', 'PB_API_BASE']:
+        if not isinstance(value, str):
+            raise ConfigValidationError(f"{key} must be a string")
+        # Basic URL validation
+        if value and not (value.startswith('http://') or value.startswith('https://')):
+            raise ConfigValidationError(f"{key} must be a valid URL starting with http:// or https://")
+        return value
     
     # Return the value as is for other keys
     return value
@@ -153,89 +194,20 @@ class Config:
     Attributes:
         SENSITIVE_KEYS: Set of keys that contain sensitive values (e.g., API keys)
         DEFAULT_CONFIG: Dictionary of default configuration values
+        REQUIRED_KEYS: Set of keys that must be provided for the application to function
     """
     
+    # Keys that contain sensitive values (e.g., API keys)
     SENSITIVE_KEYS = {
         'LLM_API_KEY', 'PB_API_AUTH', 'ZHIPU_API_KEY',
         'EXA_API_KEY', 'WISEFLOW_API_KEY'
     }
     
-    def __init__(self):
-        """Initialize the configuration manager with empty configuration."""
-        self._config = {}
-        self._encrypted_values = {}
-        self._cipher = Fernet(Fernet.generate_key())
+    # Keys that are required for the application to function
+    REQUIRED_KEYS = {
+        'PRIMARY_MODEL', 'PB_API_AUTH'
+    }
     
-    def _encrypt_value(self, value: str) -> bytes:
-        """
-        Encrypt a sensitive value.
-        
-        Args:
-            value: Value to encrypt
-            
-        Returns:
-            Encrypted value as bytes
-        """
-        return self._cipher.encrypt(value.encode())
-        
-    def _decrypt_value(self, encrypted: bytes) -> str:
-        """
-        Decrypt a sensitive value.
-        
-        Args:
-            encrypted: Encrypted value as bytes
-            
-        Returns:
-            Decrypted value as string
-        """
-        return self._cipher.decrypt(encrypted).decode()
-        
-    def set(self, key: str, value: Any) -> None:
-        """
-        Set a configuration value with validation.
-        
-        This method validates the configuration value and encrypts it if it's
-        a sensitive value.
-        
-        Args:
-            key: Configuration key
-            value: Configuration value
-            
-        Raises:
-            ConfigValidationError: If validation fails
-        """
-        try:
-            validated_value = validate_config_value(key, value)
-            
-            if key in self.SENSITIVE_KEYS:
-                self._encrypted_values[key] = self._encrypt_value(str(validated_value))
-            else:
-                self._config[key] = validated_value
-                
-        except ConfigValidationError as e:
-            logger.warning(f"Configuration validation error: {e}")
-            raise
-    
-    def get(self, key: str, default: Any = None) -> Any:
-        """
-        Get a configuration value.
-        
-        This method returns the configuration value for the given key, or the
-        default value if the key is not found. If the key is a sensitive key,
-        the value is decrypted before being returned.
-        
-        Args:
-            key: Configuration key
-            default: Default value if key is not found
-            
-        Returns:
-            Configuration value, or default if key is not found
-        """
-        if key in self.SENSITIVE_KEYS:
-            encrypted = self._encrypted_values.get(key)
-            return self._decrypt_value(encrypted) if encrypted else default
-        return self._config.get(key, default)
-
     # Default configuration values
     DEFAULT_CONFIG = {
         # Project settings
@@ -243,7 +215,7 @@ class Config:
         "VERBOSE": False,
         
         # LLM settings
-        "LLM_API_BASE": "",
+        "LLM_API_BASE": "https://api.openai.com/v1",
         "LLM_API_KEY": "",
         "PRIMARY_MODEL": "",
         "SECONDARY_MODEL": "",
@@ -257,6 +229,12 @@ class Config:
         # Search settings
         "ZHIPU_API_KEY": "",
         "EXA_API_KEY": "",
+        
+        # API settings
+        "API_HOST": "0.0.0.0",
+        "API_PORT": 8000,
+        "API_RELOAD": False,
+        "WISEFLOW_API_KEY": "dev-api-key",
         
         # Crawler settings
         "CRAWLER_TIMEOUT": 60,
@@ -284,7 +262,11 @@ class Config:
         "LOG_DIR": "",  # Default will be PROJECT_DIR/logs
         "STRUCTURED_LOGGING": False,
         "LOG_ROTATION": "50 MB",
-        "LOG_RETENTION": "10 days"
+        "LOG_RETENTION": "10 days",
+        
+        # Memory management
+        "MEMORY_THRESHOLD_PERCENT": 80.0,
+        "MEMORY_WARNING_PERCENT": 70.0,
     }
     
     def __init__(self, config_file: Optional[str] = None):
@@ -298,7 +280,12 @@ class Config:
         Args:
             config_file: Optional path to a JSON configuration file
         """
+        # Initialize configuration with default values
         self._config = self.DEFAULT_CONFIG.copy()
+        self._encrypted_values = {}
+        
+        # Initialize encryption
+        self._setup_encryption()
         
         # Load configuration from file if provided
         if config_file:
@@ -307,21 +294,110 @@ class Config:
         # Override with environment variables
         self._load_from_env()
         
-        # Validate configuration
+        # Validate configuration and set derived values
         self._validate()
         
-        # Create project directory if needed
+        # Create project directory if it doesn't exist
         self._setup_project_dir()
         
-        # Log configuration (excluding sensitive values)
+        # Log configuration if verbose
         self._log_config()
+    
+    def _setup_encryption(self) -> None:
+        """
+        Set up encryption for sensitive values.
+        
+        This method sets up encryption for sensitive values using Fernet.
+        It tries to load an encryption key from the environment, or generates
+        a new one if none is provided.
+        """
+        if not CRYPTOGRAPHY_AVAILABLE:
+            return
+            
+        # Try to get encryption key from environment
+        env_key = os.environ.get('WISEFLOW_ENCRYPTION_KEY')
+        
+        if env_key:
+            try:
+                # Ensure the key is properly padded for base64 decoding
+                padding = 4 - (len(env_key) % 4)
+                if padding < 4:
+                    env_key += '=' * padding
+                
+                # Try to decode and use the key
+                key = base64.urlsafe_b64decode(env_key)
+                if len(key) != 32:  # Fernet keys must be 32 bytes
+                    raise ValueError("Invalid key length")
+                
+                self._cipher = Fernet(env_key)
+                logger.info("Using encryption key from environment")
+            except Exception as e:
+                logger.warning(f"Invalid encryption key from environment: {e}")
+                self._generate_new_key()
+        else:
+            self._generate_new_key()
+    
+    def _generate_new_key(self) -> None:
+        """
+        Generate a new encryption key.
+        
+        This method generates a new encryption key for sensitive values.
+        Note that this means encrypted values cannot be decrypted after restart
+        unless the key is persisted.
+        """
+        if not CRYPTOGRAPHY_AVAILABLE:
+            return
+            
+        key = Fernet.generate_key()
+        self._cipher = Fernet(key)
+        
+        # Log the key so it can be saved if needed
+        logger.warning(
+            "Generated new encryption key. To persist encrypted values, set "
+            "WISEFLOW_ENCRYPTION_KEY environment variable to: "
+            f"{key.decode()}"
+        )
+    
+    def _encrypt_value(self, value: str) -> bytes:
+        """
+        Encrypt a sensitive value.
+        
+        Args:
+            value: Value to encrypt
+            
+        Returns:
+            Encrypted value as bytes
+        """
+        if not CRYPTOGRAPHY_AVAILABLE:
+            # If encryption is not available, store as is but warn
+            logger.warning("Storing sensitive value without encryption")
+            return value.encode()
+            
+        return self._cipher.encrypt(value.encode())
+        
+    def _decrypt_value(self, encrypted: bytes) -> str:
+        """
+        Decrypt a sensitive value.
+        
+        Args:
+            encrypted: Encrypted value as bytes
+            
+        Returns:
+            Decrypted value as string
+        """
+        if not CRYPTOGRAPHY_AVAILABLE:
+            # If encryption is not available, return as is
+            return encrypted.decode()
+            
+        try:
+            return self._cipher.decrypt(encrypted).decode()
+        except Exception as e:
+            logger.error(f"Failed to decrypt value: {e}")
+            return ""
     
     def _load_from_file(self, config_file: str) -> None:
         """
         Load configuration from a JSON file.
-        
-        This method loads configuration from a JSON file and updates the
-        current configuration with the values from the file.
         
         Args:
             config_file: Path to the JSON configuration file
@@ -329,7 +405,15 @@ class Config:
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
                 file_config = json.load(f)
-                self._config.update(file_config)
+                
+                # Validate and convert values
+                for key, value in file_config.items():
+                    try:
+                        validated_value = validate_config_value(key, value)
+                        self._config[key] = validated_value
+                    except ConfigValidationError as e:
+                        logger.warning(f"Invalid configuration value in file: {e}")
+                
                 logger.info(f"Loaded configuration from {config_file}")
         except Exception as e:
             logger.error(f"Error loading configuration from {config_file}: {e}")
@@ -341,24 +425,22 @@ class Config:
         This method loads configuration from environment variables and updates
         the current configuration with the values from the environment.
         """
-        for key in self._config.keys():
+        # Process all keys in DEFAULT_CONFIG
+        for key in self.DEFAULT_CONFIG.keys():
             env_value = os.environ.get(key)
             if env_value is not None:
-                # Convert string values to appropriate types
-                if isinstance(self._config[key], bool):
-                    self._config[key] = env_value.lower() in ('true', 'yes', '1', 'y')
-                elif isinstance(self._config[key], int):
-                    try:
-                        self._config[key] = int(env_value)
-                    except ValueError:
-                        logger.warning(f"Invalid integer value for {key}: {env_value}")
-                elif isinstance(self._config[key], float):
-                    try:
-                        self._config[key] = float(env_value)
-                    except ValueError:
-                        logger.warning(f"Invalid float value for {key}: {env_value}")
-                else:
-                    self._config[key] = env_value
+                try:
+                    # Validate and convert the value
+                    validated_value = validate_config_value(key, env_value)
+                    
+                    # Store sensitive values encrypted
+                    if key in self.SENSITIVE_KEYS and validated_value:
+                        self._encrypted_values[key] = self._encrypt_value(str(validated_value))
+                    else:
+                        self._config[key] = validated_value
+                        
+                except ConfigValidationError as e:
+                    logger.warning(f"Invalid environment variable: {e}")
     
     def _validate(self) -> None:
         """
@@ -368,11 +450,9 @@ class Config:
         on other configuration values.
         """
         # Check required values
-        if not self._config["PRIMARY_MODEL"]:
-            logger.warning("PRIMARY_MODEL not set, this may cause issues with LLM functionality")
-        
-        if not self._config["PB_API_AUTH"]:
-            logger.warning("PB_API_AUTH not set, this may cause issues with database access")
+        missing_required = [key for key in self.REQUIRED_KEYS if not self.get(key)]
+        if missing_required:
+            logger.warning(f"Missing required configuration values: {', '.join(missing_required)}")
         
         # Set SECONDARY_MODEL to PRIMARY_MODEL if not specified
         if not self._config["SECONDARY_MODEL"]:
@@ -381,6 +461,10 @@ class Config:
         # Set VL_MODEL to PRIMARY_MODEL if not specified
         if not self._config["VL_MODEL"]:
             self._config["VL_MODEL"] = self._config["PRIMARY_MODEL"]
+        
+        # Set LOG_DIR to PROJECT_DIR/logs if not specified
+        if not self._config["LOG_DIR"]:
+            self._config["LOG_DIR"] = os.path.join(self._config["PROJECT_DIR"], "logs")
         
         # Validate LOG_LEVEL
         valid_log_levels = ['TRACE', 'DEBUG', 'INFO', 'SUCCESS', 'WARNING', 'ERROR', 'CRITICAL']
@@ -397,6 +481,7 @@ class Config:
         """
         if self._config["PROJECT_DIR"]:
             os.makedirs(self._config["PROJECT_DIR"], exist_ok=True)
+            logger.debug(f"Ensured project directory exists: {self._config['PROJECT_DIR']}")
     
     def _log_config(self) -> None:
         """
@@ -408,8 +493,8 @@ class Config:
         if self._config.get("VERBOSE", False):
             # Create a copy with sensitive values masked
             safe_config = self._config.copy()
-            for key in ["LLM_API_KEY", "PB_API_AUTH", "ZHIPU_API_KEY", "EXA_API_KEY"]:
-                if safe_config.get(key):
+            for key in self.SENSITIVE_KEYS:
+                if self.get(key):
                     safe_config[key] = "********"
             
             logger.info(f"Configuration: {json.dumps(safe_config, indent=2)}")
@@ -428,7 +513,64 @@ class Config:
         Returns:
             Configuration value, or default if key is not found
         """
+        # Check for sensitive keys
+        if key in self.SENSITIVE_KEYS:
+            encrypted = self._encrypted_values.get(key)
+            if encrypted:
+                return self._decrypt_value(encrypted)
+            return self._config.get(key, default)
+        
+        # Return regular configuration value
         return self._config.get(key, default)
+    
+    def get_typed(self, key: str, default: T, expected_type: Type[T] = None) -> T:
+        """
+        Get a configuration value with type checking.
+        
+        This method returns the configuration value for the given key, or the
+        default value if the key is not found or the value is not of the expected type.
+        
+        Args:
+            key: Configuration key
+            default: Default value if key is not found or invalid
+            expected_type: Expected type of the value (inferred from default if not provided)
+            
+        Returns:
+            Configuration value, or default if key is not found or invalid
+        """
+        value = self.get(key)
+        
+        if value is None:
+            return default
+            
+        # Determine expected type from default if not provided
+        if expected_type is None:
+            if default is None:
+                # Can't infer type from None
+                return value
+            expected_type = type(default)
+        
+        # Check if value is of expected type
+        if not isinstance(value, expected_type):
+            try:
+                # Try to convert value to expected type
+                if expected_type is bool and isinstance(value, str):
+                    if value.lower() in ('true', 'yes', '1', 'y', 'on'):
+                        return cast(T, True)
+                    if value.lower() in ('false', 'no', '0', 'n', 'off'):
+                        return cast(T, False)
+                
+                # Try standard conversion
+                converted_value = expected_type(value)
+                return cast(T, converted_value)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Configuration value for {key} is not of expected type {expected_type.__name__}, "
+                    f"using default: {default}"
+                )
+                return default
+        
+        return cast(T, value)
     
     def set(self, key: str, value: Any) -> None:
         """
@@ -440,7 +582,17 @@ class Config:
             key: Configuration key
             value: Configuration value
         """
-        self._config[key] = value
+        try:
+            validated_value = validate_config_value(key, value)
+            
+            if key in self.SENSITIVE_KEYS and validated_value:
+                self._encrypted_values[key] = self._encrypt_value(str(validated_value))
+            else:
+                self._config[key] = validated_value
+                
+        except ConfigValidationError as e:
+            logger.warning(f"Configuration validation error: {e}")
+            raise
     
     def as_dict(self) -> Dict[str, Any]:
         """
@@ -451,7 +603,16 @@ class Config:
         Returns:
             Configuration dictionary
         """
-        return self._config.copy()
+        # Create a copy of the configuration
+        config_dict = self._config.copy()
+        
+        # Add decrypted sensitive values
+        for key in self.SENSITIVE_KEYS:
+            encrypted = self._encrypted_values.get(key)
+            if encrypted:
+                config_dict[key] = self._decrypt_value(encrypted)
+        
+        return config_dict
     
     def save_to_file(self, filepath: str) -> bool:
         """
@@ -466,33 +627,57 @@ class Config:
             True if successful, False otherwise
         """
         try:
+            # Get configuration as dictionary
+            config_dict = self.as_dict()
+            
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(self._config, f, indent=2)
+                json.dump(config_dict, f, indent=2)
             logger.info(f"Configuration saved to {filepath}")
             return True
         except Exception as e:
             logger.error(f"Error saving configuration to {filepath}: {e}")
             return False
-
-def validate_config():
-    """
-    Validate all critical configuration settings.
     
-    This function validates all critical configuration settings and raises
-    a ValueError if any required settings are missing or invalid.
-    
-    Raises:
-        ValueError: If any required settings are missing or invalid
-    """
-    if not config.get("PRIMARY_MODEL"):
-        raise ValueError("PRIMARY_MODEL not set")
-    if not config.get("PB_API_AUTH"):
-        raise ValueError("PB_API_AUTH not set")
-    if not config.get("API_PORT") or not (1024 <= config.get("API_PORT", 8000) <= 65535):
-        logger.warning("Invalid API_PORT value, using default 8000")
-    if not config.get("API_HOST"):
-        logger.warning("API_HOST not set, using default 0.0.0.0")
+    def validate_all(self, raise_on_error: bool = False) -> List[str]:
+        """
+        Validate all configuration values.
+        
+        This method validates all configuration values and returns a list of
+        validation errors.
+        
+        Args:
+            raise_on_error: Whether to raise an exception on validation error
+            
+        Returns:
+            List of validation errors
+            
+        Raises:
+            ConfigValidationError: If raise_on_error is True and validation fails
+        """
+        errors = []
+        
+        # Check required values
+        for key in self.REQUIRED_KEYS:
+            if not self.get(key):
+                errors.append(f"Required configuration value missing: {key}")
+        
+        # Validate all values
+        for key, value in self._config.items():
+            try:
+                validate_config_value(key, value)
+            except ConfigValidationError as e:
+                errors.append(str(e))
+        
+        # Raise exception if requested
+        if errors and raise_on_error:
+            raise ConfigValidationError("\n".join(errors))
+        
+        return errors
 
+# Create a singleton instance for easy access
+config = Config()
+
+# Helper functions for type-safe configuration access
 def get_int_config(key: str, default: int) -> int:
     """
     Get an integer configuration value with validation.
@@ -507,14 +692,23 @@ def get_int_config(key: str, default: int) -> int:
     Returns:
         Integer configuration value, or default if key is not found or invalid
     """
-    try:
-        value = config.get(key)
-        if value is None:
-            return default
-        return int(value)
-    except (ValueError, TypeError):
-        logger.warning(f"Invalid integer value for {key}, using default {default}")
-        return default
+    return config.get_typed(key, default, int)
+
+def get_float_config(key: str, default: float) -> float:
+    """
+    Get a float configuration value with validation.
+    
+    This function gets a float configuration value with validation, returning
+    the default value if the key is not found or the value is invalid.
+    
+    Args:
+        key: Configuration key
+        default: Default value if key is not found or invalid
+        
+    Returns:
+        Float configuration value, or default if key is not found or invalid
+    """
+    return config.get_typed(key, default, float)
 
 def get_bool_config(key: str, default: bool) -> bool:
     """
@@ -530,17 +724,41 @@ def get_bool_config(key: str, default: bool) -> bool:
     Returns:
         Boolean configuration value, or default if key is not found or invalid
     """
-    value = config.get(key)
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in ('true', 'yes', '1', 'y')
-    return bool(value)
+    return config.get_typed(key, default, bool)
 
-# Create a singleton instance for easy access
-config = Config()
+def get_str_config(key: str, default: str = "") -> str:
+    """
+    Get a string configuration value with validation.
+    
+    This function gets a string configuration value with validation, returning
+    the default value if the key is not found or the value is invalid.
+    
+    Args:
+        key: Configuration key
+        default: Default value if key is not found or invalid
+        
+    Returns:
+        String configuration value, or default if key is not found or invalid
+    """
+    return config.get_typed(key, default, str)
+
+def validate_config(raise_on_error: bool = True) -> List[str]:
+    """
+    Validate all critical configuration settings.
+    
+    This function validates all critical configuration settings and returns
+    a list of validation errors.
+    
+    Args:
+        raise_on_error: Whether to raise an exception on validation error
+        
+    Returns:
+        List of validation errors
+        
+    Raises:
+        ConfigValidationError: If raise_on_error is True and validation fails
+    """
+    return config.validate_all(raise_on_error)
 
 # Export commonly used configuration values
 PROJECT_DIR = config.get("PROJECT_DIR", "work_dir")
@@ -577,3 +795,8 @@ LOG_DIR = config.get("LOG_DIR", os.path.join(PROJECT_DIR, "logs"))
 STRUCTURED_LOGGING = get_bool_config("STRUCTURED_LOGGING", False)
 LOG_ROTATION = config.get("LOG_ROTATION", "50 MB")
 LOG_RETENTION = config.get("LOG_RETENTION", "10 days")
+
+# Memory management
+MEMORY_THRESHOLD_PERCENT = get_float_config("MEMORY_THRESHOLD_PERCENT", 80.0)
+MEMORY_WARNING_PERCENT = get_float_config("MEMORY_WARNING_PERCENT", 70.0)
+
