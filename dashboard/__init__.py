@@ -2,11 +2,12 @@ import os
 import time
 import json
 import uuid
-from get_report import get_report, logger, pb
-from get_search import search_insight
-from tranlsation_volcengine import text_translate
+import logging
 
+# Configure logger
+logger = logging.getLogger(__name__)
 
+# Create BackendService class
 class BackendService:
     def __init__(self):
         self.project_dir = os.environ.get("PROJECT_DIR", "")
@@ -22,6 +23,9 @@ class BackendService:
 
     def report(self, insight_id: str, topics: list[str], comment: str) -> dict:
         logger.debug(f'got new report request insight_id {insight_id}')
+        # Import here to avoid circular imports
+        from .get_report import get_report, pb
+        
         insight = pb.read('agents', filter=f'id="{insight_id}"')
         if not insight:
             logger.error(f'insight {insight_id} not found')
@@ -71,6 +75,12 @@ class BackendService:
         """
         just for chinese users
         """
+        # Import here to avoid circular imports
+        from .tranlsation_volcengine import text_translate
+        from core.utils.pb_api import PbTalker
+        
+        pb = PbTalker(logger)
+        
         logger.debug(f'got new translate task {article_ids}')
         flag = 11
         msg = ''
@@ -142,7 +152,13 @@ class BackendService:
         return self.build_out(flag, msg)
 
     def more_search(self, insight_id: str) -> dict:
-        logger.debug(f'got search request for insight： {insight_id}')
+        # Import here to avoid circular imports
+        from .get_search import search_insight
+        from core.utils.pb_api import PbTalker
+        
+        pb = PbTalker(logger)
+        
+        logger.debug(f'got search request for insight：{insight_id}')
         insight = pb.read('agents', filter=f'id="{insight_id}"')
         if not insight:
             logger.error(f'insight {insight_id} not found')

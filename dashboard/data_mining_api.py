@@ -2,8 +2,10 @@
 Data Mining API endpoints for the dashboard.
 """
 
-from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form, BackgroundTasks, Request, status
+from fastapi.responses import JSONResponse
 from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, validator
 import logging
 import json
 import os
@@ -16,6 +18,38 @@ logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
+
+# Standardized error response model
+class ErrorResponse(BaseModel):
+    status: str = "error"
+    message: str
+    code: int
+    details: Optional[Dict[str, Any]] = None
+
+# Standardized success response model
+class SuccessResponse(BaseModel):
+    status: str = "success"
+    data: Any
+    message: Optional[str] = None
+
+# Request validation models
+class SearchParamsModel(BaseModel):
+    query: Optional[str] = None
+    filters: Optional[Dict[str, Any]] = None
+    sort_by: Optional[str] = None
+    limit: Optional[int] = None
+    
+    @validator('limit')
+    def validate_limit(cls, v):
+        if v is not None and (v < 1 or v > 1000):
+            raise ValueError("limit must be between 1 and 1000")
+        return v
+
+class TemplateModel(BaseModel):
+    name: str
+    type: str
+    parameters: Dict[str, Any]
+    description: Optional[str] = None
 
 @router.post("/api/data-mining/tasks")
 async def create_data_mining_task(
@@ -41,16 +75,42 @@ async def create_data_mining_task(
     """
     try:
         # Parse search parameters
-        search_params_dict = json.loads(search_params)
+        try:
+            search_params_dict = json.loads(search_params)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON in search_params"
+            )
+        
+        # Validate search parameters
+        try:
+            SearchParamsModel(**search_params_dict)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid search parameters: {str(e)}"
+            )
         
         # Save context files if provided
         saved_files = []
         if context_files:
-            os.makedirs("uploads", exist_ok=True)
+            upload_dir = os.path.join(os.getcwd(), "uploads")
+            os.makedirs(upload_dir, exist_ok=True)
+            
             for file in context_files:
-                file_path = f"uploads/{file.filename}"
+                # Sanitize filename to prevent path traversal
+                safe_filename = os.path.basename(file.filename)
+                file_path = os.path.join(upload_dir, f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{safe_filename}")
+                
                 with open(file_path, "wb") as f:
-                    f.write(await file.read())
+                    content = await file.read()
+                    if len(content) > 10 * 1024 * 1024:  # 10MB limit
+                        raise HTTPException(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail="File too large (max 10MB)"
+                        )
+                    f.write(content)
                 saved_files.append(file_path)
         
         # Create the task
@@ -65,15 +125,19 @@ async def create_data_mining_task(
         # Run the task in the background
         background_tasks.add_task(data_mining_manager.run_task, task_id)
         
-        return {
-            "status": "success",
-            "message": f"Data mining task created successfully",
-            "task_id": task_id
-        }
+        return SuccessResponse(
+            data={"task_id": task_id},
+            message="Data mining task created successfully"
+        ).dict()
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error creating data mining task: {e}")
-        raise HTTPException(status_code=500, detail=f"Error creating data mining task: {str(e)}")
+        logger.error(f"Error creating data mining task: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating data mining task: {str(e)}"
+        )
 
 @router.get("/api/data-mining/tasks")
 async def get_data_mining_tasks(
@@ -89,19 +153,31 @@ async def get_data_mining_tasks(
         Dictionary containing the list of tasks
     """
     try:
+        # Validate status if provided
+        if status and status not in ["active", "inactive", "running", "error", "completed"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid status filter. Must be one of: active, inactive, running, error, completed"
+            )
+        
         tasks = await data_mining_manager.get_all_tasks(status)
         
         # Convert tasks to dictionaries
         task_dicts = [task.to_dict() for task in tasks]
         
-        return {
-            "status": "success",
-            "tasks": task_dicts
-        }
+        return SuccessResponse(
+            data={"tasks": task_dicts},
+            message=f"Retrieved {len(task_dicts)} tasks"
+        ).dict()
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting data mining tasks: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting data mining tasks: {str(e)}")
+        logger.error(f"Error getting data mining tasks: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting data mining tasks: {str(e)}"
+        )
 
 @router.post("/api/data-mining/templates")
 async def save_data_mining_template(
@@ -118,25 +194,30 @@ async def save_data_mining_template(
     """
     try:
         # Validate template data
-        if "name" not in template_data:
-            raise ValueError("Template name is required")
+        try:
+            TemplateModel(**template_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid template data: {str(e)}"
+            )
         
         # Save the template
         template_id = await data_mining_manager.save_template(template_data)
         
-        return {
-            "status": "success",
-            "message": "Template saved successfully",
-            "template_id": template_id
-        }
+        return SuccessResponse(
+            data={"template_id": template_id},
+            message="Template saved successfully"
+        ).dict()
     
-    except ValueError as e:
-        logger.error(f"Invalid template data: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error saving template: {e}")
-        raise HTTPException(status_code=500, detail=f"Error saving template: {str(e)}")
+        logger.error(f"Error saving template: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error saving template: {str(e)}"
+        )
 
 @router.get("/api/data-mining/templates")
 async def get_data_mining_templates(
@@ -154,14 +235,17 @@ async def get_data_mining_templates(
     try:
         templates = await data_mining_manager.get_templates(template_type)
         
-        return {
-            "status": "success",
-            "templates": templates
-        }
+        return SuccessResponse(
+            data={"templates": templates},
+            message=f"Retrieved {len(templates)} templates"
+        ).dict()
     
     except Exception as e:
-        logger.error(f"Error getting templates: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting templates: {str(e)}")
+        logger.error(f"Error getting templates: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting templates: {str(e)}"
+        )
 
 @router.post("/api/data-mining/preview")
 async def preview_data_mining_task(
@@ -180,16 +264,21 @@ async def preview_data_mining_task(
         # Generate preview
         preview_data = await data_mining_manager.generate_preview(search_params)
         
-        return {
-            "status": "success",
-            "estimated_repos": preview_data.get("estimated_repos", 0),
-            "estimated_files": preview_data.get("estimated_files", 0),
-            "estimated_time": preview_data.get("estimated_time", "Unknown")
-        }
+        return SuccessResponse(
+            data={
+                "estimated_repos": preview_data.get("estimated_repos", 0),
+                "estimated_files": preview_data.get("estimated_files", 0),
+                "estimated_time": preview_data.get("estimated_time", "Unknown")
+            },
+            message="Preview generated successfully"
+        ).dict()
     
     except Exception as e:
-        logger.error(f"Error generating preview: {e}")
-        raise HTTPException(status_code=500, detail=f"Error generating preview: {str(e)}")
+        logger.error(f"Error generating preview: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating preview: {str(e)}"
+        )
 
 @router.get("/api/data-mining/tasks/{task_id}")
 async def get_data_mining_task(
@@ -210,16 +299,19 @@ async def get_data_mining_task(
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         
-        return {
-            "status": "success",
-            "task": task.to_dict()
-        }
+        return SuccessResponse(
+            data={"task": task.to_dict()},
+            message="Task retrieved successfully"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting data mining task: {str(e)}")
+        logger.error(f"Error getting data mining task {task_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting data mining task: {str(e)}"
+        )
 
 @router.put("/api/data-mining/tasks/{task_id}")
 async def update_data_mining_task(
@@ -242,16 +334,19 @@ async def update_data_mining_task(
         if not success:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         
-        return {
-            "status": "success",
-            "message": f"Task {task_id} updated successfully"
-        }
+        return SuccessResponse(
+            data={"message": f"Task {task_id} updated successfully"},
+            message="Task updated successfully"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error updating data mining task: {str(e)}")
+        logger.error(f"Error updating data mining task {task_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating data mining task: {str(e)}"
+        )
 
 @router.delete("/api/data-mining/tasks/{task_id}")
 async def delete_data_mining_task(
@@ -272,16 +367,19 @@ async def delete_data_mining_task(
         if not success:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         
-        return {
-            "status": "success",
-            "message": f"Task {task_id} deleted successfully"
-        }
+        return SuccessResponse(
+            data={"message": f"Task {task_id} deleted successfully"},
+            message="Task deleted successfully"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error deleting data mining task: {str(e)}")
+        logger.error(f"Error deleting data mining task {task_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting data mining task: {str(e)}"
+        )
 
 @router.post("/api/data-mining/tasks/{task_id}/toggle")
 async def toggle_data_mining_task(
@@ -307,16 +405,19 @@ async def toggle_data_mining_task(
         
         status = "active" if active else "inactive"
         
-        return {
-            "status": "success",
-            "message": f"Task {task_id} set to {status} successfully"
-        }
+        return SuccessResponse(
+            data={"message": f"Task {task_id} set to {status} successfully"},
+            message=f"Task {task_id} set to {status} successfully"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error toggling data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error toggling data mining task: {str(e)}")
+        logger.error(f"Error toggling data mining task {task_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error toggling data mining task: {str(e)}"
+        )
 
 @router.post("/api/data-mining/tasks/{task_id}/run")
 async def run_data_mining_task(
@@ -341,16 +442,19 @@ async def run_data_mining_task(
         # Run the task in the background
         background_tasks.add_task(data_mining_manager.run_task, task_id)
         
-        return {
-            "status": "success",
-            "message": f"Task {task_id} started running"
-        }
+        return SuccessResponse(
+            data={"message": f"Task {task_id} started running"},
+            message="Task started running"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error running data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error running data mining task: {str(e)}")
+        logger.error(f"Error running data mining task {task_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error running data mining task: {str(e)}"
+        )
 
 @router.get("/api/data-mining/tasks/{task_id}/results")
 async def get_data_mining_task_results(
@@ -371,16 +475,19 @@ async def get_data_mining_task_results(
         if "error" in results and results["error"] == "Task not found":
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         
-        return {
-            "status": "success",
-            "results": results
-        }
+        return SuccessResponse(
+            data={"results": results},
+            message="Task results retrieved successfully"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting data mining task results {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting data mining task results: {str(e)}")
+        logger.error(f"Error getting data mining task results {task_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting data mining task results: {str(e)}"
+        )
 
 @router.post("/api/data-mining/tasks/{task_id}/analyze")
 async def analyze_data_mining_task(
@@ -405,16 +512,19 @@ async def analyze_data_mining_task(
         # Run the analysis in the background
         background_tasks.add_task(data_mining_manager.analyze_task_results, task_id)
         
-        return {
-            "status": "success",
-            "message": f"Analysis for task {task_id} started"
-        }
+        return SuccessResponse(
+            data={"message": f"Analysis for task {task_id} started"},
+            message="Analysis started"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error analyzing data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error analyzing data mining task: {str(e)}")
+        logger.error(f"Error analyzing data mining task {task_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error analyzing data mining task: {str(e)}"
+        )
 
 @router.post("/api/data-mining/tasks/{task_id}/interconnect")
 async def interconnect_tasks(
@@ -462,17 +572,19 @@ async def interconnect_tasks(
             description=interconnection_data.get('description', '')
         )
         
-        return {
-            "status": "success",
-            "message": f"Tasks interconnected successfully",
-            "interconnection_id": interconnection_id
-        }
+        return SuccessResponse(
+            data={"interconnection_id": interconnection_id},
+            message="Tasks interconnected successfully"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error interconnecting tasks: {e}")
-        raise HTTPException(status_code=500, detail=f"Error interconnecting tasks: {str(e)}")
+        logger.error(f"Error interconnecting tasks: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interconnecting tasks: {str(e)}"
+        )
 
 @router.get("/api/data-mining/interconnections")
 async def get_task_interconnections() -> Dict[str, Any]:
@@ -485,14 +597,17 @@ async def get_task_interconnections() -> Dict[str, Any]:
     try:
         interconnections = await data_mining_manager.get_all_task_interconnections()
         
-        return {
-            "status": "success",
-            "interconnections": interconnections
-        }
+        return SuccessResponse(
+            data={"interconnections": interconnections},
+            message="Retrieved interconnections"
+        ).dict()
     
     except Exception as e:
-        logger.error(f"Error getting task interconnections: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting task interconnections: {str(e)}")
+        logger.error(f"Error getting task interconnections: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting task interconnections: {str(e)}"
+        )
 
 @router.delete("/api/data-mining/interconnections/{interconnection_id}")
 async def delete_task_interconnection(
@@ -513,13 +628,16 @@ async def delete_task_interconnection(
         if not success:
             raise HTTPException(status_code=404, detail=f"Interconnection {interconnection_id} not found")
         
-        return {
-            "status": "success",
-            "message": f"Interconnection {interconnection_id} deleted successfully"
-        }
+        return SuccessResponse(
+            data={"message": f"Interconnection {interconnection_id} deleted successfully"},
+            message="Interconnection deleted successfully"
+        ).dict()
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting task interconnection {interconnection_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error deleting task interconnection: {str(e)}")
+        logger.error(f"Error deleting task interconnection {interconnection_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting task interconnection: {str(e)}"
+        )

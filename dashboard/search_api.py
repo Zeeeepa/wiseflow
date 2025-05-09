@@ -2,14 +2,113 @@
 Search API endpoints for the dashboard.
 """
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, status, Request
+from fastapi.responses import JSONResponse
 from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, validator
 import logging
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
+
+# Standardized error response model
+class ErrorResponse(BaseModel):
+    status: str = "error"
+    message: str
+    code: int
+    details: Optional[Dict[str, Any]] = None
+
+# Standardized success response model
+class SuccessResponse(BaseModel):
+    status: str = "success"
+    data: Any
+    message: Optional[str] = None
+
+# Request validation models
+class GitHubSearchRequest(BaseModel):
+    search_goal: str
+    search_description: str
+    search_strategy: str
+    search_priority: Optional[str] = "relevance"
+    
+    @validator('search_strategy')
+    def validate_search_strategy(cls, v):
+        valid_strategies = ["code", "repositories", "issues", "users"]
+        if v not in valid_strategies:
+            raise ValueError(f"search_strategy must be one of {valid_strategies}")
+        return v
+    
+    @validator('search_priority')
+    def validate_search_priority(cls, v):
+        valid_priorities = ["relevance", "stars", "forks", "updated", "created"]
+        if v not in valid_priorities:
+            raise ValueError(f"search_priority must be one of {valid_priorities}")
+        return v
+
+class ArxivSearchRequest(BaseModel):
+    search_goal: str
+    search_description: str
+    search_category: Optional[str] = None
+    search_sort: Optional[str] = "relevance"
+    
+    @validator('search_sort')
+    def validate_search_sort(cls, v):
+        valid_sorts = ["relevance", "lastUpdatedDate", "submittedDate"]
+        if v not in valid_sorts:
+            raise ValueError(f"search_sort must be one of {valid_sorts}")
+        return v
+
+class WebSearchRequest(BaseModel):
+    search_goal: str
+    search_description: str
+    search_type: Optional[str] = "general"
+    search_timeframe: Optional[str] = "all"
+    
+    @validator('search_type')
+    def validate_search_type(cls, v):
+        valid_types = ["general", "news", "blogs", "academic"]
+        if v not in valid_types:
+            raise ValueError(f"search_type must be one of {valid_types}")
+        return v
+    
+    @validator('search_timeframe')
+    def validate_search_timeframe(cls, v):
+        valid_timeframes = ["all", "day", "week", "month", "year"]
+        if v not in valid_timeframes:
+            raise ValueError(f"search_timeframe must be one of {valid_timeframes}")
+        return v
+
+class YouTubeSearchRequest(BaseModel):
+    search_goal: str
+    search_description: str
+    search_type: Optional[str] = "video"
+    search_duration: Optional[str] = "any"
+    
+    @validator('search_type')
+    def validate_search_type(cls, v):
+        valid_types = ["video", "channel", "playlist"]
+        if v not in valid_types:
+            raise ValueError(f"search_type must be one of {valid_types}")
+        return v
+    
+    @validator('search_duration')
+    def validate_search_duration(cls, v):
+        valid_durations = ["any", "short", "medium", "long"]
+        if v not in valid_durations:
+            raise ValueError(f"search_duration must be one of {valid_durations}")
+        return v
+
+class SearchToggleRequest(BaseModel):
+    action: str
+    
+    @validator('action')
+    def validate_action(cls, v):
+        valid_actions = ["on", "off", "remove"]
+        if v not in valid_actions:
+            raise ValueError(f"action must be one of {valid_actions}")
+        return v
 
 @router.post("/api/search/github")
 async def search_github(
@@ -29,18 +128,31 @@ async def search_github(
         Dictionary containing search results
     """
     try:
+        # Validate request data
+        try:
+            GitHubSearchRequest(**search_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid search parameters: {str(e)}"
+            )
+        
         # In a real implementation, this would connect to GitHub API
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "message": "GitHub search started successfully",
-            "search_id": "github_search_123"
-        }
+        return SuccessResponse(
+            data={"search_id": "github_search_123"},
+            message="GitHub search started successfully"
+        ).dict()
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error searching GitHub: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching GitHub: {str(e)}")
+        logger.error(f"Error searching GitHub: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error searching GitHub: {str(e)}"
+        )
 
 @router.post("/api/search/arxiv")
 async def search_arxiv(
@@ -60,18 +172,31 @@ async def search_arxiv(
         Dictionary containing search results
     """
     try:
+        # Validate request data
+        try:
+            ArxivSearchRequest(**search_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid search parameters: {str(e)}"
+            )
+        
         # In a real implementation, this would connect to Arxiv API
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "message": "Arxiv search started successfully",
-            "search_id": "arxiv_search_123"
-        }
+        return SuccessResponse(
+            data={"search_id": "arxiv_search_123"},
+            message="Arxiv search started successfully"
+        ).dict()
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error searching Arxiv: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching Arxiv: {str(e)}")
+        logger.error(f"Error searching Arxiv: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error searching Arxiv: {str(e)}"
+        )
 
 @router.post("/api/search/web")
 async def search_web(
@@ -91,18 +216,31 @@ async def search_web(
         Dictionary containing search results
     """
     try:
+        # Validate request data
+        try:
+            WebSearchRequest(**search_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid search parameters: {str(e)}"
+            )
+        
         # In a real implementation, this would connect to a web search API
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "message": "Web search started successfully",
-            "search_id": "web_search_123"
-        }
+        return SuccessResponse(
+            data={"search_id": "web_search_123"},
+            message="Web search started successfully"
+        ).dict()
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error searching web: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching web: {str(e)}")
+        logger.error(f"Error searching web: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error searching web: {str(e)}"
+        )
 
 @router.post("/api/search/youtube")
 async def search_youtube(
@@ -122,18 +260,31 @@ async def search_youtube(
         Dictionary containing search results
     """
     try:
+        # Validate request data
+        try:
+            YouTubeSearchRequest(**search_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid search parameters: {str(e)}"
+            )
+        
         # In a real implementation, this would connect to YouTube API
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "message": "YouTube search started successfully",
-            "search_id": "youtube_search_123"
-        }
+        return SuccessResponse(
+            data={"search_id": "youtube_search_123"},
+            message="YouTube search started successfully"
+        ).dict()
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error searching YouTube: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching YouTube: {str(e)}")
+        logger.error(f"Error searching YouTube: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error searching YouTube: {str(e)}"
+        )
 
 @router.get("/api/search/listings")
 async def get_search_listings() -> Dict[str, Any]:
@@ -178,14 +329,17 @@ async def get_search_listings() -> Dict[str, Any]:
             }
         ]
         
-        return {
-            "status": "success",
-            "listings": listings
-        }
+        return SuccessResponse(
+            data={"listings": listings},
+            message="Search listings retrieved successfully"
+        ).dict()
     
     except Exception as e:
-        logger.error(f"Error getting search listings: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting search listings: {str(e)}")
+        logger.error(f"Error getting search listings: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting search listings: {str(e)}"
+        )
 
 @router.post("/api/search/toggle/{search_id}")
 async def toggle_search(
@@ -203,17 +357,31 @@ async def toggle_search(
         Dictionary containing the updated status
     """
     try:
+        # Validate request data
+        try:
+            SearchToggleRequest(**action)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid action: {str(e)}"
+            )
+        
         # In a real implementation, this would update the database
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "search_id": search_id,
-            "new_status": action.get("action", "unknown"),
-            "message": f"Search listing {search_id} {action.get('action', 'updated')} successfully"
-        }
+        return SuccessResponse(
+            data={
+                "search_id": search_id,
+                "new_status": action.get("action", "unknown")
+            },
+            message=f"Search listing {search_id} {action.get('action', 'updated')} successfully"
+        ).dict()
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error toggling search listing: {e}")
-        raise HTTPException(status_code=500, detail=f"Error toggling search listing: {str(e)}")
-
+        logger.error(f"Error toggling search listing: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error toggling search listing: {str(e)}"
+        )
