@@ -10,7 +10,9 @@ import asyncio
 import logging
 import uuid
 import concurrent.futures
-from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
+import threading
+import queue
+from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable, Tuple
 from datetime import datetime
 from enum import Enum, auto
 
@@ -45,10 +47,44 @@ class ThreadPoolManager:
         if self._initialized:
             return
             
+        # Get configuration
         self.max_workers = config.get("MAX_THREAD_WORKERS", os.cpu_count() or 4)
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
+        self.task_queue_size = config.get("TASK_QUEUE_SIZE", 1000)
+        self.worker_timeout = config.get("WORKER_TIMEOUT", 60)  # seconds
+        
+        # Create thread pool with a bounded work queue
+        self.task_queue = queue.Queue(maxsize=self.task_queue_size)
+        self.executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self.max_workers,
+            thread_name_prefix="wiseflow-worker"
+        )
+        
+        # Task tracking
         self.tasks: Dict[str, Dict[str, Any]] = {}
         self.futures: Dict[str, concurrent.futures.Future] = {}
+        self.priority_queues: Dict[TaskPriority, List[str]] = {
+            priority: [] for priority in TaskPriority
+        }
+        
+        # Locks for thread safety
+        self.task_lock = threading.RLock()
+        self.queue_lock = threading.RLock()
+        
+        # Worker management
+        self.active_workers = 0
+        self.max_active_workers = self.max_workers
+        self.worker_lock = threading.RLock()
+        
+        # Statistics
+        self.stats = {
+            "tasks_submitted": 0,
+            "tasks_completed": 0,
+            "tasks_failed": 0,
+            "tasks_cancelled": 0,
+            "avg_execution_time": 0.0,
+            "peak_active_workers": 0
+        }
+        self.stats_lock = threading.RLock()
         
         self._initialized = True
         
@@ -95,19 +131,27 @@ class ThreadPoolManager:
             "error": None
         }
         
-        # Add task to manager
-        self.tasks[task_id] = task
+        # Add task to manager with thread safety
+        with self.task_lock:
+            self.tasks[task_id] = task
+            
+            # Add to priority queue
+            with self.queue_lock:
+                self.priority_queues[priority].append(task_id)
         
-        # Submit task to executor
-        future = self.executor.submit(func, *args, **kwargs)
-        self.futures[task_id] = future
+        # Submit task to executor with wrapper for priority handling
+        future = self.executor.submit(self._execute_task, task_id)
         
-        # Update task status
-        task["status"] = TaskStatus.RUNNING
-        task["started_at"] = datetime.now()
+        with self.task_lock:
+            self.futures[task_id] = future
+            
+            # Update task status
+            task = self.tasks[task_id]
+            task["status"] = TaskStatus.QUEUED
         
-        # Add callback to handle completion
-        future.add_done_callback(lambda f: self._handle_completion(task_id, f))
+        # Update statistics
+        with self.stats_lock:
+            self.stats["tasks_submitted"] += 1
         
         # Publish event
         try:
@@ -123,58 +167,105 @@ class ThreadPoolManager:
         logger.info(f"Task submitted to thread pool: {task_id} ({name})")
         return task_id
     
-    def _handle_completion(self, task_id: str, future: concurrent.futures.Future):
+    def _execute_task(self, task_id: str) -> Any:
         """
-        Handle task completion.
+        Execute a task with priority handling.
         
         Args:
-            task_id: ID of the task
-            future: Future object for the task
+            task_id: ID of the task to execute
+            
+        Returns:
+            Result of the task
         """
-        task = self.tasks.get(task_id)
-        if not task:
-            logger.warning(f"Task {task_id} not found")
-            return
+        # Get task
+        with self.task_lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                logger.warning(f"Task {task_id} not found")
+                return None
+            
+            # Update task status
+            task["status"] = TaskStatus.RUNNING
+            task["started_at"] = datetime.now()
+            
+            # Get task details
+            func = task["func"]
+            args = task["args"]
+            kwargs = task["kwargs"]
+            name = task["name"]
         
+        # Update worker count
+        with self.worker_lock:
+            self.active_workers += 1
+            if self.active_workers > self.stats["peak_active_workers"]:
+                self.stats["peak_active_workers"] = self.active_workers
+        
+        # Execute task with timing
+        start_time = time.time()
         try:
-            # Get result
-            result = future.result()
+            # Execute the function
+            result = func(*args, **kwargs)
             
             # Update task
-            task["status"] = TaskStatus.COMPLETED
-            task["completed_at"] = datetime.now()
-            task["result"] = result
+            with self.task_lock:
+                if task_id in self.tasks:
+                    task = self.tasks[task_id]
+                    task["status"] = TaskStatus.COMPLETED
+                    task["completed_at"] = datetime.now()
+                    task["result"] = result
+            
+            # Update statistics
+            execution_time = time.time() - start_time
+            with self.stats_lock:
+                self.stats["tasks_completed"] += 1
+                # Update average execution time
+                avg_time = self.stats["avg_execution_time"]
+                completed = self.stats["tasks_completed"]
+                self.stats["avg_execution_time"] = (avg_time * (completed - 1) + execution_time) / completed
             
             # Publish event
             try:
                 event = create_task_event(
                     EventType.TASK_COMPLETED,
                     task_id,
-                    {"name": task["name"]}
+                    {"name": name}
                 )
                 publish_sync(event)
             except Exception as e:
                 logger.warning(f"Failed to publish task completed event: {e}")
             
-            logger.info(f"Task completed: {task_id} ({task['name']})")
+            logger.info(f"Task completed: {task_id} ({name}) in {execution_time:.2f}s")
+            return result
         except Exception as e:
             # Update task
-            task["status"] = TaskStatus.FAILED
-            task["completed_at"] = datetime.now()
-            task["error"] = str(e)
+            with self.task_lock:
+                if task_id in self.tasks:
+                    task = self.tasks[task_id]
+                    task["status"] = TaskStatus.FAILED
+                    task["completed_at"] = datetime.now()
+                    task["error"] = str(e)
+            
+            # Update statistics
+            with self.stats_lock:
+                self.stats["tasks_failed"] += 1
             
             # Publish event
             try:
                 event = create_task_event(
                     EventType.TASK_FAILED,
                     task_id,
-                    {"name": task["name"], "error": str(e)}
+                    {"name": name, "error": str(e)}
                 )
                 publish_sync(event)
             except Exception as e:
                 logger.warning(f"Failed to publish task failed event: {e}")
             
-            logger.error(f"Task failed: {task_id} ({task['name']}): {e}")
+            logger.error(f"Task failed: {task_id} ({name}): {e}")
+            raise
+        finally:
+            # Update worker count
+            with self.worker_lock:
+                self.active_workers -= 1
     
     def cancel(self, task_id: str) -> bool:
         """
@@ -186,35 +277,40 @@ class ThreadPoolManager:
         Returns:
             True if the task was cancelled, False otherwise
         """
-        future = self.futures.get(task_id)
-        if not future:
-            logger.warning(f"Task {task_id} not found")
-            return False
-        
-        # Cancel future
-        result = future.cancel()
-        
-        if result:
-            # Update task
-            task = self.tasks.get(task_id)
-            if task:
-                task["status"] = TaskStatus.CANCELLED
-                task["completed_at"] = datetime.now()
+        with self.task_lock:
+            future = self.futures.get(task_id)
+            if not future:
+                logger.warning(f"Task {task_id} not found")
+                return False
             
-            # Publish event
-            try:
-                event = create_task_event(
-                    EventType.TASK_FAILED,
-                    task_id,
-                    {"name": task["name"] if task else "Unknown", "reason": "cancelled"}
-                )
-                publish_sync(event)
-            except Exception as e:
-                logger.warning(f"Failed to publish task cancelled event: {e}")
+            # Cancel future
+            result = future.cancel()
             
-            logger.info(f"Task cancelled: {task_id}")
-        
-        return result
+            if result:
+                # Update task
+                task = self.tasks.get(task_id)
+                if task:
+                    task["status"] = TaskStatus.CANCELLED
+                    task["completed_at"] = datetime.now()
+                
+                # Update statistics
+                with self.stats_lock:
+                    self.stats["tasks_cancelled"] += 1
+                
+                # Publish event
+                try:
+                    event = create_task_event(
+                        EventType.TASK_CANCELLED,
+                        task_id,
+                        {"name": task["name"] if task else "Unknown", "reason": "cancelled"}
+                    )
+                    publish_sync(event)
+                except Exception as e:
+                    logger.warning(f"Failed to publish task cancelled event: {e}")
+                
+                logger.info(f"Task cancelled: {task_id}")
+            
+            return result
     
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -226,7 +322,8 @@ class ThreadPoolManager:
         Returns:
             Task dictionary or None if not found
         """
-        return self.tasks.get(task_id)
+        with self.task_lock:
+            return self.tasks.get(task_id)
     
     def get_task_status(self, task_id: str) -> Optional[TaskStatus]:
         """
@@ -238,8 +335,9 @@ class ThreadPoolManager:
         Returns:
             Task status or None if task not found
         """
-        task = self.tasks.get(task_id)
-        return task["status"] if task else None
+        with self.task_lock:
+            task = self.tasks.get(task_id)
+            return task["status"] if task else None
     
     def get_task_result(self, task_id: str) -> Any:
         """
@@ -251,8 +349,9 @@ class ThreadPoolManager:
         Returns:
             Task result or None if task not found or not completed
         """
-        task = self.tasks.get(task_id)
-        return task["result"] if task and task["status"] == TaskStatus.COMPLETED else None
+        with self.task_lock:
+            task = self.tasks.get(task_id)
+            return task["result"] if task and task["status"] == TaskStatus.COMPLETED else None
     
     def get_task_error(self, task_id: str) -> Optional[str]:
         """
@@ -264,8 +363,9 @@ class ThreadPoolManager:
         Returns:
             Task error or None if task not found or not failed
         """
-        task = self.tasks.get(task_id)
-        return task["error"] if task and task["status"] == TaskStatus.FAILED else None
+        with self.task_lock:
+            task = self.tasks.get(task_id)
+            return task["error"] if task and task["status"] == TaskStatus.FAILED else None
     
     def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -274,7 +374,8 @@ class ThreadPoolManager:
         Returns:
             Dictionary of all tasks
         """
-        return self.tasks.copy()
+        with self.task_lock:
+            return self.tasks.copy()
     
     def get_pending_tasks(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -283,7 +384,8 @@ class ThreadPoolManager:
         Returns:
             Dictionary of pending tasks
         """
-        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.PENDING}
+        with self.task_lock:
+            return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.PENDING}
     
     def get_running_tasks(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -292,7 +394,8 @@ class ThreadPoolManager:
         Returns:
             Dictionary of running tasks
         """
-        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.RUNNING}
+        with self.task_lock:
+            return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.RUNNING}
     
     def get_completed_tasks(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -301,7 +404,8 @@ class ThreadPoolManager:
         Returns:
             Dictionary of completed tasks
         """
-        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.COMPLETED}
+        with self.task_lock:
+            return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.COMPLETED}
     
     def get_failed_tasks(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -310,7 +414,8 @@ class ThreadPoolManager:
         Returns:
             Dictionary of failed tasks
         """
-        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.FAILED}
+        with self.task_lock:
+            return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.FAILED}
     
     def get_cancelled_tasks(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -319,7 +424,87 @@ class ThreadPoolManager:
         Returns:
             Dictionary of cancelled tasks
         """
-        return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.CANCELLED}
+        with self.task_lock:
+            return {task_id: task for task_id, task in self.tasks.items() if task["status"] == TaskStatus.CANCELLED}
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get thread pool statistics.
+        
+        Returns:
+            Dictionary of statistics
+        """
+        with self.stats_lock:
+            stats = self.stats.copy()
+            
+        # Add current counts
+        with self.task_lock:
+            stats["pending_tasks"] = len(self.get_pending_tasks())
+            stats["running_tasks"] = len(self.get_running_tasks())
+            stats["completed_tasks"] = len(self.get_completed_tasks())
+            stats["failed_tasks"] = len(self.get_failed_tasks())
+            stats["cancelled_tasks"] = len(self.get_cancelled_tasks())
+            stats["total_tasks"] = len(self.tasks)
+        
+        # Add worker info
+        with self.worker_lock:
+            stats["active_workers"] = self.active_workers
+            stats["max_workers"] = self.max_workers
+        
+        return stats
+    
+    def cleanup_completed_tasks(self, max_age_seconds: int = 3600):
+        """
+        Clean up completed, failed, and cancelled tasks older than the specified age.
+        
+        Args:
+            max_age_seconds: Maximum age of tasks to keep in seconds
+        """
+        now = datetime.now()
+        tasks_to_remove = []
+        
+        with self.task_lock:
+            for task_id, task in self.tasks.items():
+                if task["status"] in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                    if task["completed_at"] and (now - task["completed_at"]).total_seconds() > max_age_seconds:
+                        tasks_to_remove.append(task_id)
+            
+            # Remove tasks
+            for task_id in tasks_to_remove:
+                del self.tasks[task_id]
+                if task_id in self.futures:
+                    del self.futures[task_id]
+        
+        logger.info(f"Cleaned up {len(tasks_to_remove)} old tasks")
+    
+    def adjust_worker_count(self, new_max_workers: int):
+        """
+        Adjust the maximum number of workers.
+        
+        Args:
+            new_max_workers: New maximum number of workers
+        """
+        if new_max_workers <= 0:
+            logger.warning(f"Invalid worker count: {new_max_workers}, must be > 0")
+            return
+        
+        with self.worker_lock:
+            old_max = self.max_workers
+            self.max_workers = new_max_workers
+            
+            # Create a new executor if reducing workers
+            if new_max_workers < old_max:
+                # Create new executor
+                new_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=new_max_workers,
+                    thread_name_prefix="wiseflow-worker"
+                )
+                
+                # Shutdown old executor after tasks complete
+                self.executor.shutdown(wait=False)
+                self.executor = new_executor
+        
+        logger.info(f"Adjusted worker count from {old_max} to {new_max_workers}")
     
     def shutdown(self, wait: bool = True):
         """
@@ -333,4 +518,3 @@ class ThreadPoolManager:
 
 # Create a singleton instance
 thread_pool_manager = ThreadPoolManager()
-

@@ -12,9 +12,12 @@ import os
 import json
 import logging
 import re
+import time
+import hashlib
 from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 import asyncio
+from functools import lru_cache
 
 from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
 
@@ -36,6 +39,8 @@ TASK_ANALYSIS = "analysis"
 TASK_REASONING = "reasoning"
 TASK_COMPARISON = "comparison"
 
+# LRU cache for prompt templates
+TEMPLATE_CACHE_SIZE = int(os.environ.get("TEMPLATE_CACHE_SIZE", "100"))
 
 class PromptTemplate:
     """
@@ -128,6 +133,9 @@ class ContentTypePromptStrategy:
         self.config = config or {}
         self.templates: Dict[str, PromptTemplate] = {}
         self._load_default_templates()
+        
+        # Template cache
+        self._template_cache = {}
     
     def _load_default_templates(self) -> None:
         """
@@ -253,7 +261,7 @@ class ContentTypePromptStrategy:
         # Social media content analysis template
         self.templates["social_extraction"] = PromptTemplate(
             template=(
-                "You are an expert social media content analyzer. "
+                "You are an expert social media analyst. "
                 "Your task is to analyze the provided social media content "
                 "based on the focus point: {focus_point}.\n\n"
                 "Additional context: {explanation}\n\n"
@@ -281,70 +289,30 @@ class ContentTypePromptStrategy:
         )
         
         # Multi-step reasoning template
-        self.templates["multi_step_reasoning"] = PromptTemplate(
+        self.templates["reasoning"] = PromptTemplate(
             template=(
-                "You are an expert analytical system with multi-step reasoning capabilities. "
+                "You are an expert analytical thinker. "
                 "Your task is to analyze the provided content "
                 "based on the focus point: {focus_point}.\n\n"
                 "Additional context: {explanation}\n\n"
                 "Content:\n{content}\n\n"
-                "Follow these steps to analyze the content:\n"
-                "1. Identify the key elements related to the focus point\n"
-                "2. Analyze each element in depth\n"
-                "3. Connect the elements to form a coherent understanding\n"
-                "4. Draw conclusions based on the analysis\n\n"
+                "Perform a step-by-step analysis of the content related to the focus point. "
                 "Format your response as a JSON object with the following structure:\n"
                 "```json\n"
                 "{{\n"
-                "  \"step1_key_elements\": [\n"
+                "  \"reasoning_steps\": [\n"
                 "    {{\n"
-                "      \"element\": \"identified element\",\n"
-                "      \"relevance\": \"why this is relevant\"\n"
+                "      \"step\": 1,\n"
+                "      \"description\": \"step description\",\n"
+                "      \"analysis\": \"detailed analysis for this step\"\n"
+                "    }},\n"
+                "    {{\n"
+                "      \"step\": 2,\n"
+                "      \"description\": \"step description\",\n"
+                "      \"analysis\": \"detailed analysis for this step\"\n"
                 "    }}\n"
                 "  ],\n"
-                "  \"step2_analysis\": [\n"
-                "    {{\n"
-                "      \"element\": \"element being analyzed\",\n"
-                "      \"analysis\": \"detailed analysis\"\n"
-                "    }}\n"
-                "  ],\n"
-                "  \"step3_connections\": [\n"
-                "    {{\n"
-                "      \"connection\": \"connection between elements\",\n"
-                "      \"explanation\": \"explanation of the connection\"\n"
-                "    }}\n"
-                "  ],\n"
-                "  \"step4_conclusions\": [\n"
-                "    \"conclusion 1\",\n"
-                "    \"conclusion 2\"\n"
-                "  ],\n"
-                "  \"summary\": \"brief summary of the analysis\"\n"
-                "}}\n"
-                "```\n"
-            ),
-            input_variables=["focus_point", "explanation", "content"]
-        )
-        
-        # Chain-of-thought reasoning template
-        self.templates["chain_of_thought"] = PromptTemplate(
-            template=(
-                "You are an expert analytical system with chain-of-thought reasoning capabilities. "
-                "Your task is to analyze the provided content "
-                "based on the focus point: {focus_point}.\n\n"
-                "Additional context: {explanation}\n\n"
-                "Content:\n{content}\n\n"
-                "For this analysis, use chain-of-thought reasoning to work through the problem step by step. "
-                "Format your response as a JSON object with the following structure:\n"
-                "```json\n"
-                "{{\n"
-                "  \"reasoning_chain\": [\n"
-                "    {{\n"
-                "      \"step\": \"step description\",\n"
-                "      \"thought_process\": \"detailed reasoning for this step\",\n"
-                "      \"intermediate_conclusion\": \"conclusion from this step\"\n"
-                "    }}\n"
-                "  ],\n"
-                "  \"final_conclusion\": \"overall conclusion\",\n"
+                "  \"conclusion\": \"conclusion based on the reasoning steps\",\n"
                 "  \"confidence\": \"high|medium|low\",\n"
                 "  \"summary\": \"brief summary of the analysis\"\n"
                 "}}\n"
@@ -353,28 +321,34 @@ class ContentTypePromptStrategy:
             input_variables=["focus_point", "explanation", "content"]
         )
         
-        # Contextual understanding with references template
-        self.templates["contextual_understanding"] = PromptTemplate(
+        # Contextual understanding template
+        self.templates["contextual"] = PromptTemplate(
             template=(
-                "You are an expert analytical system with contextual understanding capabilities. "
+                "You are an expert contextual analyst. "
                 "Your task is to analyze the provided content "
-                "based on the focus point: {focus_point}.\n\n"
+                "based on the focus point: {focus_point}, "
+                "using the provided reference materials for context.\n\n"
                 "Additional context: {explanation}\n\n"
                 "Content to analyze:\n{content}\n\n"
                 "Reference materials:\n{references}\n\n"
-                "Analyze the content in the context of the reference materials and extract relevant information. "
+                "Analyze the content in the context of the reference materials. "
                 "Format your response as a JSON object with the following structure:\n"
                 "```json\n"
                 "{{\n"
-                "  \"relevance\": \"high|medium|low\",\n"
-                "  \"contextual_insights\": [\n"
+                "  \"contextual_relevance\": \"high|medium|low\",\n"
+                "  \"key_insights\": [\n"
                 "    {{\n"
-                "      \"insight\": \"contextual insight\",\n"
-                "      \"reference_connection\": \"connection to reference materials\",\n"
-                "      \"relevance_score\": 0.0-1.0\n"
+                "      \"insight\": \"key insight\",\n"
+                "      \"relevance_score\": 0.0-1.0,\n"
+                "      \"supporting_context\": \"relevant context from references\"\n"
                 "    }}\n"
                 "  ],\n"
-                "  \"additional_context_needed\": \"any additional context that would be helpful\",\n"
+                "  \"contradictions\": [\n"
+                "    {{\n"
+                "      \"content_claim\": \"claim from content\",\n"
+                "      \"reference_contradiction\": \"contradicting information from references\"\n"
+                "    }}\n"
+                "  ],\n"
                 "  \"summary\": \"brief summary of the contextual analysis\"\n"
                 "}}\n"
                 "```\n"
@@ -382,64 +356,98 @@ class ContentTypePromptStrategy:
             input_variables=["focus_point", "explanation", "content", "references"]
         )
     
-    def get_strategy_for_content(self, content_type: str, task: str) -> str:
+    @lru_cache(maxsize=TEMPLATE_CACHE_SIZE)
+    def _get_template_key(self, template_name: str, **kwargs) -> str:
         """
-        Get the appropriate prompt template name for a given content type and task.
+        Generate a cache key for a template with specific variables.
         
         Args:
-            content_type: The type of content (e.g., "text/plain", "code", "academic")
-            task: The task to perform (e.g., "extraction", "reasoning")
+            template_name: Name of the template
+            **kwargs: Template variables
             
         Returns:
-            str: The name of the appropriate prompt template
+            str: Cache key
         """
-        # Map content type and task to template name
-        if task == TASK_REASONING:
-            return "multi_step_reasoning"
-        elif task == "chain_of_thought":
-            return "chain_of_thought"
-        elif task == "contextual":
-            return "contextual_understanding"
-        
-        # Content type specific templates
-        if content_type.startswith("code/") or content_type == CONTENT_TYPE_CODE:
-            return "code_extraction"
-        elif content_type == CONTENT_TYPE_ACADEMIC or content_type == "text/academic":
-            return "academic_extraction"
-        elif content_type == CONTENT_TYPE_VIDEO or content_type == "text/video":
-            return "video_extraction"
-        elif content_type == CONTENT_TYPE_SOCIAL or content_type == "text/social":
-            return "social_extraction"
-        
-        # Default to general text extraction
-        return "text_extraction"
+        # Create a deterministic representation of the kwargs
+        kwargs_str = json.dumps(kwargs, sort_keys=True)
+        return f"{template_name}:{kwargs_str}"
     
     def generate_prompt(self, template_name: str, **kwargs) -> str:
         """
-        Generate a prompt using the specified template and variables.
+        Generate a prompt using a template.
         
         Args:
-            template_name: The name of the template to use
-            **kwargs: Values for the template variables
+            template_name: Name of the template to use
+            **kwargs: Values for template variables
             
         Returns:
             str: The generated prompt
             
         Raises:
-            ValueError: If the template name is not found
+            ValueError: If the template is not found
         """
-        if template_name not in self.templates:
+        # Check cache first
+        cache_key = self._get_template_key(template_name, **kwargs)
+        if cache_key in self._template_cache:
+            return self._template_cache[cache_key]
+        
+        # Get template
+        template = self.templates.get(template_name)
+        if not template:
             raise ValueError(f"Template not found: {template_name}")
         
-        return self.templates[template_name].format(**kwargs)
+        # Format template
+        prompt = template.format(**kwargs)
+        
+        # Cache result
+        self._template_cache[cache_key] = prompt
+        
+        # Limit cache size
+        if len(self._template_cache) > TEMPLATE_CACHE_SIZE:
+            # Remove a random key to avoid cache thrashing
+            self._template_cache.pop(next(iter(self._template_cache)))
+        
+        return prompt
+    
+    def get_template_for_content_type(self, content_type: str, task: str) -> str:
+        """
+        Get the appropriate template name for a content type and task.
+        
+        Args:
+            content_type: The type of content
+            task: The task to perform
+            
+        Returns:
+            str: The template name
+        """
+        # Handle multi-step reasoning
+        if task == TASK_REASONING:
+            return "reasoning"
+        
+        # Handle contextual understanding
+        if task == "contextual":
+            return "contextual"
+        
+        # Map content types to templates
+        if content_type == CONTENT_TYPE_ACADEMIC or content_type == "academic":
+            return "academic_extraction"
+        elif content_type == CONTENT_TYPE_CODE or content_type.startswith("code/"):
+            return "code_extraction"
+        elif content_type == CONTENT_TYPE_VIDEO or content_type == "text/video":
+            return "video_extraction"
+        elif content_type == CONTENT_TYPE_SOCIAL or content_type == "text/social":
+            return "social_extraction"
+        else:
+            # Default to text extraction
+            return "text_extraction"
 
 
 class SpecializedPromptProcessor:
     """
-    Processor for handling specialized prompting strategies for different content types.
+    Processor for specialized prompting strategies.
     
-    This class provides methods for processing content using specialized prompting
-    strategies, including multi-step reasoning and contextual understanding.
+    This class provides a high-level interface for processing content using
+    specialized prompting strategies based on content type and task.
     """
     
     def __init__(
@@ -447,24 +455,52 @@ class SpecializedPromptProcessor:
         default_model: Optional[str] = None,
         default_temperature: float = 0.7,
         default_max_tokens: int = 1000,
-        config: Optional[Dict[str, Any]] = None
+        prompt_strategy: Optional[ContentTypePromptStrategy] = None
     ):
         """
         Initialize the specialized prompt processor.
         
         Args:
-            default_model: The default LLM model to use
-            default_temperature: The default temperature for LLM generation
-            default_max_tokens: The default maximum tokens for LLM generation
-            config: Optional configuration dictionary
+            default_model: Default LLM model to use
+            default_temperature: Default temperature for LLM generation
+            default_max_tokens: Default maximum tokens for LLM generation
+            prompt_strategy: Optional prompt strategy to use
         """
-        self.default_model = default_model or os.environ.get("PRIMARY_MODEL", "")
+        self.default_model = default_model or os.environ.get("PRIMARY_MODEL", "gpt-3.5-turbo")
         self.default_temperature = default_temperature
         self.default_max_tokens = default_max_tokens
-        self.config = config or {}
+        self.prompt_strategy = prompt_strategy or ContentTypePromptStrategy()
         
-        # Initialize the prompt strategy
-        self.prompt_strategy = ContentTypePromptStrategy(config)
+        # Response cache
+        self.response_cache = {}
+        self.cache_size = int(os.environ.get("RESPONSE_CACHE_SIZE", "100"))
+        self.cache_ttl = int(os.environ.get("RESPONSE_CACHE_TTL", "3600"))  # 1 hour
+        
+        # Semaphore for limiting concurrent LLM calls
+        self.semaphore = asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_LLM_CALLS", "5")))
+    
+    def _generate_cache_key(self, content: str, focus_point: str, task: str, content_type: str) -> str:
+        """
+        Generate a cache key for an LLM request.
+        
+        Args:
+            content: The content to process
+            focus_point: The focus point for extraction
+            task: The task to perform
+            content_type: The type of content
+            
+        Returns:
+            str: Cache key
+        """
+        # Create a deterministic hash of the inputs
+        key_parts = [
+            content[:1000],  # Limit content length for the key
+            focus_point,
+            task,
+            content_type
+        ]
+        key_str = ":".join(key_parts)
+        return hashlib.md5(key_str.encode()).hexdigest()
     
     async def process(
         self,
@@ -495,74 +531,73 @@ class SpecializedPromptProcessor:
         Returns:
             Dict[str, Any]: The processing result
         """
-        metadata = metadata or {}
+        # Set default values
         model = model or self.default_model
         temperature = temperature if temperature is not None else self.default_temperature
         max_tokens = max_tokens or self.default_max_tokens
+        metadata = metadata or {}
         
-        # Get the appropriate prompt template
-        template_name = self.prompt_strategy.get_strategy_for_content(content_type, task)
+        # Generate cache key
+        cache_key = self._generate_cache_key(content, focus_point, task, content_type)
         
-        # Prepare template variables
-        template_vars = {
-            "focus_point": focus_point,
-            "explanation": explanation,
-            "content": content
-        }
+        # Check cache
+        current_time = time.time()
+        if cache_key in self.response_cache:
+            cache_entry = self.response_cache[cache_key]
+            if current_time - cache_entry["timestamp"] < self.cache_ttl:
+                logger.debug("Using cached response")
+                return cache_entry["result"]
         
-        # Add additional variables based on content type
-        if content_type.startswith("code/") or content_type == CONTENT_TYPE_CODE:
-            template_vars["language"] = metadata.get("language", "")
-            template_vars["file_path"] = metadata.get("file_path", "")
-        
-        if content_type == CONTENT_TYPE_VIDEO or content_type == "text/video":
-            template_vars["title"] = metadata.get("title", "")
-            template_vars["channel"] = metadata.get("channel", "")
-        
-        if content_type == CONTENT_TYPE_SOCIAL or content_type == "text/social":
-            template_vars["platform"] = metadata.get("platform", "")
-            template_vars["author"] = metadata.get("author", "")
-        
-        if task == "contextual":
-            template_vars["references"] = metadata.get("references", "")
-        
-        # Generate the prompt
-        try:
-            prompt = self.prompt_strategy.generate_prompt(template_name, **template_vars)
-        except Exception as e:
-            logger.error(f"Error generating prompt: {e}")
-            # Fall back to general extraction
-            prompt = self.prompt_strategy.generate_prompt("text_extraction", **template_vars)
-        
-        # Process with LLM
-        try:
-            messages = [
-                {"role": "system", "content": "You are an advanced AI assistant specializing in information extraction and analysis."},
-                {"role": "user", "content": prompt}
-            ]
+        # Limit concurrent LLM calls
+        async with self.semaphore:
+            # Determine the appropriate template
+            template_name = self.prompt_strategy.get_template_for_content_type(content_type, task)
             
-            response = await litellm_llm_async(messages, model, temperature, max_tokens)
-            
-            # Parse the response
-            result = self._parse_llm_response(response)
-            
-            # Add metadata
-            result["metadata"] = {
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "prompt_template": template_name,
-                "content_type": content_type,
-                "task": task,
-                "timestamp": datetime.now().isoformat()
+            # Prepare template variables
+            template_vars = {
+                "focus_point": focus_point,
+                "explanation": explanation,
+                "content": content
             }
             
-            return result
-        except Exception as e:
-            logger.error(f"Error processing with LLM: {e}")
-            return {
-                "error": str(e),
-                "metadata": {
+            # Add additional variables based on content type
+            if content_type.startswith("code/") or content_type == CONTENT_TYPE_CODE:
+                template_vars["language"] = metadata.get("language", "")
+                template_vars["file_path"] = metadata.get("file_path", "")
+            
+            if content_type == CONTENT_TYPE_VIDEO or content_type == "text/video":
+                template_vars["title"] = metadata.get("title", "")
+                template_vars["channel"] = metadata.get("channel", "")
+            
+            if content_type == CONTENT_TYPE_SOCIAL or content_type == "text/social":
+                template_vars["platform"] = metadata.get("platform", "")
+                template_vars["author"] = metadata.get("author", "")
+            
+            if task == "contextual":
+                template_vars["references"] = metadata.get("references", "")
+            
+            # Generate the prompt
+            try:
+                prompt = self.prompt_strategy.generate_prompt(template_name, **template_vars)
+            except Exception as e:
+                logger.error(f"Error generating prompt: {e}")
+                # Fall back to general extraction
+                prompt = self.prompt_strategy.generate_prompt("text_extraction", **template_vars)
+            
+            # Process with LLM
+            try:
+                messages = [
+                    {"role": "system", "content": "You are an advanced AI assistant specializing in information extraction and analysis."},
+                    {"role": "user", "content": prompt}
+                ]
+                
+                response = await litellm_llm_async(messages, model, temperature, max_tokens, logger)
+                
+                # Parse the response
+                result = self._parse_llm_response(response)
+                
+                # Add metadata
+                result["metadata"] = {
                     "model": model,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
@@ -571,7 +606,39 @@ class SpecializedPromptProcessor:
                     "task": task,
                     "timestamp": datetime.now().isoformat()
                 }
-            }
+                
+                # Cache the result
+                self.response_cache[cache_key] = {
+                    "result": result,
+                    "timestamp": current_time
+                }
+                
+                # Limit cache size
+                if len(self.response_cache) > self.cache_size:
+                    # Remove oldest entries
+                    oldest_keys = sorted(
+                        self.response_cache.keys(),
+                        key=lambda k: self.response_cache[k]["timestamp"]
+                    )[:len(self.response_cache) // 4]  # Remove 25% of oldest entries
+                    
+                    for key in oldest_keys:
+                        del self.response_cache[key]
+                
+                return result
+            except Exception as e:
+                logger.error(f"Error processing with LLM: {e}")
+                return {
+                    "error": str(e),
+                    "metadata": {
+                        "model": model,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "prompt_template": template_name,
+                        "content_type": content_type,
+                        "task": task,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
     
     def _parse_llm_response(self, response: str) -> Dict[str, Any]:
         """
@@ -646,45 +713,6 @@ class SpecializedPromptProcessor:
             max_tokens=max_tokens
         )
     
-    async def chain_of_thought(
-        self,
-        content: str,
-        focus_point: str,
-        explanation: str = "",
-        content_type: str = CONTENT_TYPE_TEXT,
-        metadata: Optional[Dict[str, Any]] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Perform chain-of-thought reasoning on content.
-        
-        Args:
-            content: The content to process
-            focus_point: The focus point for extraction
-            explanation: Additional explanation or context
-            content_type: The type of content
-            metadata: Additional metadata
-            model: The LLM model to use
-            temperature: The temperature for LLM generation
-            max_tokens: The maximum tokens for LLM generation
-            
-        Returns:
-            Dict[str, Any]: The reasoning result
-        """
-        return await self.process(
-            content=content,
-            focus_point=focus_point,
-            explanation=explanation,
-            content_type=content_type,
-            task="chain_of_thought",
-            metadata=metadata,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-    
     async def contextual_understanding(
         self,
         content: str,
@@ -741,7 +769,7 @@ class SpecializedPromptProcessor:
         max_concurrency: int = 5
     ) -> List[Dict[str, Any]]:
         """
-        Process multiple items concurrently.
+        Process multiple items concurrently with improved efficiency.
         
         Args:
             items: List of items to process
@@ -763,22 +791,80 @@ class SpecializedPromptProcessor:
         # Create a semaphore to limit concurrency
         semaphore = asyncio.Semaphore(max_concurrency)
         
-        async def process_item(item):
+        # Group similar items to reduce redundant processing
+        grouped_items = self._group_similar_items(items)
+        
+        async def process_group(group):
             async with semaphore:
-                return await self.process(
-                    content=item.get("content", ""),
+                # Process the representative item
+                representative = group[0]
+                result = await self.process(
+                    content=representative.get("content", ""),
                     focus_point=focus_point,
                     explanation=explanation,
-                    content_type=item.get("content_type", CONTENT_TYPE_TEXT),
+                    content_type=representative.get("content_type", CONTENT_TYPE_TEXT),
                     task=task,
-                    metadata=item.get("metadata"),
+                    metadata=representative.get("metadata"),
                     model=model,
                     temperature=temperature,
                     max_tokens=max_tokens
                 )
+                
+                # Apply the result to all items in the group with slight variations
+                return [self._adapt_result_to_item(result, item) for item in group]
         
-        # Process all items concurrently
-        tasks = [process_item(item) for item in items]
-        results = await asyncio.gather(*tasks)
+        # Process all groups concurrently
+        results = []
+        tasks = [process_group(group) for group in grouped_items]
+        group_results = await asyncio.gather(*tasks)
+        
+        # Flatten the results
+        for group_result in group_results:
+            results.extend(group_result)
         
         return results
+    
+    def _group_similar_items(self, items: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        """
+        Group similar items to reduce redundant processing.
+        
+        Args:
+            items: List of items to group
+            
+        Returns:
+            List[List[Dict[str, Any]]]: Grouped items
+        """
+        # Simple grouping by content type
+        groups = {}
+        for item in items:
+            content_type = item.get("content_type", CONTENT_TYPE_TEXT)
+            if content_type not in groups:
+                groups[content_type] = []
+            groups[content_type].append(item)
+        
+        return list(groups.values())
+    
+    def _adapt_result_to_item(self, result: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Adapt a result to a specific item.
+        
+        Args:
+            result: The result to adapt
+            item: The item to adapt the result to
+            
+        Returns:
+            Dict[str, Any]: The adapted result
+        """
+        # Create a copy of the result
+        adapted = result.copy()
+        
+        # Add item-specific metadata
+        if "metadata" in adapted:
+            adapted["metadata"] = {
+                **adapted["metadata"],
+                "item_id": item.get("id"),
+                "item_source": item.get("source"),
+                "item_metadata": item.get("metadata", {})
+            }
+        
+        return adapted
