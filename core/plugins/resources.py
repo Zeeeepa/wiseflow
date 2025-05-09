@@ -9,6 +9,8 @@ import threading
 import time
 import psutil
 import os
+import gc
+import sys
 from typing import Dict, Any, Optional, List, Set, Tuple
 
 logger = logging.getLogger(__name__)
@@ -273,6 +275,9 @@ class PluginResourceManager:
             except Exception:
                 open_files = []
             
+            # Get memory info
+            memory_info = process.memory_info()
+            
             # Update resource usage for each plugin
             for plugin_name in self.registered_resources:
                 if plugin_name not in self.resource_usage:
@@ -280,40 +285,150 @@ class PluginResourceManager:
                 
                 # Update usage
                 usage = self.resource_usage[plugin_name]
-                usage.memory = 0  # TODO: Implement per-plugin memory tracking
-                usage.cpu_percent = 0.0  # TODO: Implement per-plugin CPU tracking
-                usage.file_handles = len(open_files)  # TODO: Implement per-plugin file handle tracking
-                usage.threads = len(threads)  # TODO: Implement per-plugin thread tracking
+                
+                # Estimate memory usage based on registered resources
+                plugin_memory = self._estimate_plugin_memory_usage(plugin_name)
+                usage.memory = plugin_memory
+                
+                # Estimate CPU usage based on thread activity
+                plugin_cpu = self._estimate_plugin_cpu_usage(plugin_name, process)
+                usage.cpu_percent = plugin_cpu
+                
+                # Count file handles used by the plugin
+                plugin_files = self._count_plugin_file_handles(plugin_name, open_files)
+                usage.file_handles = plugin_files
+                
+                # Count threads used by the plugin
+                plugin_threads = self._count_plugin_threads(plugin_name, threads)
+                usage.threads = plugin_threads
+                
                 usage.last_update = time.time()
     
-    def _check_resource_limits(self) -> None:
-        """Check resource limits for all plugins."""
-        with self._lock:
-            for plugin_name, usage in self.resource_usage.items():
-                limit = self.resource_limits.get(plugin_name)
-                if limit is None:
-                    continue
-                
-                # Check memory limit
-                if limit.max_memory is not None and usage.memory > limit.max_memory:
-                    logger.warning(f"Plugin {plugin_name} exceeded memory limit: {usage.memory} > {limit.max_memory}")
-                    # TODO: Take action (e.g., disable plugin)
-                
-                # Check CPU limit
-                if limit.max_cpu_percent is not None and usage.cpu_percent > limit.max_cpu_percent:
-                    logger.warning(f"Plugin {plugin_name} exceeded CPU limit: {usage.cpu_percent} > {limit.max_cpu_percent}")
-                    # TODO: Take action (e.g., throttle plugin)
-                
-                # Check file handle limit
-                if limit.max_file_handles is not None and usage.file_handles > limit.max_file_handles:
-                    logger.warning(f"Plugin {plugin_name} exceeded file handle limit: {usage.file_handles} > {limit.max_file_handles}")
-                    # TODO: Take action (e.g., close some files)
-                
-                # Check thread limit
-                if limit.max_threads is not None and usage.threads > limit.max_threads:
-                    logger.warning(f"Plugin {plugin_name} exceeded thread limit: {usage.threads} > {limit.max_threads}")
-                    # TODO: Take action (e.g., terminate some threads)
+    def _estimate_plugin_memory_usage(self, plugin_name: str) -> int:
+        """
+        Estimate memory usage for a plugin.
+        
+        Args:
+            plugin_name: Name of the plugin
+            
+        Returns:
+            Estimated memory usage in bytes
+        """
+        # Get all registered resources for the plugin
+        resources = self.registered_resources.get(plugin_name, {})
+        
+        # Start with a base memory estimate
+        memory_usage = 1024 * 1024  # 1 MB base estimate
+        
+        # Add memory for each resource type
+        for resource_type, resource_list in resources.items():
+            for resource in resource_list:
+                try:
+                    # Try to get size of the resource
+                    if hasattr(resource, '__sizeof__'):
+                        memory_usage += resource.__sizeof__()
+                    else:
+                        # Rough estimate based on sys.getsizeof
+                        memory_usage += sys.getsizeof(resource)
+                except Exception:
+                    # If we can't get the size, use a default estimate
+                    memory_usage += 10 * 1024  # 10 KB default
+        
+        return memory_usage
+    
+    def _estimate_plugin_cpu_usage(self, plugin_name: str, process: psutil.Process) -> float:
+        """
+        Estimate CPU usage for a plugin.
+        
+        Args:
+            plugin_name: Name of the plugin
+            process: Current process
+            
+        Returns:
+            Estimated CPU usage percentage
+        """
+        # This is a rough estimate - in a real implementation, we would need
+        # to track thread CPU time and attribute it to plugins
+        
+        # Get the total number of threads
+        total_threads = len(process.threads())
+        if total_threads == 0:
+            return 0.0
+        
+        # Get the number of threads for this plugin
+        plugin_threads = self._count_plugin_threads(plugin_name, process.threads())
+        
+        # Get the overall CPU usage
+        try:
+            cpu_percent = process.cpu_percent(interval=0.1) / psutil.cpu_count()
+        except Exception:
+            cpu_percent = 0.0
+        
+        # Estimate plugin CPU usage based on thread count ratio
+        if total_threads > 0:
+            return (plugin_threads / total_threads) * cpu_percent
+        else:
+            return 0.0
+    
+    def _count_plugin_file_handles(self, plugin_name: str, open_files: List[Any]) -> int:
+        """
+        Count file handles used by a plugin.
+        
+        Args:
+            plugin_name: Name of the plugin
+            open_files: List of open files
+            
+        Returns:
+            Number of file handles
+        """
+        # Get file resources registered by the plugin
+        resources = self.registered_resources.get(plugin_name, {})
+        file_resources = resources.get('file', [])
+        
+        # Count matching file handles
+        count = 0
+        for file_resource in file_resources:
+            try:
+                if hasattr(file_resource, 'name'):
+                    # Check if this file is in the open_files list
+                    for open_file in open_files:
+                        if open_file.path == file_resource.name:
+                            count += 1
+                            break
+            except Exception:
+                pass
+        
+        return count
+    
+    def _count_plugin_threads(self, plugin_name: str, threads: List[Any]) -> int:
+        """
+        Count threads used by a plugin.
+        
+        Args:
+            plugin_name: Name of the plugin
+            threads: List of threads
+            
+        Returns:
+            Number of threads
+        """
+        # Get thread resources registered by the plugin
+        resources = self.registered_resources.get(plugin_name, {})
+        thread_resources = resources.get('thread', [])
+        
+        # Count active threads
+        count = 0
+        for thread_resource in thread_resources:
+            try:
+                if hasattr(thread_resource, 'ident') and thread_resource.is_alive():
+                    # Check if this thread is in the threads list
+                    for thread in threads:
+                        if thread.id == thread_resource.ident:
+                            count += 1
+                            break
+            except Exception:
+                pass
+        
+        return count
 
 # Global resource manager instance
 resource_manager = PluginResourceManager()
-
