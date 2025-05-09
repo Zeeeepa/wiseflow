@@ -13,6 +13,7 @@ import hashlib
 from typing import Dict, List, Any, Optional, Set, Tuple
 from datetime import datetime
 import re
+import threading
 import nltk
 from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk.corpus import stopwords
@@ -49,6 +50,7 @@ class ReferenceIndexer:
         self.document_index: Dict[str, Dict[str, Any]] = {}  # doc_id -> document metadata
         self.stemmer = PorterStemmer()
         self.stop_words = set(stopwords.words('english'))
+        self._lock = threading.RLock()  # Add a lock for thread safety
         
         # Load existing index if available
         self._load_index()
@@ -60,7 +62,7 @@ class ReferenceIndexer:
         
         if os.path.exists(term_index_path):
             try:
-                with open(term_index_path, 'r') as f:
+                with open(term_index_path, 'r', encoding='utf-8') as f:
                     self.term_index = json.load(f)
                 logger.info(f"Loaded term index with {len(self.term_index)} terms")
             except Exception as e:
@@ -69,7 +71,7 @@ class ReferenceIndexer:
         
         if os.path.exists(doc_index_path):
             try:
-                with open(doc_index_path, 'r') as f:
+                with open(doc_index_path, 'r', encoding='utf-8') as f:
                     self.document_index = json.load(f)
                 logger.info(f"Loaded document index with {len(self.document_index)} documents")
             except Exception as e:
@@ -78,19 +80,28 @@ class ReferenceIndexer:
     
     def _save_index(self) -> None:
         """Save index to disk."""
-        term_index_path = os.path.join(self.index_path, "term_index.json")
-        doc_index_path = os.path.join(self.index_path, "document_index.json")
-        
-        try:
-            with open(term_index_path, 'w') as f:
-                json.dump(self.term_index, f)
+        with self._lock:
+            term_index_path = os.path.join(self.index_path, "term_index.json")
+            doc_index_path = os.path.join(self.index_path, "document_index.json")
             
-            with open(doc_index_path, 'w') as f:
-                json.dump(self.document_index, f)
-            
-            logger.info(f"Saved index with {len(self.term_index)} terms and {len(self.document_index)} documents")
-        except Exception as e:
-            logger.error(f"Error saving index: {e}")
+            try:
+                # Create temporary files first to avoid corruption
+                term_index_temp = term_index_path + ".tmp"
+                doc_index_temp = doc_index_path + ".tmp"
+                
+                with open(term_index_temp, 'w', encoding='utf-8') as f:
+                    json.dump(self.term_index, f)
+                
+                with open(doc_index_temp, 'w', encoding='utf-8') as f:
+                    json.dump(self.document_index, f)
+                
+                # Rename temporary files to final files
+                os.replace(term_index_temp, term_index_path)
+                os.replace(doc_index_temp, doc_index_path)
+                
+                logger.info(f"Saved index with {len(self.term_index)} terms and {len(self.document_index)} documents")
+            except Exception as e:
+                logger.error(f"Error saving index: {e}")
     
     def _preprocess_text(self, text: str) -> List[str]:
         """
@@ -102,23 +113,27 @@ class ReferenceIndexer:
         Returns:
             List of preprocessed tokens
         """
-        # Convert to lowercase
-        text = text.lower()
-        
-        # Remove special characters and digits
-        text = re.sub(r'[^\w\s]', ' ', text)
-        text = re.sub(r'\d+', ' ', text)
-        
-        # Tokenize
-        tokens = word_tokenize(text)
-        
-        # Remove stop words and stem
-        processed_tokens = []
-        for token in tokens:
-            if token not in self.stop_words and len(token) > 2:
-                processed_tokens.append(self.stemmer.stem(token))
-        
-        return processed_tokens
+        try:
+            # Convert to lowercase
+            text = text.lower()
+            
+            # Remove special characters and digits
+            text = re.sub(r'[^\w\s]', ' ', text)
+            text = re.sub(r'\d+', ' ', text)
+            
+            # Tokenize
+            tokens = word_tokenize(text)
+            
+            # Remove stop words and stem
+            processed_tokens = []
+            for token in tokens:
+                if token not in self.stop_words and len(token) > 2:
+                    processed_tokens.append(self.stemmer.stem(token))
+            
+            return processed_tokens
+        except Exception as e:
+            logger.error(f"Error preprocessing text: {e}")
+            return []
     
     def _extract_sentences(self, text: str) -> List[str]:
         """
@@ -130,7 +145,11 @@ class ReferenceIndexer:
         Returns:
             List of sentences
         """
-        return sent_tokenize(text)
+        try:
+            return sent_tokenize(text)
+        except Exception as e:
+            logger.error(f"Error extracting sentences: {e}")
+            return [text]  # Return the whole text as a single sentence if extraction fails
     
     def _compute_document_hash(self, content: str) -> str:
         """
@@ -142,7 +161,11 @@ class ReferenceIndexer:
         Returns:
             Hash string
         """
-        return hashlib.md5(content.encode('utf-8')).hexdigest()
+        try:
+            return hashlib.md5(content.encode('utf-8')).hexdigest()
+        except Exception as e:
+            logger.error(f"Error computing document hash: {e}")
+            return str(uuid.uuid4())  # Generate a random hash if hashing fails
     
     def index_document(self, doc_id: str, content: str, metadata: Dict[str, Any]) -> bool:
         """
@@ -157,51 +180,52 @@ class ReferenceIndexer:
             True if indexing was successful, False otherwise
         """
         try:
-            # Check if document already exists and content is unchanged
-            content_hash = self._compute_document_hash(content)
-            if doc_id in self.document_index and self.document_index[doc_id].get("content_hash") == content_hash:
-                logger.debug(f"Document {doc_id} already indexed and unchanged")
+            with self._lock:
+                # Check if document already exists and content is unchanged
+                content_hash = self._compute_document_hash(content)
+                if doc_id in self.document_index and self.document_index[doc_id].get("content_hash") == content_hash:
+                    logger.debug(f"Document {doc_id} already indexed and unchanged")
+                    return True
+                
+                # Extract sentences for context retrieval
+                sentences = self._extract_sentences(content)
+                
+                # Process the document
+                tokens = self._preprocess_text(content)
+                
+                # Update document index
+                self.document_index[doc_id] = {
+                    "content_hash": content_hash,
+                    "metadata": metadata,
+                    "token_count": len(tokens),
+                    "sentence_count": len(sentences),
+                    "sentences": sentences,
+                    "indexed_at": datetime.now().isoformat()
+                }
+                
+                # Remove existing entries for this document
+                for term in list(self.term_index.keys()):
+                    if doc_id in self.term_index[term]:
+                        del self.term_index[term][doc_id]
+                        # Remove term if no documents left
+                        if not self.term_index[term]:
+                            del self.term_index[term]
+                
+                # Index the document
+                for position, token in enumerate(tokens):
+                    if token not in self.term_index:
+                        self.term_index[token] = {}
+                    
+                    if doc_id not in self.term_index[token]:
+                        self.term_index[token][doc_id] = []
+                    
+                    self.term_index[token][doc_id].append(position)
+                
+                # Save the updated index
+                self._save_index()
+                
+                logger.info(f"Successfully indexed document {doc_id} with {len(tokens)} tokens")
                 return True
-            
-            # Extract sentences for context retrieval
-            sentences = self._extract_sentences(content)
-            
-            # Process the document
-            tokens = self._preprocess_text(content)
-            
-            # Update document index
-            self.document_index[doc_id] = {
-                "content_hash": content_hash,
-                "metadata": metadata,
-                "token_count": len(tokens),
-                "sentence_count": len(sentences),
-                "sentences": sentences,
-                "indexed_at": datetime.now().isoformat()
-            }
-            
-            # Remove existing entries for this document
-            for term in list(self.term_index.keys()):
-                if doc_id in self.term_index[term]:
-                    del self.term_index[term][doc_id]
-                    # Remove term if no documents left
-                    if not self.term_index[term]:
-                        del self.term_index[term]
-            
-            # Index the document
-            for position, token in enumerate(tokens):
-                if token not in self.term_index:
-                    self.term_index[token] = {}
-                
-                if doc_id not in self.term_index[token]:
-                    self.term_index[token][doc_id] = []
-                
-                self.term_index[token][doc_id].append(position)
-            
-            # Save the updated index
-            self._save_index()
-            
-            logger.info(f"Successfully indexed document {doc_id} with {len(tokens)} tokens")
-            return True
         except Exception as e:
             logger.error(f"Error indexing document {doc_id}: {e}")
             return False
@@ -217,23 +241,24 @@ class ReferenceIndexer:
             True if removal was successful, False otherwise
         """
         try:
-            # Remove from document index
-            if doc_id in self.document_index:
-                del self.document_index[doc_id]
-            
-            # Remove from term index
-            for term in list(self.term_index.keys()):
-                if doc_id in self.term_index[term]:
-                    del self.term_index[term][doc_id]
-                    # Remove term if no documents left
-                    if not self.term_index[term]:
-                        del self.term_index[term]
-            
-            # Save the updated index
-            self._save_index()
-            
-            logger.info(f"Successfully removed document {doc_id} from index")
-            return True
+            with self._lock:
+                # Remove from document index
+                if doc_id in self.document_index:
+                    del self.document_index[doc_id]
+                
+                # Remove from term index
+                for term in list(self.term_index.keys()):
+                    if doc_id in self.term_index[term]:
+                        del self.term_index[term][doc_id]
+                        # Remove term if no documents left
+                        if not self.term_index[term]:
+                            del self.term_index[term]
+                
+                # Save the updated index
+                self._save_index()
+                
+                logger.info(f"Successfully removed document {doc_id} from index")
+                return True
         except Exception as e:
             logger.error(f"Error removing document {doc_id} from index: {e}")
             return False

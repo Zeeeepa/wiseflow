@@ -8,6 +8,7 @@ import csv
 import logging
 from typing import Dict, List, Any, Optional
 import os
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,9 @@ def export_to_csv(data: List[Dict[str, Any]], filepath: str) -> None:
         filepath: Path to save the CSV file
     """
     try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+        
         if not data:
             # Create empty file with headers
             with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
@@ -36,7 +40,24 @@ def export_to_csv(data: List[Dict[str, Any]], filepath: str) -> None:
         with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.DictWriter(f, fieldnames=sorted(fieldnames))
             writer.writeheader()
-            writer.writerows(data)
+            
+            # Handle non-string values and missing fields
+            processed_data = []
+            for item in data:
+                processed_item = {}
+                for field in fieldnames:
+                    if field in item:
+                        # Convert non-string values to strings
+                        value = item[field]
+                        if isinstance(value, (list, dict)):
+                            processed_item[field] = str(value)
+                        else:
+                            processed_item[field] = value
+                    else:
+                        processed_item[field] = ""
+                processed_data.append(processed_item)
+            
+            writer.writerows(processed_data)
         
         logger.info(f"Exported {len(data)} records to CSV: {filepath}")
     except Exception as e:
@@ -55,6 +76,9 @@ def export_to_csv_with_config(data: List[Dict[str, Any]],
         config: Configuration options (delimiter, quotechar, etc.)
     """
     try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+        
         if not data:
             # Create empty file with headers
             with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
@@ -94,11 +118,36 @@ def export_to_csv_with_config(data: List[Dict[str, Any]],
             if fields_to_include:
                 filtered_data = []
                 for item in data:
-                    filtered_item = {k: item.get(k, '') for k in fields_to_include}
+                    filtered_item = {}
+                    for field in fields_to_include:
+                        if field in item:
+                            # Convert non-string values to strings
+                            value = item.get(field)
+                            if isinstance(value, (list, dict)):
+                                filtered_item[field] = str(value)
+                            else:
+                                filtered_item[field] = value
+                        else:
+                            filtered_item[field] = ""
                     filtered_data.append(filtered_item)
                 writer.writerows(filtered_data)
             else:
-                writer.writerows(data)
+                # Handle non-string values and missing fields
+                processed_data = []
+                for item in data:
+                    processed_item = {}
+                    for field in fieldnames:
+                        if field in item:
+                            # Convert non-string values to strings
+                            value = item[field]
+                            if isinstance(value, (list, dict)):
+                                processed_item[field] = str(value)
+                            else:
+                                processed_item[field] = value
+                        else:
+                            processed_item[field] = ""
+                    processed_data.append(processed_item)
+                writer.writerows(processed_data)
         
         logger.info(f"Exported {len(data)} records to CSV with custom config: {filepath}")
     except Exception as e:

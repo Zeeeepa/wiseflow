@@ -9,6 +9,7 @@ import os
 import logging
 import mimetypes
 import tempfile
+import contextlib
 from typing import Dict, Any, Optional, Tuple
 import requests
 from urllib.parse import urlparse
@@ -89,52 +90,56 @@ class ReferenceExtractor:
             Tuple containing extracted text content and metadata
         """
         try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
+            with contextlib.suppress(requests.exceptions.RequestException):
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                
+                # Create a temporary file to store the content
+                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                    temp_file.write(response.content)
+                    temp_path = temp_file.name
+                
+                try:
+                    # Determine content type
+                    content_type = response.headers.get('Content-Type', '').split(';')[0]
+                    
+                    metadata = {
+                        "url": url,
+                        "domain": urlparse(url).netloc,
+                        "content_type": content_type,
+                        "status_code": response.status_code,
+                        "headers": dict(response.headers)
+                    }
+                    
+                    # Extract content based on content type
+                    if content_type == 'application/pdf':
+                        content, pdf_metadata = self._extract_pdf(temp_path)
+                        metadata.update(pdf_metadata)
+                        return content, metadata
+                    elif content_type == 'application/json':
+                        content, json_metadata = self._extract_json(temp_path)
+                        metadata.update(json_metadata)
+                        return content, metadata
+                    elif content_type.startswith('text/html'):
+                        content, html_metadata = self._extract_html(temp_path)
+                        metadata.update(html_metadata)
+                        return content, metadata
+                    elif content_type.startswith('text/'):
+                        content, text_metadata = self._extract_text(temp_path)
+                        metadata.update(text_metadata)
+                        return content, metadata
+                    else:
+                        # Try to extract as text
+                        content, text_metadata = self._extract_text(temp_path)
+                        metadata.update(text_metadata)
+                        return content, metadata
+                finally:
+                    # Clean up temporary file
+                    with contextlib.suppress(Exception):
+                        os.unlink(temp_path)
             
-            # Create a temporary file to store the content
-            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                temp_file.write(response.content)
-                temp_path = temp_file.name
-            
-            # Determine content type
-            content_type = response.headers.get('Content-Type', '').split(';')[0]
-            
-            metadata = {
-                "url": url,
-                "domain": urlparse(url).netloc,
-                "content_type": content_type,
-                "status_code": response.status_code,
-                "headers": dict(response.headers)
-            }
-            
-            # Extract content based on content type
-            if content_type == 'application/pdf':
-                content, pdf_metadata = self._extract_pdf(temp_path)
-                metadata.update(pdf_metadata)
-                os.unlink(temp_path)
-                return content, metadata
-            elif content_type == 'application/json':
-                content, json_metadata = self._extract_json(temp_path)
-                metadata.update(json_metadata)
-                os.unlink(temp_path)
-                return content, metadata
-            elif content_type.startswith('text/html'):
-                content, html_metadata = self._extract_html(temp_path)
-                metadata.update(html_metadata)
-                os.unlink(temp_path)
-                return content, metadata
-            elif content_type.startswith('text/'):
-                content, text_metadata = self._extract_text(temp_path)
-                metadata.update(text_metadata)
-                os.unlink(temp_path)
-                return content, metadata
-            else:
-                # Try to extract as text
-                content, text_metadata = self._extract_text(temp_path)
-                metadata.update(text_metadata)
-                os.unlink(temp_path)
-                return content, metadata
+            # If request failed, return empty content with error metadata
+            return "", {"error": "Failed to fetch URL", "url": url}
         except Exception as e:
             logger.error(f"Error extracting content from URL {url}: {e}")
             return "", {"error": str(e), "url": url}
@@ -212,21 +217,30 @@ class ReferenceExtractor:
             metadata = {}
             
             with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                
-                # Extract metadata
-                if pdf_reader.metadata:
-                    for key, value in pdf_reader.metadata.items():
-                        if key.startswith('/'):
-                            metadata[key[1:]] = value
-                
-                # Extract text from each page
-                num_pages = len(pdf_reader.pages)
-                metadata['num_pages'] = num_pages
-                
-                for page_num in range(num_pages):
-                    page = pdf_reader.pages[page_num]
-                    text_content += page.extract_text() + "\n\n"
+                try:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    
+                    # Extract metadata
+                    if pdf_reader.metadata:
+                        for key, value in pdf_reader.metadata.items():
+                            if key.startswith('/'):
+                                metadata[key[1:]] = value
+                    
+                    # Extract text from each page
+                    num_pages = len(pdf_reader.pages)
+                    metadata['num_pages'] = num_pages
+                    
+                    for page_num in range(num_pages):
+                        try:
+                            page = pdf_reader.pages[page_num]
+                            page_text = page.extract_text() or ""
+                            text_content += page_text + "\n\n"
+                        except Exception as page_error:
+                            logger.warning(f"Error extracting text from page {page_num}: {page_error}")
+                            text_content += f"[Error extracting page {page_num}]\n\n"
+                except Exception as pdf_error:
+                    logger.error(f"Error reading PDF: {pdf_error}")
+                    return "", {"error": str(pdf_error)}
             
             return text_content.strip(), metadata
         except Exception as e:
@@ -289,23 +303,27 @@ class ReferenceExtractor:
             # Try to detect encoding
             with open(file_path, 'rb') as f:
                 result = chardet.detect(f.read(4096))
-                encoding = result['encoding']
+                encoding = result['encoding'] or 'utf-8'
             
             with open(file_path, 'r', encoding=encoding, errors='replace') as file:
-                csv_reader = csv.reader(file)
-                headers = next(csv_reader, [])
-                
-                # Add headers
-                if headers:
-                    text_content += " | ".join(headers) + "\n"
-                    text_content += "-" * 80 + "\n"
-                
-                # Add rows
-                row_count = 0
-                for row in csv_reader:
-                    text_content += " | ".join(row) + "\n"
-                    rows.append(row)
-                    row_count += 1
+                try:
+                    csv_reader = csv.reader(file)
+                    headers = next(csv_reader, [])
+                    
+                    # Add headers
+                    if headers:
+                        text_content += " | ".join(headers) + "\n"
+                        text_content += "-" * 80 + "\n"
+                    
+                    # Add rows
+                    row_count = 0
+                    for row in csv_reader:
+                        text_content += " | ".join(row) + "\n"
+                        rows.append(row)
+                        row_count += 1
+                except Exception as csv_error:
+                    logger.error(f"Error reading CSV: {csv_error}")
+                    return "", {"error": str(csv_error)}
             
             metadata = {
                 "headers": headers,
@@ -332,13 +350,21 @@ class ReferenceExtractor:
             # Try to detect encoding
             with open(file_path, 'rb') as f:
                 result = chardet.detect(f.read(4096))
-                encoding = result['encoding']
+                encoding = result['encoding'] or 'utf-8'
             
             with open(file_path, 'r', encoding=encoding, errors='replace') as file:
-                json_data = json.load(file)
+                try:
+                    json_data = json.load(file)
+                except Exception as json_error:
+                    logger.error(f"Error parsing JSON: {json_error}")
+                    return "", {"error": str(json_error)}
             
             # Convert JSON to formatted string
-            text_content = json.dumps(json_data, indent=2)
+            try:
+                text_content = json.dumps(json_data, indent=2)
+            except Exception as format_error:
+                logger.error(f"Error formatting JSON: {format_error}")
+                text_content = str(json_data)
             
             # Extract metadata
             metadata = {
@@ -371,11 +397,15 @@ class ReferenceExtractor:
             # Try to detect encoding
             with open(file_path, 'rb') as f:
                 result = chardet.detect(f.read(4096))
-                encoding = result['encoding']
+                encoding = result['encoding'] or 'utf-8'
             
             # Parse XML
-            tree = ET.parse(file_path)
-            root = tree.getroot()
+            try:
+                tree = ET.parse(file_path)
+                root = tree.getroot()
+            except Exception as xml_error:
+                logger.error(f"Error parsing XML: {xml_error}")
+                return "", {"error": str(xml_error)}
             
             # Extract all text content
             def extract_text_from_element(element):
@@ -417,10 +447,14 @@ class ReferenceExtractor:
             with open(file_path, 'rb') as f:
                 content = f.read()
                 result = chardet.detect(content)
-                encoding = result['encoding']
+                encoding = result['encoding'] or 'utf-8'
             
             # Parse HTML
-            soup = BeautifulSoup(content, 'html.parser')
+            try:
+                soup = BeautifulSoup(content, 'html.parser')
+            except Exception as html_error:
+                logger.error(f"Error parsing HTML: {html_error}")
+                return "", {"error": str(html_error)}
             
             # Extract metadata
             metadata = {
@@ -472,7 +506,7 @@ class ReferenceExtractor:
             with open(file_path, 'rb') as f:
                 content = f.read()
                 result = chardet.detect(content)
-                encoding = result['encoding']
+                encoding = result['encoding'] or 'utf-8'
             
             # Read file with detected encoding
             with open(file_path, 'r', encoding=encoding, errors='replace') as file:
