@@ -4,16 +4,44 @@ This document provides an overview of the dependencies used in the WiseFlow proj
 
 ## Dependency Management Structure
 
-WiseFlow uses a modular dependency management approach:
+WiseFlow uses a simplified dependency management approach:
 
-- `requirements-base.txt`: Core dependencies required for basic functionality
+- `requirements.txt`: Contains all core dependencies required for basic functionality
 - `requirements-optional.txt`: Optional dependencies for extended features
 - `requirements-dev.txt`: Dependencies needed for development and testing
-- `requirements.txt`: Main entry point that includes base requirements
 
 Module-specific requirements:
 - `weixin_mp/requirements.txt`: Dependencies specific to the WeChat Mini Program module
 - `core/requirements.txt`: Dependencies specific to the core module
+
+## Installation
+
+The recommended way to install dependencies is using the provided installation script:
+
+```bash
+# Basic installation (core dependencies only)
+python install.py
+
+# Install with optional dependencies
+python install.py --optional
+
+# Install with development dependencies
+python install.py --dev
+
+# Install all dependencies (core, optional, and dev)
+python install.py --all
+
+# Upgrade existing packages to the latest version
+python install.py --upgrade
+```
+
+The installation script performs the following tasks:
+1. Checks Python version compatibility
+2. Updates pip to the latest version
+3. Installs the required dependencies
+4. Sets up the environment (.env file)
+5. Checks for additional system requirements
+6. Installs Playwright browsers if needed
 
 ## Core Dependencies
 
@@ -141,4 +169,3 @@ If you encounter dependency conflicts:
 3. Try to find a version that satisfies all requirements
 4. If necessary, consider alternative packages with similar functionality
 5. Update the requirements files with the resolved versions
-
