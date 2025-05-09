@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from __init__ import BackendService
+from dashboard.__init__ import BackendService
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 from dashboard.visualization import Dashboard, Visualization, DashboardManager
 from dashboard.visualization.knowledge_graph import visualize_knowledge_graph, filter_knowledge_graph
 from dashboard.visualization.trends import visualize_trend, detect_trend_patterns
@@ -79,12 +80,12 @@ app = FastAPI(
 )
 
 app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 bs = BackendService()
 
@@ -111,8 +112,8 @@ app.include_router(data_mining_api_router, prefix="/data-mining")
 # Dashboard endpoints
 @app.get("/")
 def read_root():
-    msg = "Hello, This is WiseFlow Backend."
-    return {"msg": msg}
+    # Redirect to the dashboard page
+    return RedirectResponse(url="/dashboard/")
 
 
 @app.post("/translations")
