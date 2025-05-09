@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from __init__ import BackendService
+from dashboard.__init__ import BackendService
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dashboard.visualization import Dashboard, Visualization, DashboardManager
@@ -78,13 +78,14 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
+# Standardize CORS configuration to match api_server.py
 app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 bs = BackendService()
 
