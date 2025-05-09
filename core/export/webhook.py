@@ -363,14 +363,17 @@ class WebhookManager:
         expected_signature = self._generate_signature(payload, secret)
         return hmac.compare_digest(signature, expected_signature)
 
-# Create a singleton instance
-webhook_manager = WebhookManager()
+# Singleton instance
+_webhook_manager = None
 
 def get_webhook_manager() -> WebhookManager:
     """
-    Get the webhook manager instance.
+    Get the singleton instance of the webhook manager.
     
     Returns:
-        Webhook manager instance
+        WebhookManager: The webhook manager instance
     """
-    return webhook_manager
+    global _webhook_manager
+    if _webhook_manager is None:
+        _webhook_manager = WebhookManager()
+    return _webhook_manager
