@@ -18,6 +18,7 @@ from loguru import logger
 
 # Import config after logger to avoid circular imports
 from core.config import config, PROJECT_DIR
+from core.utils.directory_utils import ensure_directory
 
 # Define log levels with their corresponding integer values
 LOG_LEVELS = {
@@ -110,7 +111,7 @@ def configure_logging(
             log_dir = os.path.join(PROJECT_DIR, "logs")
         
         # Create log directory if it doesn't exist
-        os.makedirs(log_dir, exist_ok=True)
+        ensure_directory(log_dir)
         
         # Determine log file path
         log_file = os.path.join(log_dir, f"{app_name}.log")
@@ -140,6 +141,21 @@ def configure_logging(
             diagnose=True,
             filter=lambda record: record["level"].no >= LOG_LEVELS["ERROR"]
         )
+        
+        # Add debug-specific log file if log level is DEBUG or lower
+        if LOG_LEVELS.get(log_level, 20) <= LOG_LEVELS["DEBUG"]:
+            debug_log_file = os.path.join(log_dir, f"{app_name}_debug.log")
+            logger.add(
+                debug_log_file,
+                format=log_format,
+                level="DEBUG",
+                rotation=rotation,
+                retention=retention,
+                compression="zip",
+                backtrace=True,
+                diagnose=True,
+                filter=lambda record: record["level"].no <= LOG_LEVELS["DEBUG"]
+            )
 
 def get_logger(name: str) -> logger:
     """
@@ -187,16 +203,40 @@ class LogContext:
         """Remove context when exiting the block."""
         logger.remove(self.token)
 
+def setup_exception_logging():
+    """
+    Set up logging for uncaught exceptions.
+    
+    This function sets up a hook to log uncaught exceptions.
+    """
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        """Handle uncaught exceptions by logging them."""
+        if issubclass(exc_type, KeyboardInterrupt):
+            # Don't log keyboard interrupts
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+            
+        logger.opt(exception=(exc_type, exc_value, exc_traceback)).critical("Uncaught exception")
+        
+    # Set the exception hook
+    sys.excepthook = handle_exception
+
 # Configure logging on module import
 configure_logging(
     log_level=config.get("LOG_LEVEL", "INFO"),
-    log_to_console=True,
-    log_to_file=True,
-    structured_logging=config.get("STRUCTURED_LOGGING", False)
+    log_to_console=config.get("LOG_TO_CONSOLE", True),
+    log_to_file=config.get("LOG_TO_FILE", True),
+    log_dir=config.get("LOG_DIR", os.path.join(PROJECT_DIR, "logs")),
+    structured_logging=config.get("STRUCTURED_LOGGING", False),
+    rotation=config.get("LOG_ROTATION", "50 MB"),
+    retention=config.get("LOG_RETENTION", "10 days")
 )
+
+# Set up exception logging
+setup_exception_logging()
 
 # Export commonly used functions and classes
 __all__ = [
-    "logger", "get_logger", "with_context", "LogContext", "configure_logging"
+    "logger", "get_logger", "with_context", "LogContext", "configure_logging",
+    "LOG_LEVELS", "setup_exception_logging"
 ]
-

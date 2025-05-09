@@ -1,0 +1,23 @@
+{
+  "PROJECT_DIR": "~/wiseflow_data",
+  "VERBOSE": true,
+  "LLM_API_BASE": "https://api.openai.com/v1",
+  "LLM_API_KEY": "your-openai-api-key",
+  "PRIMARY_MODEL": "gpt-4",
+  "SECONDARY_MODEL": "gpt-3.5-turbo",
+  "VL_MODEL": "gpt-4-vision-preview",
+  "LLM_CONCURRENT_NUMBER": 2,
+  "PB_API_BASE": "http://localhost:8090",
+  "PB_API_AUTH": "your-pocketbase-auth-token",
+  "EXA_API_KEY": "your-exa-api-key",
+  "MAX_CONCURRENT_TASKS": 4,
+  "ENABLE_MULTIMODAL": true,
+  "ENABLE_KNOWLEDGE_GRAPH": true,
+  "API_HOST": "0.0.0.0",
+  "API_PORT": 8000,
+  "LOG_LEVEL": "INFO",
+  "LOG_TO_FILE": true,
+  "LOG_TO_CONSOLE": true,
+  "STRUCTURED_LOGGING": false
+}
+
