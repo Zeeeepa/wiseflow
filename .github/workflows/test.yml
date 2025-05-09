@@ -10,6 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: [3.9, 3.10]
 
@@ -40,4 +41,3 @@ jobs:
       with:
         file: ./coverage.xml
         fail_ci_if_error: false
-
