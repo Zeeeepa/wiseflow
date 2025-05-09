@@ -298,11 +298,11 @@ class TaskMonitor:
             return True
             
     def cancel_task(self, task_id: str, reason: Optional[str] = None) -> bool:
-        """Cancel a task.
+        """Mark a task as cancelled.
         
         Args:
             task_id: Task ID
-            reason: Reason for cancellation
+            reason: Optional reason for cancellation
             
         Returns:
             bool: True if successful, False otherwise
@@ -314,8 +314,12 @@ class TaskMonitor:
                 
             task_info = self.tasks[task_id]
             
-            if task_info['status'] in [TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value]:
-                logger.warning(f"Task {task_id} already completed, failed, or cancelled")
+            if task_info['status'] == TaskStatus.CANCELLED.value:
+                logger.warning(f"Task {task_id} already cancelled")
+                return False
+                
+            if task_info['status'] in [TaskStatus.COMPLETED.value, TaskStatus.FAILED.value]:
+                logger.warning(f"Task {task_id} already completed or failed")
                 return False
                 
             # Update task info
@@ -468,6 +472,9 @@ class TaskMonitor:
             log_file = task_info['log_file']
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
+            # Ensure the log directory exists
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+            
             with open(log_file, 'a') as f:
                 f.write(f"[{timestamp}] {message}\n")
                 
@@ -583,11 +590,12 @@ class TaskMonitor:
             
             for task_id, task_info in self.tasks.items():
                 if task_info['status'] in [TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value]:
-                    completed_at = datetime.fromisoformat(task_info['completed_at'])
-                    age = (current_time - completed_at).total_seconds()
-                    
-                    if age > max_age:
-                        to_cleanup.append(task_id)
+                    if task_info['completed_at']:
+                        completed_at = datetime.fromisoformat(task_info['completed_at'])
+                        age = (current_time - completed_at).total_seconds()
+                        
+                        if age > max_age:
+                            to_cleanup.append(task_id)
                         
             for task_id in to_cleanup:
                 if self.cleanup_task(task_id):
@@ -623,4 +631,3 @@ class TaskMonitor:
 
 # Global instance
 task_monitor = TaskMonitor()
-
