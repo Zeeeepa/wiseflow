@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from __init__ import BackendService
+from dashboard import BackendService  # Changed from __init__ import BackendService
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dashboard.visualization import Dashboard, Visualization, DashboardManager

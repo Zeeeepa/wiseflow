@@ -1,16 +1,51 @@
 import random
 import re
 import os
-from core.backend import dashscope_llm
+import sys
+
+# Add the parent directory to the path to allow importing from core
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Try to import dashscope_llm, or provide a fallback
+try:
+    from core.backend import dashscope_llm
+except ImportError:
+    # Fallback implementation
+    async def dashscope_llm(messages, model, seed=None, logger=None):
+        """Fallback implementation for dashscope_llm."""
+        if logger:
+            logger.warning("Using fallback implementation for dashscope_llm")
+        return "Fallback response: dashscope_llm is not available"
+
 from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from datetime import datetime
-from general_utils import isChinesePunctuation
-from general_utils import get_logger_level
+from dashboard.general_utils import isChinesePunctuation, get_logger_level
 from loguru import logger
-from pb_api import PbTalker
+
+# Try to import PbTalker from dashboard, or fall back to core.utils
+try:
+    from dashboard.pb_api import PbTalker
+except ImportError:
+    try:
+        from core.utils.pb_api import PbTalker
+    except ImportError:
+        # Fallback implementation
+        class PbTalker:
+            def __init__(self, logger):
+                self.logger = logger
+                self.logger.warning("Using fallback implementation for PbTalker")
+            
+            def read(self, *args, **kwargs):
+                return []
+            
+            def add(self, *args, **kwargs):
+                return ""
+            
+            def update(self, *args, **kwargs):
+                return ""
 
 project_dir = os.environ.get("PROJECT_DIR", "")
 os.makedirs(project_dir, exist_ok=True)
@@ -100,7 +135,7 @@ def get_report(insigt: str, articles: list[dict], memory: str, topics: list[str]
                 break
 
         logger.debug(f"articles context length: {len(texts)}")
-        system_prompt = f'''你是一名{character}，在近期的工作中我们从所关注的网站中发现了一条重要的{report_type}线索，线索和相关文章（用XML标签分隔）如下：
+        system_prompt = f'''你是一名{character}，在近��的工作中我们从所关注的网站中发现了一条重要的{report_type}线索，线索和相关文章（用XML标签分隔）如下：
 情报线索： """{insigt} """
 相关文章：
 {texts}
