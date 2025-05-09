@@ -1,6 +1,6 @@
 import os
 from openai import AsyncOpenAI as OpenAI
-from openai import RateLimitError, APIError
+from openai import RateLimitError, APIError, APIConnectionError, APITimeoutError, BadRequestError, AuthenticationError
 import asyncio
 from typing import List, Dict, Any, Optional
 
@@ -72,30 +72,28 @@ async def openai_llm(messages: List[Dict[str, Any]], model: str, logger=None, **
                     logger.warning(error_msg)
                 else:
                     print(error_msg)
-            except APIError as e:
-                if hasattr(e, 'status_code'):
-                    if e.status_code in [400, 401]:
-                        # Client errors don't need to be retried
-                        error_msg = f"Client error: {e.status_code}. Detail: {str(e)}"
-                        if logger:
-                            logger.error(error_msg)
-                        else:
-                            print(error_msg)
-                        return ''
-                    else:
-                        # Other API errors need to be retried
-                        error_msg = f"API error: {e.status_code}. Retry {retry+1}/{max_retries}."
-                        if logger:
-                            logger.warning(error_msg)
-                        else:
-                            print(error_msg)
+            except (BadRequestError, AuthenticationError) as e:
+                # Client errors don't need to be retried
+                error_msg = f"Client error: {str(e)}"
+                if logger:
+                    logger.error(error_msg)
                 else:
-                    # Unknown API errors need to be retried
-                    error_msg = f"Unknown API error: {str(e)}. Retry {retry+1}/{max_retries}."
-                    if logger:
-                        logger.warning(error_msg)
-                    else:
-                        print(error_msg)
+                    print(error_msg)
+                return ''
+            except (APIConnectionError, APITimeoutError) as e:
+                # Connection errors need to be retried
+                error_msg = f"Connection error: {str(e)}. Retry {retry+1}/{max_retries}."
+                if logger:
+                    logger.warning(error_msg)
+                else:
+                    print(error_msg)
+            except APIError as e:
+                # Other API errors need to be retried
+                error_msg = f"API error: {str(e)}. Retry {retry+1}/{max_retries}."
+                if logger:
+                    logger.warning(error_msg)
+                else:
+                    print(error_msg)
             except Exception as e:
                 # Other exceptions need to be retried
                 error_msg = f"Unexpected error: {str(e)}. Retry {retry+1}/{max_retries}."
