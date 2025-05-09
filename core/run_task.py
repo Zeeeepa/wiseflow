@@ -7,6 +7,8 @@ import json
 import asyncio
 import signal
 import logging
+import psutil
+import traceback
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Callable, Awaitable
 
@@ -43,21 +45,27 @@ from core.general_process import main_process, generate_insights_for_focus
 
 # Configure the maximum number of concurrent tasks
 MAX_CONCURRENT_TASKS = config.get("MAX_CONCURRENT_TASKS", 4)
+MIN_CONCURRENT_TASKS = config.get("MIN_CONCURRENT_TASKS", 2)
 
 # Configure auto-shutdown settings
 AUTO_SHUTDOWN_ENABLED = config.get("AUTO_SHUTDOWN_ENABLED", False)
 AUTO_SHUTDOWN_IDLE_TIME = config.get("AUTO_SHUTDOWN_IDLE_TIME", 3600)  # Default: 1 hour
 AUTO_SHUTDOWN_CHECK_INTERVAL = config.get("AUTO_SHUTDOWN_CHECK_INTERVAL", 300)  # Default: 5 minutes
 
-# Initialize resource monitor
+# Initialize resource monitor with proper thresholds
 resource_monitor = ResourceMonitor(
-    check_interval=10.0,
-    warning_threshold=75.0,
-    critical_threshold=90.0
+    check_interval=config.get("RESOURCE_CHECK_INTERVAL", 10.0),
+    cpu_threshold=config.get("CPU_THRESHOLD", 90.0),
+    memory_threshold=config.get("MEMORY_THRESHOLD", 85.0),
+    disk_threshold=config.get("DISK_THRESHOLD", 90.0),
+    warning_threshold_factor=config.get("WARNING_THRESHOLD_FACTOR", 0.8)
 )
 
-# Initialize thread pool manager
-thread_pool = ThreadPoolManager(max_workers=MAX_CONCURRENT_TASKS)
+# Initialize thread pool manager with min and max workers
+thread_pool = ThreadPoolManager(
+    max_workers=MAX_CONCURRENT_TASKS,
+    min_workers=MIN_CONCURRENT_TASKS
+)
 
 # Initialize task manager
 task_manager = TaskManager()
@@ -69,12 +77,24 @@ pb = PbTalker(wiseflow_logger)
 last_activity_time = datetime.now()
 
 def resource_alert(resource_type, current_value, threshold):
+    """
+    Handle resource alerts by adjusting thread pool size.
+    
+    Args:
+        resource_type: Type of resource (cpu, memory, disk)
+        current_value: Current usage value
+        threshold: Threshold that was exceeded
+    """
     wiseflow_logger.warning(f"Resource alert: {resource_type} usage at {current_value:.1f}% (threshold: {threshold}%)")
     
     # Adjust thread pool size if CPU or memory is high
     if resource_type in ['cpu', 'memory'] and current_value > threshold:
         optimal_count = resource_monitor.calculate_optimal_thread_count()
-        wiseflow_logger.info(f"Adjusting worker count to {optimal_count} due to high {resource_type} usage")
+        current_count = thread_pool.get_metrics()['worker_count']
+        
+        if optimal_count < current_count:
+            wiseflow_logger.info(f"Adjusting worker count from {current_count} to {optimal_count} due to high {resource_type} usage")
+            thread_pool.adjust_worker_count(optimal_count)
 
 # Register the resource alert callback
 resource_monitor.add_callback(resource_alert)
@@ -87,7 +107,24 @@ async def process_focus_task(focus, sites):
         wiseflow_logger.info(f"Processing focus point: {focus.get('focuspoint', '')}")
         last_activity_time = datetime.now()
         
+        # Track resource usage before task
+        process = psutil.Process(os.getpid())
+        start_memory = process.memory_info().rss
+        start_time = time.time()
+        
+        # Execute the main process
         await main_process(focus, sites)
+        
+        # Track resource usage after task
+        end_memory = process.memory_info().rss
+        end_time = time.time()
+        memory_used = end_memory - start_memory
+        time_taken = end_time - start_time
+        
+        wiseflow_logger.info(
+            f"Focus point processed: {focus.get('focuspoint', '')} - "
+            f"Time: {time_taken:.2f}s, Memory: {memory_used / (1024 * 1024):.2f} MB"
+        )
         
         # Perform cross-source analysis if enabled
         if focus.get("cross_source_analysis", False):
@@ -97,12 +134,18 @@ async def process_focus_task(focus, sites):
         return True
     except Exception as e:
         wiseflow_logger.error(f"Error processing focus point {focus.get('id')}: {e}")
+        wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
         return False
 
 async def perform_cross_source_analysis(focus):
     """Perform cross-source analysis for a focus point."""
     try:
         wiseflow_logger.info(f"Performing cross-source analysis for focus point: {focus.get('focuspoint', '')}")
+        
+        # Track resource usage before analysis
+        process = psutil.Process(os.getpid())
+        start_memory = process.memory_info().rss
+        start_time = time.time()
         
         # Get all information collected for this focus point
         infos = pb.read('infos', filter=f'tag="{focus["id"]}"')
@@ -137,9 +180,20 @@ async def perform_cross_source_analysis(focus):
         
         pb.add(collection_name='knowledge_graphs', body=graph_record)
         
-        wiseflow_logger.info(f"Cross-source analysis completed for focus point: {focus.get('focuspoint', '')}")
+        # Track resource usage after analysis
+        end_memory = process.memory_info().rss
+        end_time = time.time()
+        memory_used = end_memory - start_memory
+        time_taken = end_time - start_time
+        
+        wiseflow_logger.info(
+            f"Cross-source analysis completed for focus point: {focus.get('focuspoint', '')} - "
+            f"Time: {time_taken:.2f}s, Memory: {memory_used / (1024 * 1024):.2f} MB, "
+            f"Entities: {len(knowledge_graph.entities)}"
+        )
     except Exception as e:
         wiseflow_logger.error(f"Error performing cross-source analysis: {e}")
+        wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
 
 async def generate_insights(focus):
     """Generate insights for a focus point using advanced LLM processing."""
@@ -148,6 +202,11 @@ async def generate_insights(focus):
     try:
         wiseflow_logger.info(f"Generating insights for focus point: {focus.get('focuspoint', '')}")
         last_activity_time = datetime.now()
+        
+        # Track resource usage before insight generation
+        process = psutil.Process(os.getpid())
+        start_memory = process.memory_info().rss
+        start_time = time.time()
         
         # Get all information collected for this focus point
         infos = pb.read('infos', filter=f'tag="{focus["id"]}"')
@@ -188,10 +247,20 @@ async def generate_insights(focus):
         
         pb.add(collection_name='insights', body=insights_record)
         
-        wiseflow_logger.info(f"Insights generated for focus point: {focus.get('focuspoint', '')}")
+        # Track resource usage after insight generation
+        end_memory = process.memory_info().rss
+        end_time = time.time()
+        memory_used = end_memory - start_memory
+        time_taken = end_time - start_time
+        
+        wiseflow_logger.info(
+            f"Insights generated for focus point: {focus.get('focuspoint', '')} - "
+            f"Time: {time_taken:.2f}s, Memory: {memory_used / (1024 * 1024):.2f} MB"
+        )
         last_activity_time = datetime.now()
     except Exception as e:
         wiseflow_logger.error(f"Error generating insights: {e}")
+        wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
 
 def process_focus_task_wrapper(focus, sites):
     """Synchronous wrapper for process_focus_task."""
@@ -219,24 +288,25 @@ async def check_auto_shutdown():
     while True:
         await asyncio.sleep(AUTO_SHUTDOWN_CHECK_INTERVAL)
         
-        active_tasks = [task for task in legacy_task_manager.get_all_tasks() if task.status in ["pending", "running"]]
+        # Check task manager for active tasks
+        task_metrics = task_manager.get_metrics()
+        active_tasks = task_metrics['running_tasks'] + task_metrics['waiting_tasks']
         
-        # Also check the new task manager
-        task_metrics = task_manager.thread_pool.get_metrics()
-        active_new_tasks = task_metrics['pending_tasks'] + task_metrics['running_tasks']
+        # Check thread pool for active tasks
+        thread_pool_metrics = thread_pool.get_metrics()
+        active_thread_tasks = thread_pool_metrics['running_tasks'] + thread_pool_metrics['pending_tasks']
         
-        if not active_tasks and active_new_tasks == 0:
-            
+        if active_tasks == 0 and active_thread_tasks == 0:
             # Check if the system has been idle for too long
             idle_time = (datetime.now() - last_activity_time).total_seconds()
             
             if idle_time > AUTO_SHUTDOWN_IDLE_TIME:
-                wiseflow_logger.info(f"System has been idle for {idle_time} seconds. Auto-shutting down...")
+                wiseflow_logger.info(f"System has been idle for {idle_time:.1f} seconds. Auto-shutting down...")
                 
-                await legacy_task_manager.shutdown()
+                # Shutdown all components
                 task_manager.stop()
-                thread_pool.stop()
-                resource_monitor.stop()
+                thread_pool.shutdown(wait=False)
+                await resource_monitor.stop()
                 
                 # Exit the process
                 sys.exit(0)
@@ -257,62 +327,73 @@ async def monitor_resource_usage():
             # Get CPU usage
             cpu_percent = process.cpu_percent(interval=1)
             
+            # Get thread pool metrics
             thread_metrics = thread_pool.get_metrics()
+            
+            # Get task manager metrics
+            task_metrics = task_manager.get_metrics()
+            
+            # Log resource usage
             wiseflow_logger.info(
                 f"Resource usage - Memory: {memory_usage_mb:.2f} MB, CPU: {cpu_percent:.2f}%, "
                 f"Workers: {thread_metrics['worker_count']}/{thread_pool.max_workers}, "
                 f"Active: {thread_metrics['active_workers']}, "
-                f"Queue: {thread_metrics['queue_size']}"
+                f"Queue: {thread_metrics['queue_size']}, "
+                f"Tasks: {task_metrics['running_tasks']} running, {task_metrics['waiting_tasks']} waiting"
             )
             
             # Check if memory usage is too high
             if memory_usage_mb > 1000:  # More than 1GB
                 wiseflow_logger.warning(f"Memory usage is very high: {memory_usage_mb:.2f} MB")
                 
-                # Reduce thread pool size
-                if thread_pool.get_metrics()['worker_count'] > thread_pool.min_workers:
-                    wiseflow_logger.info("Reducing thread pool size due to high memory usage")
-                    # The thread pool will automatically adjust based on resource monitor alerts
-            
+                # Reduce thread pool size if needed
+                if thread_metrics['worker_count'] > thread_pool.min_workers:
+                    new_count = max(thread_pool.min_workers, thread_metrics['worker_count'] // 2)
+                    wiseflow_logger.info(f"Reducing thread pool size from {thread_metrics['worker_count']} to {new_count} due to high memory usage")
+                    thread_pool.adjust_worker_count(new_count)
         except Exception as e:
             wiseflow_logger.error(f"Error monitoring resource usage: {e}")
+            wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
 
 async def schedule_task():
-    """Schedule and manage data mining tasks."""
+    """Schedule tasks for execution."""
     counter = 0
+    
     while True:
         try:
-            wiseflow_logger.info('Task execute loop started')
+            wiseflow_logger.info('Checking for focus points to process...')
             
-            # Get active focus points
-            focus_points = pb.read('focus_points', filter='activated=True')
-            sites_record = pb.read('sites')
+            # Get all focus points that need processing
+            focus_points = pb.read('focus_points', filter='status="pending"')
+            
+            if not focus_points:
+                wiseflow_logger.info('No pending focus points found')
+                counter += 1
+                await asyncio.sleep(60)  # Check every minute
+                continue
+            
+            wiseflow_logger.info(f'Found {len(focus_points)} pending focus points')
             
             for focus in focus_points:
-                # Check if there's already a task running for this focus point
-                existing_tasks = legacy_task_manager.get_tasks_by_focus(focus["id"])
-                active_tasks = [t for t in existing_tasks if t.status in ["pending", "running"]]
+                focus_id = focus.get('id')
                 
-                # Also check the new task manager
-                new_active_tasks = task_manager.get_tasks_by_tag(focus["id"])
+                # Get sites to process for this focus point
+                sites = pb.read('sites', filter=f'focus_id="{focus_id}"')
                 
-                if active_tasks or new_active_tasks:
-                    wiseflow_logger.info(f"Focus point {focus.get('focuspoint', '')} already has active tasks")
+                if not sites:
+                    wiseflow_logger.warning(f'No sites found for focus point: {focus.get("focuspoint", "")}')
                     continue
                 
-                # Get sites for this focus point
-                sites = [_record for _record in sites_record if _record['id'] in focus.get('sites', [])]
+                # Update focus point status
+                pb.update('focus_points', focus_id, {'status': 'processing'})
                 
-                # Create a new task
-                task_id = create_task_id()
-                focus_id = focus["id"]
-                auto_shutdown = focus.get("auto_shutdown", False)
+                # Determine if auto-shutdown should be enabled for this task
+                auto_shutdown = focus.get('auto_shutdown', False)
                 
-                # Register the task with the new task manager
                 try:
-                    # Register the main data collection task
+                    # Register the main task
                     main_task_id = task_manager.register_task(
-                        name=f"Focus: {focus.get('focuspoint', '')}",
+                        name=f"Process: {focus.get('focuspoint', '')}",
                         func=process_focus_task_wrapper,
                         focus,
                         sites,
@@ -383,88 +464,23 @@ async def schedule_task():
                     
                 except TaskDependencyError as e:
                     wiseflow_logger.error(f"Task dependency error for focus point {focus.get('focuspoint', '')}: {e}")
+                    wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
                 except Exception as e:
                     wiseflow_logger.error(f"Error registering task for focus point {focus.get('focuspoint', '')}: {e}")
+                    wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
                     
-                    # Fall back to the legacy task manager
-                    wiseflow_logger.info(f"Falling back to legacy task manager for focus point: {focus.get('focuspoint', '')}")
-                    
-                    # Create a legacy task
-                    legacy_task = Task(
-                        task_id=task_id,
-                        focus_id=focus_id,
-                        function=process_focus_task,
-                        args=(focus, sites),
-                        auto_shutdown=auto_shutdown
-                    )
-                    
-                    await legacy_task_manager.submit_task(legacy_task)
-                    
-                    # Save task to database
-                    task_record = {
-                        "task_id": task_id,
-                        "focus_id": focus_id,
-                        "status": "pending",
-                        "auto_shutdown": auto_shutdown,
-                        "metadata": {
-                            "focus_point": focus.get("focuspoint", ""),
-                            "sites_count": len(sites),
-                            "task_manager": "legacy"
-                        }
-                    }
-                    pb.add(collection_name='tasks', body=task_record)
-                    
-                    # Schedule insight generation if enabled
-                    if focus.get("generate_insights", False):
-                        insight_task_id = create_task_id()
-                        insight_task = Task(
-                            task_id=insight_task_id,
-                            focus_id=focus_id,
-                            function=generate_insights,
-                            args=(focus,),
-                            auto_shutdown=auto_shutdown
-                        )
-                        
-                        # Submit the insight task with a delay to ensure data collection is complete
-                        wiseflow_logger.info(f"Scheduling legacy insight generation for focus point: {focus.get('focuspoint', '')}")
-                        
-                        # Create a delayed task
-                        asyncio.create_task(schedule_delayed_task(3600, insight_task))
-                        
-                        # Save insight task to database
-                        insight_task_record = {
-                            "task_id": insight_task_id,
-                            "focus_id": focus_id,
-                            "status": "scheduled",
-                            "auto_shutdown": auto_shutdown,
-                            "type": "insight_generation",
-                            "metadata": {
-                                "focus_point": focus.get("focuspoint", ""),
-                                "parent_task_id": task_id,
-                                "scheduled_time": (datetime.now() + timedelta(seconds=3600)).isoformat(),
-                                "task_manager": "legacy"
-                            }
-                        }
-                        pb.add(collection_name='tasks', body=insight_task_record)
+                    # Update focus point status back to pending
+                    pb.update('focus_points', focus_id, {'status': 'pending'})
 
             counter += 1
-            wiseflow_logger.info('Task execute loop finished, work after 3600 seconds')
-            await asyncio.sleep(3600)
+            wiseflow_logger.info('Task execute loop finished, checking again in 60 seconds')
+            await asyncio.sleep(60)
             
         except Exception as e:
             wiseflow_logger.error(f"Error in task scheduling loop: {e}")
+            wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
             # Sleep for a shorter time before retrying
             await asyncio.sleep(60)
-
-async def schedule_delayed_task(delay_seconds, task):
-    """Schedule a task to run after a delay."""
-    await asyncio.sleep(delay_seconds)
-    
-    # Update task status in database
-    pb.update('tasks', task.task_id, {"status": "pending"})
-    
-    # Submit the task
-    await legacy_task_manager.submit_task(task)
 
 def handle_shutdown_signal(signum, frame):
     """Handle shutdown signals gracefully."""
@@ -473,10 +489,9 @@ def handle_shutdown_signal(signum, frame):
     # Create a task to shut down the task manager
     loop = asyncio.get_event_loop()
     async def shutdown_all():
-        await legacy_task_manager.shutdown()
         task_manager.stop()
-        thread_pool.stop()
-        resource_monitor.stop()
+        thread_pool.shutdown(wait=False)
+        await resource_monitor.stop()
     
     loop.create_task(shutdown_all())    
     # Exit after a short delay to allow tasks to complete
@@ -490,9 +505,18 @@ async def main():
         signal.signal(signal.SIGTERM, handle_shutdown_signal)
         
         wiseflow_logger.info("Starting Wiseflow with robust concurrency management system...")
-        wiseflow_logger.info(f"Resource monitor started with CPU threshold: {resource_monitor.thresholds['cpu']}%, Memory threshold: {resource_monitor.thresholds['memory']}%")
-        wiseflow_logger.info(f"Thread pool started with {thread_pool.min_workers}-{thread_pool.max_workers} workers")
+        
+        # Start resource monitor
+        await resource_monitor.start()
+        wiseflow_logger.info(f"Resource monitor started with CPU threshold: {resource_monitor.cpu_threshold}%, Memory threshold: {resource_monitor.memory_threshold}%")
+        
+        # Start task manager
+        await task_manager.start()
         wiseflow_logger.info(f"Task manager started with dependency and scheduling support")
+        
+        # Log thread pool configuration
+        thread_metrics = thread_pool.get_metrics()
+        wiseflow_logger.info(f"Thread pool started with {thread_metrics['min_workers']}-{thread_metrics['max_workers']} workers")
                 
         # Start the auto-shutdown checker if enabled
         if AUTO_SHUTDOWN_ENABLED:
@@ -506,16 +530,15 @@ async def main():
         await schedule_task()
     except KeyboardInterrupt:
         wiseflow_logger.info("Shutting down...")
-        await legacy_task_manager.shutdown()
         task_manager.stop()
-        thread_pool.stop()
-        resource_monitor.stop()
+        thread_pool.shutdown(wait=False)
+        await resource_monitor.stop()
     except Exception as e:
         wiseflow_logger.error(f"Error in main loop: {e}")
-        await legacy_task_manager.shutdown()
+        wiseflow_logger.debug(f"Traceback: {traceback.format_exc()}")
         task_manager.stop()
-        thread_pool.stop()
-        resource_monitor.stop()
+        thread_pool.shutdown(wait=False)
+        await resource_monitor.stop()
         
 if __name__ == "__main__":
     asyncio.run(main())
