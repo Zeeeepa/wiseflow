@@ -16,7 +16,23 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 import asyncio
 
-from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
+try:
+    from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
+except ImportError:
+    # Fallback implementation if litellm_wrapper is not available
+    async def litellm_llm_async(messages, model, temperature=0.7, max_tokens=1000):
+        logger.error("litellm_wrapper is not available. Please install required dependencies.")
+        return {
+            "error": "LiteLLM wrapper not available",
+            "error_type": "ImportError"
+        }
+    
+    def litellm_llm(messages, model, temperature=0.7, max_tokens=1000):
+        logger.error("litellm_wrapper is not available. Please install required dependencies.")
+        return {
+            "error": "LiteLLM wrapper not available",
+            "error_type": "ImportError"
+        }
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +430,38 @@ class ContentTypePromptStrategy:
         # Default to general text extraction
         return "text_extraction"
     
+    def _select_template(self, content_type: str, task: str) -> str:
+        """
+        Select the appropriate template based on content type and task.
+        
+        Args:
+            content_type: The type of content
+            task: The task to perform
+            
+        Returns:
+            str: The name of the selected template
+        """
+        # Map content type and task to template name
+        if task == TASK_REASONING:
+            return "multi_step_reasoning"
+        elif task == "chain_of_thought":
+            return "chain_of_thought"
+        elif task == "contextual":
+            return "contextual_understanding"
+        
+        # Content type specific templates
+        if content_type.startswith("code/") or content_type == CONTENT_TYPE_CODE:
+            return "code_extraction"
+        elif content_type == CONTENT_TYPE_ACADEMIC or content_type == "text/academic":
+            return "academic_extraction"
+        elif content_type == CONTENT_TYPE_VIDEO or content_type == "text/video":
+            return "video_extraction"
+        elif content_type == CONTENT_TYPE_SOCIAL or content_type == "text/social":
+            return "social_extraction"
+        
+        # Default to general text extraction
+        return "text_extraction"
+    
     def generate_prompt(self, template_name: str, **kwargs) -> str:
         """
         Generate a prompt using the specified template and variables.
@@ -473,13 +521,14 @@ class SpecializedPromptProcessor:
         explanation: str = "",
         content_type: str = CONTENT_TYPE_TEXT,
         task: str = TASK_EXTRACTION,
-        metadata: Optional[Dict[str, Any]] = None,
+        template_name: Optional[str] = None,
         model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+        temperature: float = 0.7,
+        max_tokens: int = 1000,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Process content using specialized prompting strategies.
+        Process content using a specialized prompt template.
         
         Args:
             content: The content to process
@@ -487,59 +536,48 @@ class SpecializedPromptProcessor:
             explanation: Additional explanation or context
             content_type: The type of content
             task: The task to perform
+            template_name: Optional template name to use
+            model: Optional model to use
+            temperature: Temperature for generation
+            max_tokens: Maximum tokens for generation
             metadata: Additional metadata
-            model: The LLM model to use
-            temperature: The temperature for LLM generation
-            max_tokens: The maximum tokens for LLM generation
             
         Returns:
             Dict[str, Any]: The processing result
         """
-        metadata = metadata or {}
-        model = model or self.default_model
-        temperature = temperature if temperature is not None else self.default_temperature
-        max_tokens = max_tokens or self.default_max_tokens
-        
-        # Get the appropriate prompt template
-        template_name = self.prompt_strategy.get_strategy_for_content(content_type, task)
-        
-        # Prepare template variables
-        template_vars = {
-            "focus_point": focus_point,
-            "explanation": explanation,
-            "content": content
-        }
-        
-        # Add additional variables based on content type
-        if content_type.startswith("code/") or content_type == CONTENT_TYPE_CODE:
-            template_vars["language"] = metadata.get("language", "")
-            template_vars["file_path"] = metadata.get("file_path", "")
-        
-        if content_type == CONTENT_TYPE_VIDEO or content_type == "text/video":
-            template_vars["title"] = metadata.get("title", "")
-            template_vars["channel"] = metadata.get("channel", "")
-        
-        if content_type == CONTENT_TYPE_SOCIAL or content_type == "text/social":
-            template_vars["platform"] = metadata.get("platform", "")
-            template_vars["author"] = metadata.get("author", "")
-        
-        if task == "contextual":
-            template_vars["references"] = metadata.get("references", "")
-        
-        # Generate the prompt
         try:
-            prompt = self.prompt_strategy.generate_prompt(template_name, **template_vars)
-        except Exception as e:
-            logger.error(f"Error generating prompt: {e}")
-            # Fall back to general extraction
-            prompt = self.prompt_strategy.generate_prompt("text_extraction", **template_vars)
-        
-        # Process with LLM
-        try:
+            # Select the appropriate template
+            if not template_name:
+                template_name = self._select_template(content_type, task)
+            
+            template = self.templates.get(template_name)
+            if not template:
+                logger.error(f"Template not found: {template_name}")
+                return {
+                    "error": f"Template not found: {template_name}",
+                    "error_type": "TemplateNotFound",
+                    "metadata": {
+                        "content_type": content_type,
+                        "task": task,
+                        "template_name": template_name,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+            
+            # Format the prompt
+            prompt = template.format(
+                content=content,
+                focus_point=focus_point,
+                explanation=explanation
+            )
+            
+            # Process with LLM
             messages = [
                 {"role": "system", "content": "You are an advanced AI assistant specializing in information extraction and analysis."},
                 {"role": "user", "content": prompt}
             ]
+            
+            model = model or self.default_model
             
             response = await litellm_llm_async(messages, model, temperature, max_tokens)
             
@@ -557,16 +595,21 @@ class SpecializedPromptProcessor:
                 "timestamp": datetime.now().isoformat()
             }
             
+            if metadata:
+                result["metadata"].update(metadata)
+            
             return result
         except Exception as e:
             logger.error(f"Error processing with LLM: {e}")
+            # Return a more informative error response
             return {
                 "error": str(e),
+                "error_type": type(e).__name__,
                 "metadata": {
-                    "model": model,
+                    "model": model or self.default_model,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
-                    "prompt_template": template_name,
+                    "prompt_template": template_name or self._select_template(content_type, task),
                     "content_type": content_type,
                     "task": task,
                     "timestamp": datetime.now().isoformat()
