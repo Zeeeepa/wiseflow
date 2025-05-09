@@ -149,6 +149,7 @@ class TaskManager:
         self.failed_tasks: Set[str] = set()
         self.cancelled_tasks: Set[str] = set()
         self.waiting_tasks: Set[str] = set()
+        self.pending_tasks: Set[str] = set()  # Added missing pending_tasks set
         
         self.max_concurrent_tasks = config.get("MAX_CONCURRENT_TASKS", 4)
         self.task_lock = asyncio.Lock()
@@ -215,41 +216,25 @@ class TaskManager:
         # Add task to manager
         self.tasks[task_id] = task
         
-def cancel_task(self, task_id: str) -> bool:
-    task = self.get_task(task_id)
-    if not task:
-        logger.warning(f"Task {task_id} not found")
-        return False
-        
-    try:
-        # Cleanup any allocated resources
-        self._cleanup_task_resources(task)
-        
-        # Cancel the task
-        if task.status == TaskStatus.RUNNING:
-            task.task_object.cancel()
-            self.running_tasks.discard(task_id)
-        elif task.status == TaskStatus.PENDING:
-            self.pending_tasks.discard(task_id)
-        elif task.status == TaskStatus.WAITING:
-            self.waiting_tasks.discard(task_id)
-            
-        task.status = TaskStatus.CANCELLED
-        task.completed_at = datetime.now()
-        self.cancelled_tasks.add(task_id)
+        # Add to pending or waiting tasks
+        if dependencies and any(self.tasks.get(dep_id).status != TaskStatus.COMPLETED for dep_id in dependencies if dep_id in self.tasks):
+            task.status = TaskStatus.WAITING
+            self.waiting_tasks.add(task_id)
+        else:
+            self.pending_tasks.add(task_id)
         
         # Publish event
-        event = create_task_event(
-            EventType.TASK_CANCELLED,
-            task_id,
-            {"name": task.name, "reason": "cancelled by user"}
-        )
-        publish_sync(event)
+        try:
+            event = create_task_event(
+                EventType.TASK_CREATED,
+                task_id,
+                {"name": name, "priority": priority.name}
+            )
+            publish_sync(event)
+        except Exception as e:
+            logger.warning(f"Failed to publish task created event: {e}")
         
-        return True
-    except Exception as e:
-        logger.error(f"Error cancelling task {task_id}: {e}")
-        return False
+        logger.info(f"Task registered: {task_id} ({name})")
         return task_id
     
     def cancel_task(self, task_id: str) -> bool:
@@ -267,6 +252,9 @@ def cancel_task(self, task_id: str) -> bool:
             logger.warning(f"Task {task_id} not found")
             return False
         
+        # Cleanup any allocated resources
+        self._cleanup_task_resources(task)
+        
         if task.status == TaskStatus.RUNNING:
             if task.task_object and not task.task_object.done():
                 task.task_object.cancel()
@@ -274,6 +262,7 @@ def cancel_task(self, task_id: str) -> bool:
             self.running_tasks.discard(task_id)
             self.cancelled_tasks.add(task_id)
         elif task.status == TaskStatus.PENDING:
+            self.pending_tasks.discard(task_id)
             self.cancelled_tasks.add(task_id)
         elif task.status == TaskStatus.WAITING:
             self.waiting_tasks.discard(task_id)
@@ -283,13 +272,14 @@ def cancel_task(self, task_id: str) -> bool:
             return False
         
         task.status = TaskStatus.CANCELLED
+        task.completed_at = datetime.now()
         
         # Publish event
         try:
             event = create_task_event(
-                EventType.TASK_FAILED,
+                EventType.TASK_CANCELLED,
                 task_id,
-                {"name": task.name, "reason": "cancelled"}
+                {"name": task.name, "reason": "cancelled by user"}
             )
             publish_sync(event)
         except Exception as e:
@@ -298,6 +288,20 @@ def cancel_task(self, task_id: str) -> bool:
         logger.info(f"Task cancelled: {task_id} ({task.name})")
         return True
     
+    def _cleanup_task_resources(self, task: Task):
+        """
+        Clean up resources allocated to a task.
+        
+        Args:
+            task: Task to clean up
+        """
+        # Implement resource cleanup logic here
+        # This is a placeholder for actual resource cleanup
+        logger.debug(f"Cleaning up resources for task {task.task_id}")
+        
+        # Example: Close any open file handles, network connections, etc.
+        pass
+
     def get_task(self, task_id: str) -> Optional[Task]:
         """
         Get a task by ID.
@@ -510,7 +514,7 @@ def cancel_task(self, task_id: str) -> bool:
                 except Exception as e:
                     logger.warning(f"Failed to publish task started event: {e}")
                 
-                logger.info(f"Task started: {task_id} ({task.name})")
+                logger.info(f"Task started: {task_id} ({task.name})"
     
     @handle_exceptions(default_message="Error executing task", log_error=True)
     async def _execute_task(self, task: Task):
@@ -637,4 +641,3 @@ def cancel_task(self, task_id: str) -> bool:
 
 # Create a singleton instance
 task_manager = TaskManager()
-
