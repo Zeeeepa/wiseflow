@@ -12,10 +12,12 @@ import inspect
 import time
 import uuid
 import threading
-from typing import Dict, List, Any, Optional, Union, Callable, Awaitable, Set
-from datetime import datetime
+import weakref
+from typing import Dict, List, Any, Optional, Union, Callable, Awaitable, Set, Deque
+from datetime import datetime, timedelta
 from enum import Enum, auto
-from weakref import WeakValueDictionary
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 from core.config import ENABLE_EVENT_SYSTEM
 
@@ -124,11 +126,15 @@ class EventBus:
     def __init__(self):
         """Initialize the event bus."""
         self._subscribers = {}
-        self._event_history = []
+        self._event_history = deque(maxlen=1000)  # Use deque with maxlen for automatic pruning
         self._max_history_size = 1000
+        self._history_retention_period = timedelta(hours=1)  # Default retention period
         self._lock = threading.RLock()
         self._enabled = ENABLE_EVENT_SYSTEM
         self._propagate_exceptions = False
+        
+        # Thread pool for handling events
+        self._thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="event_bus_worker")
         
         # Queue-based event handling
         self._max_queue_size = 1000
@@ -137,6 +143,9 @@ class EventBus:
         
         # Register built-in subscribers
         self._register_built_in_subscribers()
+        
+        # Shutdown flag
+        self._shutting_down = False
         
         logger.info("Event bus initialized")
     
@@ -158,7 +167,7 @@ class EventBus:
             callback: The callback function to call when the event is published
             source: Optional source identifier for the callback, useful for bulk unsubscribing
         """
-        if not self._enabled:
+        if not self._enabled or self._shutting_down:
             return
         
         with self._lock:
@@ -189,7 +198,7 @@ class EventBus:
             event_type: The event type to unsubscribe from
             callback: The callback function to unsubscribe
         """
-        if not self._enabled:
+        if not self._enabled or self._shutting_down:
             return
         
         with self._lock:
@@ -208,7 +217,7 @@ class EventBus:
         Args:
             source: The source identifier to unsubscribe all callbacks from
         """
-        if not self._enabled:
+        if not self._enabled or self._shutting_down:
             return
         
         with self._lock:
@@ -243,40 +252,76 @@ class EventBus:
             self._propagate_exceptions = propagate
         logger.info(f"Event bus exception propagation set to: {propagate}")
     
-    async def publish(self, event: Event) -> None:
+    async def publish(self, event: Event, timeout: Optional[float] = None) -> None:
         """
         Publish an event asynchronously.
         
         Args:
             event: The event to publish
+            timeout: Optional timeout for event processing in seconds
         """
-        if not self._enabled:
+        if not self._enabled or self._shutting_down:
             return
         
         # Add to history with lock protection
         with self._lock:
             self._event_history.append(event)
             
-            # Trim history if needed
-            if len(self._event_history) > self._max_history_size:
-                self._event_history = self._event_history[-self._max_history_size:]
-            
             # Get a copy of subscribers to avoid issues if the list changes during iteration
             subscribers = self._subscribers.get(event.event_type, []).copy()
         
-        # Call subscribers outside the lock to avoid deadlocks
+        # Process subscribers concurrently with asyncio.gather
+        tasks = []
         for callback in subscribers:
-            try:
-                if asyncio.iscoroutinefunction(callback):
-                    await callback(event)
-                else:
-                    callback(event)
-            except Exception as e:
-                logger.error(f"Error in event subscriber {callback.__name__}: {e}")
-                if self._propagate_exceptions:
-                    raise  # Re-raise the exception if propagation is enabled
+            if asyncio.iscoroutinefunction(callback):
+                # For async callbacks, create a task
+                task = asyncio.create_task(self._call_async_callback(callback, event))
+            else:
+                # For sync callbacks, run in thread pool
+                task = asyncio.create_task(self._call_sync_callback_in_thread(callback, event))
+            tasks.append(task)
+        
+        # Wait for all tasks to complete, with optional timeout
+        if tasks:
+            if timeout:
+                # With timeout
+                done, pending = await asyncio.wait(tasks, timeout=timeout)
+                # Cancel any pending tasks
+                for task in pending:
+                    task.cancel()
+            else:
+                # Without timeout
+                await asyncio.gather(*tasks, return_exceptions=True)
     
-    def publish_sync(self, event: Event) -> None:
+    async def _call_async_callback(self, callback, event):
+        """Call an async callback and handle exceptions."""
+        try:
+            await callback(event)
+        except Exception as e:
+            logger.error(f"Error in async event subscriber {callback.__name__}: {e}")
+            if self._propagate_exceptions:
+                raise
+    
+    async def _call_sync_callback_in_thread(self, callback, event):
+        """Call a sync callback in a thread pool and handle exceptions."""
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(self._thread_pool, self._call_sync_callback, callback, event)
+        except Exception as e:
+            logger.error(f"Error in threaded event subscriber {callback.__name__}: {e}")
+            if self._propagate_exceptions:
+                raise
+    
+    def _call_sync_callback(self, callback, event):
+        """Call a sync callback and handle exceptions."""
+        try:
+            callback(event)
+        except Exception as e:
+            logger.error(f"Error in sync event subscriber {callback.__name__}: {e}")
+            if self._propagate_exceptions:
+                raise
+    
+    def publish_sync(self, event: Event, timeout: Optional[float] = None) -> None:
         """
         Publish an event synchronously.
         
@@ -285,17 +330,14 @@ class EventBus:
         
         Args:
             event: The event to publish
+            timeout: Optional timeout for event processing in seconds
         """
-        if not self._enabled:
+        if not self._enabled or self._shutting_down:
             return
         
         # Add to history with lock protection
         with self._lock:
             self._event_history.append(event)
-            
-            # Trim history if needed
-            if len(self._event_history) > self._max_history_size:
-                self._event_history = self._event_history[-self._max_history_size:]
             
             # Get a copy of subscribers to avoid issues if the list changes during iteration
             subscribers = self._subscribers.get(event.event_type, []).copy()
@@ -319,19 +361,22 @@ class EventBus:
                         asyncio.set_event_loop(loop)
                         loop.run_until_complete(callback(event))
                 else:
+                    # Run sync callback directly
                     callback(event)
             except Exception as e:
                 logger.error(f"Error in event subscriber {callback.__name__}: {e}")
                 if self._propagate_exceptions:
                     raise  # Re-raise the exception if propagation is enabled
     
-    def get_history(self, event_type: Optional[EventType] = None, limit: int = 100) -> List[Event]:
+    def get_history(self, event_type: Optional[EventType] = None, limit: int = 100, 
+                   since: Optional[datetime] = None) -> List[Event]:
         """
         Get event history.
         
         Args:
             event_type: The event type to filter by, or None for all events
             limit: The maximum number of events to return
+            since: Optional datetime to filter events since a specific time
             
         Returns:
             List of events
@@ -340,10 +385,21 @@ class EventBus:
             return []
         
         with self._lock:
-            if event_type is None:
-                return self._event_history[-limit:]
+            # Filter by time if specified
+            if since:
+                if event_type:
+                    filtered = [e for e in self._event_history 
+                               if e.timestamp >= since and e.event_type == event_type]
+                else:
+                    filtered = [e for e in self._event_history if e.timestamp >= since]
             else:
-                return [e for e in self._event_history if e.event_type == event_type][-limit:]
+                if event_type:
+                    filtered = [e for e in self._event_history if e.event_type == event_type]
+                else:
+                    filtered = list(self._event_history)
+            
+            # Apply limit
+            return filtered[-limit:]
     
     def clear_history(self) -> None:
         """Clear event history."""
@@ -351,12 +407,38 @@ class EventBus:
             return
         
         with self._lock:
-            self._event_history = []
+            self._event_history.clear()
+    
+    def prune_history(self, older_than: Optional[datetime] = None) -> int:
+        """
+        Prune event history older than a specific time.
+        
+        Args:
+            older_than: Optional datetime to prune events older than this time.
+                       If None, uses the retention period.
+                       
+        Returns:
+            Number of events pruned
+        """
+        if not self._enabled:
+            return 0
+        
+        with self._lock:
+            if older_than is None:
+                older_than = datetime.now() - self._history_retention_period
+            
+            original_size = len(self._event_history)
+            self._event_history = deque(
+                [e for e in self._event_history if e.timestamp >= older_than],
+                maxlen=self._max_history_size
+            )
+            return original_size - len(self._event_history)
     
     def enable(self) -> None:
         """Enable the event bus."""
         with self._lock:
             self._enabled = True
+            self._shutting_down = False
         logger.info("Event bus enabled")
     
     def disable(self) -> None:
@@ -379,11 +461,25 @@ class EventBus:
         with self._lock:
             self._max_history_size = size
             
-            # Trim history if needed
-            if len(self._event_history) > self._max_history_size:
-                self._event_history = self._event_history[-self._max_history_size:]
+            # Create a new deque with the new maxlen
+            self._event_history = deque(self._event_history, maxlen=size)
         
         logger.info(f"Event history size set to {size}")
+    
+    def set_history_retention_period(self, period: timedelta) -> None:
+        """
+        Set the retention period for event history.
+        
+        Args:
+            period: Time period to retain events
+        """
+        with self._lock:
+            self._history_retention_period = period
+            
+            # Prune old events based on new retention period
+            self.prune_history()
+        
+        logger.info(f"Event history retention period set to {period}")
     
     def get_subscriber_count(self, event_type: Optional[EventType] = None) -> int:
         """
@@ -405,6 +501,22 @@ class EventBus:
             else:
                 # Count subscribers for a specific event type
                 return len(self._subscribers.get(event_type, []))
+    
+    def shutdown(self) -> None:
+        """
+        Shutdown the event bus.
+        
+        This method should be called when the application is shutting down to
+        ensure proper cleanup of resources.
+        """
+        with self._lock:
+            self._shutting_down = True
+            self._enabled = False
+        
+        # Shutdown thread pool
+        self._thread_pool.shutdown(wait=True)
+        
+        logger.info("Event bus shutdown complete")
 
 
 # Create a singleton instance
@@ -423,21 +535,26 @@ def unsubscribe_by_source(source: str) -> None:
     """Unsubscribe all callbacks from a specific source."""
     event_bus.unsubscribe_by_source(source)
 
-async def publish(event: Event) -> None:
+async def publish(event: Event, timeout: Optional[float] = None) -> None:
     """Publish an event."""
-    await event_bus.publish(event)
+    await event_bus.publish(event, timeout)
 
-def publish_sync(event: Event) -> None:
+def publish_sync(event: Event, timeout: Optional[float] = None) -> None:
     """Publish an event synchronously."""
-    event_bus.publish_sync(event)
+    event_bus.publish_sync(event, timeout)
 
-def get_history(event_type: Optional[EventType] = None, limit: int = 100) -> List[Event]:
+def get_history(event_type: Optional[EventType] = None, limit: int = 100, 
+               since: Optional[datetime] = None) -> List[Event]:
     """Get event history."""
-    return event_bus.get_history(event_type, limit)
+    return event_bus.get_history(event_type, limit, since)
 
 def clear_history() -> None:
     """Clear event history."""
     event_bus.clear_history()
+
+def prune_history(older_than: Optional[datetime] = None) -> int:
+    """Prune event history older than a specific time."""
+    return event_bus.prune_history(older_than)
 
 def enable() -> None:
     """Enable the event bus."""
@@ -459,9 +576,17 @@ def set_max_history_size(size: int) -> None:
     """Set the maximum number of events to keep in history."""
     event_bus.set_max_history_size(size)
 
+def set_history_retention_period(period: timedelta) -> None:
+    """Set the retention period for event history."""
+    event_bus.set_history_retention_period(period)
+
 def get_subscriber_count(event_type: Optional[EventType] = None) -> int:
     """Get the number of subscribers for an event type."""
     return event_bus.get_subscriber_count(event_type)
+
+def shutdown() -> None:
+    """Shutdown the event bus."""
+    event_bus.shutdown()
 
 # Helper functions for creating common events
 def create_system_startup_event(data: Optional[Dict[str, Any]] = None) -> Event:
@@ -512,4 +637,3 @@ def create_resource_event(event_type: EventType, resource_type: str, value: floa
         "timestamp": datetime.now().isoformat()
     }
     return Event(event_type, data, "resource_monitor")
-
