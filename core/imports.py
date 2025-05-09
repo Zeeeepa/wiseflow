@@ -137,15 +137,19 @@ from core.references import (
 )
 
 # Task management
-from core.task_manager import (
-    TaskManager,
-    TaskDependencyError
-)
-from core.thread_pool_manager import (
-    ThreadPoolManager,
+from core.task import (
+    AsyncTaskManager,
+    Task,
     TaskPriority,
-    TaskStatus
+    TaskStatus,
+    TaskDependencyError,
+    create_task_id,
+    task_manager
 )
+
+# Deprecated task management systems (will be removed in future versions)
+from core.task_manager import TaskManager
+from core.thread_pool_manager import ThreadPoolManager
 
 # Event system
 from core.event_system import (
