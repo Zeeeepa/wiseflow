@@ -10,16 +10,23 @@ import re
 import json
 import asyncio
 import logging
+import random
 from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime, timedelta
 import uuid
 from collections import Counter, defaultdict
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Import necessary modules
 from ..llms.openai_wrapper import openai_llm as llm
 from ..utils.general_utils import get_logger, normalize_url
 from ..analysis import Entity, Relationship, KnowledgeGraph
 from ..utils.pb_api import PbTalker
+
+# Define retryable exceptions
+RETRYABLE_EXCEPTIONS = (
+    Exception,  # Temporarily catch all exceptions for retry
+)
 
 # Setup logging
 project_dir = os.environ.get("PROJECT_DIR", "")
@@ -81,9 +88,15 @@ or strategically valuable. Highlight any unexpected findings or connections that
 Your summary should be clear, concise, and focused on delivering maximum value to someone interested in this topic.
 """
 
+@retry(
+    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 async def generate_trend_analysis(focus_point: str, explanation: str, info_items: List[Dict[str, Any]], time_period: str = "week") -> str:
     """
-    Generate a trend analysis for a collection of information items.
+    Generate a trend analysis for a collection of information items with retry logic.
     
     Args:
         focus_point: The focus point being analyzed
@@ -96,35 +109,52 @@ async def generate_trend_analysis(focus_point: str, explanation: str, info_items
     """
     insights_logger.debug(f"Generating trend analysis for focus point: {focus_point}")
     
-    # Format the info items for the prompt
-    formatted_items = []
-    for i, item in enumerate(info_items, 1):
-        content = item.get('content', '')
-        url = item.get('url', '')
-        formatted_items.append(f"Item {i}:\nContent: {content}\nSource: {url}\n")
-    
-    items_text = "\n".join(formatted_items)
-    
-    # Create the prompt
-    prompt = TREND_ANALYSIS_PROMPT.format(
-        focus_point=focus_point,
-        explanation=explanation,
-        time_period=time_period,
-        info_items=items_text
-    )
-    
-    # Generate the analysis
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert data analyst specializing in trend identification.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.2)
-    
-    insights_logger.debug("Trend analysis generated successfully")
-    return result
+    try:
+        # Format the info items for the prompt
+        formatted_items = []
+        for i, item in enumerate(info_items, 1):
+            content = item.get('content', '')
+            url = item.get('url', '')
+            formatted_items.append(f"Item {i}:\nContent: {content}\nSource: {url}\n")
+        
+        items_text = "\n".join(formatted_items)
+        
+        # Check if items_text is too large
+        if len(items_text) > 32000:  # Approximate token limit
+            insights_logger.warning(f"Items text too large ({len(items_text)} chars), truncating")
+            # Truncate by reducing the number of items
+            formatted_items = formatted_items[:int(len(formatted_items) * 0.8)]  # Keep 80%
+            items_text = "\n".join(formatted_items)
+        
+        # Create the prompt
+        prompt = TREND_ANALYSIS_PROMPT.format(
+            focus_point=focus_point,
+            explanation=explanation,
+            time_period=time_period,
+            info_items=items_text
+        )
+        
+        # Generate the analysis
+        result = await llm([
+            {'role': 'system', 'content': 'You are an expert data analyst specializing in trend identification.'},
+            {'role': 'user', 'content': prompt}
+        ], model=model, temperature=0.2)
+        
+        insights_logger.debug("Trend analysis generated successfully")
+        return result
+    except Exception as e:
+        insights_logger.error(f"Error generating trend analysis: {e}")
+        raise  # Let the retry decorator handle it
 
+@retry(
+    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 async def generate_entity_analysis(focus_point: str, explanation: str, info_items: List[Dict[str, Any]]) -> str:
     """
-    Generate an entity relationship analysis for a collection of information items.
+    Generate an entity relationship analysis for a collection of information items with retry logic.
     
     Args:
         focus_point: The focus point being analyzed
@@ -136,34 +166,51 @@ async def generate_entity_analysis(focus_point: str, explanation: str, info_item
     """
     insights_logger.debug(f"Generating entity relationship analysis for focus point: {focus_point}")
     
-    # Format the info items for the prompt
-    formatted_items = []
-    for i, item in enumerate(info_items, 1):
-        content = item.get('content', '')
-        url = item.get('url', '')
-        formatted_items.append(f"Item {i}:\nContent: {content}\nSource: {url}\n")
-    
-    items_text = "\n".join(formatted_items)
-    
-    # Create the prompt
-    prompt = ENTITY_RELATIONSHIP_PROMPT.format(
-        focus_point=focus_point,
-        explanation=explanation,
-        info_items=items_text
-    )
-    
-    # Generate the analysis
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert in entity recognition and relationship mapping.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.2)
-    
-    insights_logger.debug("Entity relationship analysis generated successfully")
-    return result
+    try:
+        # Format the info items for the prompt
+        formatted_items = []
+        for i, item in enumerate(info_items, 1):
+            content = item.get('content', '')
+            url = item.get('url', '')
+            formatted_items.append(f"Item {i}:\nContent: {content}\nSource: {url}\n")
+        
+        items_text = "\n".join(formatted_items)
+        
+        # Check if items_text is too large
+        if len(items_text) > 32000:  # Approximate token limit
+            insights_logger.warning(f"Items text too large ({len(items_text)} chars), truncating")
+            # Truncate by reducing the number of items
+            formatted_items = formatted_items[:int(len(formatted_items) * 0.8)]  # Keep 80%
+            items_text = "\n".join(formatted_items)
+        
+        # Create the prompt
+        prompt = ENTITY_RELATIONSHIP_PROMPT.format(
+            focus_point=focus_point,
+            explanation=explanation,
+            info_items=items_text
+        )
+        
+        # Generate the analysis
+        result = await llm([
+            {'role': 'system', 'content': 'You are an expert in entity recognition and relationship mapping.'},
+            {'role': 'user', 'content': prompt}
+        ], model=model, temperature=0.2)
+        
+        insights_logger.debug("Entity relationship analysis generated successfully")
+        return result
+    except Exception as e:
+        insights_logger.error(f"Error generating entity analysis: {e}")
+        raise  # Let the retry decorator handle it
 
+@retry(
+    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 async def generate_insight_summary(focus_point: str, explanation: str, trend_analysis: str, entity_analysis: str) -> str:
     """
-    Generate a concise summary of insights based on trend and entity analyses.
+    Generate a concise summary of insights based on trend and entity analyses with retry logic.
     
     Args:
         focus_point: The focus point being analyzed
@@ -176,26 +223,30 @@ async def generate_insight_summary(focus_point: str, explanation: str, trend_ana
     """
     insights_logger.debug(f"Generating insight summary for focus point: {focus_point}")
     
-    # Create the prompt
-    prompt = INSIGHT_SUMMARY_PROMPT.format(
-        focus_point=focus_point,
-        explanation=explanation,
-        trend_analysis=trend_analysis,
-        entity_analysis=entity_analysis
-    )
-    
-    # Generate the summary
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert intelligence analyst specializing in synthesizing information.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.3)
-    
-    insights_logger.debug("Insight summary generated successfully")
-    return result
+    try:
+        # Create the prompt
+        prompt = INSIGHT_SUMMARY_PROMPT.format(
+            focus_point=focus_point,
+            explanation=explanation,
+            trend_analysis=trend_analysis,
+            entity_analysis=entity_analysis
+        )
+        
+        # Generate the summary
+        result = await llm([
+            {'role': 'system', 'content': 'You are an expert intelligence analyst specializing in synthesizing information.'},
+            {'role': 'user', 'content': prompt}
+        ], model=model, temperature=0.3)
+        
+        insights_logger.debug("Insight summary generated successfully")
+        return result
+    except Exception as e:
+        insights_logger.error(f"Error generating insight summary: {e}")
+        raise  # Let the retry decorator handle it
 
 async def generate_insights_for_focus(focus_id: str, time_period_days: int = 7, force: bool = False) -> Dict[str, Any]:
     """
-    Generate comprehensive insights for a specific focus point.
+    Generate comprehensive insights for a specific focus point with improved error handling.
     
     Args:
         focus_id: The ID of the focus point
@@ -207,92 +258,110 @@ async def generate_insights_for_focus(focus_id: str, time_period_days: int = 7, 
     """
     insights_logger.info(f"Generating insights for focus ID: {focus_id}")
     
-    # Check for recent insights if not forcing regeneration
-    if not force:
-        cutoff_time = (datetime.now() - timedelta(hours=24)).isoformat()
-        filter_query = f"focus_id='{focus_id}' && created>='{cutoff_time}'"
-        recent_insights = pb.read(collection_name='insights', filter=filter_query, sort="-created")
+    try:
+        # Check for recent insights if not forcing regeneration
+        if not force:
+            cutoff_time = (datetime.now() - timedelta(hours=24)).isoformat()
+            filter_query = f"focus_id='{focus_id}' && created>='{cutoff_time}'"
+            recent_insights = pb.read(collection_name='insights', filter=filter_query, sort="-created")
+            
+            if recent_insights:
+                insights_logger.info(f"Found recent insights for focus ID {focus_id}")
+                return recent_insights[0]
         
-        if recent_insights:
-            insights_logger.info(f"Found recent insights for focus ID {focus_id}")
-            return recent_insights[0]
-    
-    # Get the focus point details
-    focus = pb.read_one(collection_name='focus_point', id=focus_id)
-    if not focus:
-        insights_logger.error(f"Focus point with ID {focus_id} not found")
-        return {"error": f"Focus point with ID {focus_id} not found"}
-    
-    focus_point = focus.get("focuspoint", "").strip()
-    explanation = focus.get("explanation", "").strip()
-    
-    # Calculate the time period
-    cutoff_date = (datetime.now() - timedelta(days=time_period_days)).strftime('%Y-%m-%d')
-    
-    # Get information items for this focus point from the specified time period
-    filter_query = f"tag='{focus_id}' && created>='{cutoff_date}'"
-    info_items = pb.read(collection_name='infos', filter=filter_query)
-    
-    if not info_items:
-        insights_logger.warning(f"No information items found for focus ID {focus_id} in the last {time_period_days} days")
-        return {
+        # Get the focus point details
+        focus = pb.read_one(collection_name='focus_point', id=focus_id)
+        if not focus:
+            insights_logger.error(f"Focus point with ID {focus_id} not found")
+            return {"error": f"Focus point with ID {focus_id} not found"}
+        
+        focus_point = focus.get("focuspoint", "").strip()
+        explanation = focus.get("explanation", "").strip()
+        
+        # Calculate the time period
+        cutoff_date = (datetime.now() - timedelta(days=time_period_days)).strftime('%Y-%m-%d')
+        
+        # Get information items for this focus point from the specified time period
+        filter_query = f"tag='{focus_id}' && created>='{cutoff_date}'"
+        info_items = pb.read(collection_name='infos', filter=filter_query)
+        
+        if not info_items:
+            insights_logger.warning(f"No information items found for focus ID {focus_id} in the last {time_period_days} days")
+            return {
+                "focus_id": focus_id,
+                "focus_point": focus_point,
+                "error": f"No information items found in the last {time_period_days} days"
+            }
+        
+        insights_logger.info(f"Found {len(info_items)} information items for analysis")
+        
+        # Generate the analyses in parallel with error handling
+        trend_analysis = ""
+        entity_analysis = ""
+        
+        try:
+            trend_analysis = await generate_trend_analysis(focus_point, explanation, info_items, f"{time_period_days} days")
+        except Exception as e:
+            insights_logger.error(f"Error generating trend analysis: {e}")
+            trend_analysis = f"Error generating trend analysis: {str(e)}"
+        
+        try:
+            entity_analysis = await generate_entity_analysis(focus_point, explanation, info_items)
+        except Exception as e:
+            insights_logger.error(f"Error generating entity analysis: {e}")
+            entity_analysis = f"Error generating entity analysis: {str(e)}"
+        
+        # Generate the summary based on both analyses
+        insight_summary = ""
+        try:
+            insight_summary = await generate_insight_summary(focus_point, explanation, trend_analysis, entity_analysis)
+        except Exception as e:
+            insights_logger.error(f"Error generating insight summary: {e}")
+            insight_summary = f"Error generating insight summary: {str(e)}"
+        
+        # Create the result
+        result = {
             "focus_id": focus_id,
             "focus_point": focus_point,
-            "error": f"No information items found in the last {time_period_days} days"
-        }
-    
-    insights_logger.info(f"Found {len(info_items)} information items for analysis")
-    
-    # Generate the analyses in parallel
-    trend_analysis_task = asyncio.create_task(
-        generate_trend_analysis(focus_point, explanation, info_items, f"{time_period_days} days")
-    )
-    entity_analysis_task = asyncio.create_task(
-        generate_entity_analysis(focus_point, explanation, info_items)
-    )
-    
-    trend_analysis = await trend_analysis_task
-    entity_analysis = await entity_analysis_task
-    
-    # Generate the summary based on both analyses
-    insight_summary = await generate_insight_summary(focus_point, explanation, trend_analysis, entity_analysis)
-    
-    # Create the result
-    result = {
-        "focus_id": focus_id,
-        "focus_point": focus_point,
-        "time_period": f"{time_period_days} days",
-        "item_count": len(info_items),
-        "trend_analysis": trend_analysis,
-        "entity_analysis": entity_analysis,
-        "insight_summary": insight_summary,
-        "generated_at": datetime.now().isoformat()
-    }
-    
-    # Save the insights to the database
-    try:
-        insight_record = {
-            "focus_id": focus_id,
+            "time_period": f"{time_period_days} days",
+            "item_count": len(info_items),
             "trend_analysis": trend_analysis,
             "entity_analysis": entity_analysis,
             "insight_summary": insight_summary,
-            "item_count": len(info_items),
-            "time_period": f"{time_period_days} days"
+            "generated_at": datetime.now().isoformat()
         }
-        pb.add(collection_name='insights', body=insight_record)
-        insights_logger.info(f"Insights for focus ID {focus_id} saved to database")
+        
+        # Save the insights to the database
+        try:
+            insight_record = {
+                "focus_id": focus_id,
+                "trend_analysis": trend_analysis,
+                "entity_analysis": entity_analysis,
+                "insight_summary": insight_summary,
+                "item_count": len(info_items),
+                "time_period": f"{time_period_days} days"
+            }
+            pb.add(collection_name='insights', body=insight_record)
+            insights_logger.info(f"Insights for focus ID {focus_id} saved to database")
+        except Exception as e:
+            insights_logger.error(f"Error saving insights to database: {e}")
+            # Save to a local file as backup
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            with open(os.path.join(project_dir, f'{timestamp}_insights_{focus_id}.json'), 'w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, indent=4)
+        
+        return result
     except Exception as e:
-        insights_logger.error(f"Error saving insights to database: {e}")
-        # Save to a local file as backup
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        with open(os.path.join(project_dir, f'{timestamp}_insights_{focus_id}.json'), 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=4)
-    
-    return result
+        insights_logger.error(f"Error generating insights for focus: {e}")
+        return {
+            "focus_id": focus_id,
+            "error": f"Error generating insights: {str(e)}",
+            "generated_at": datetime.now().isoformat()
+        }
 
 async def generate_insights_for_all_active_focuses(time_period_days: int = 7) -> List[Dict[str, Any]]:
     """
-    Generate insights for all active focus points.
+    Generate insights for all active focus points with improved error handling.
     
     Args:
         time_period_days: Number of days to look back for information items
@@ -302,30 +371,37 @@ async def generate_insights_for_all_active_focuses(time_period_days: int = 7) ->
     """
     insights_logger.info("Generating insights for all active focus points")
     
-    # Get all active focus points
-    active_focuses = pb.read(collection_name='focus_point', filter="activated=true")
-    
-    if not active_focuses:
-        insights_logger.warning("No active focus points found")
-        return []
-    
-    insights_logger.info(f"Found {len(active_focuses)} active focus points")
-    
-    # Generate insights for each focus point
-    results = []
-    for focus in active_focuses:
-        try:
-            result = await generate_insights_for_focus(focus["id"], time_period_days)
-            results.append(result)
-        except Exception as e:
-            insights_logger.error(f"Error generating insights for focus ID {focus['id']}: {e}")
-            results.append({
-                "focus_id": focus["id"],
-                "focus_point": focus.get("focuspoint", ""),
-                "error": str(e)
-            })
-    
-    return results
+    try:
+        # Get all active focus points
+        active_focuses = pb.read(collection_name='focus_point', filter="activated=true")
+        
+        if not active_focuses:
+            insights_logger.warning("No active focus points found")
+            return []
+        
+        insights_logger.info(f"Found {len(active_focuses)} active focus points")
+        
+        # Generate insights for each focus point
+        results = []
+        for focus in active_focuses:
+            try:
+                result = await generate_insights_for_focus(focus["id"], time_period_days)
+                results.append(result)
+            except Exception as e:
+                insights_logger.error(f"Error generating insights for focus ID {focus['id']}: {e}")
+                results.append({
+                    "focus_id": focus["id"],
+                    "focus_point": focus.get("focuspoint", ""),
+                    "error": str(e)
+                })
+        
+        return results
+    except Exception as e:
+        insights_logger.error(f"Error generating insights for all focuses: {e}")
+        return [{
+            "error": f"Error generating insights for all focuses: {str(e)}",
+            "generated_at": datetime.now().isoformat()
+        }]
 
 async def get_insights_for_focus(focus_id: str, max_age_hours: int = 24) -> Dict[str, Any]:
     """
@@ -340,20 +416,28 @@ async def get_insights_for_focus(focus_id: str, max_age_hours: int = 24) -> Dict
     """
     insights_logger.info(f"Getting insights for focus ID: {focus_id}")
     
-    # Calculate the cutoff time
-    cutoff_time = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
-    
-    # Try to get recent insights from the database
-    filter_query = f"focus_id='{focus_id}' && created>='{cutoff_time}'"
-    recent_insights = pb.read(collection_name='insights', filter=filter_query, sort="-created")
-    
-    if recent_insights:
-        insights_logger.info(f"Found recent insights for focus ID {focus_id}")
-        return recent_insights[0]
-    
-    # No recent insights found, generate new ones
-    insights_logger.info(f"No recent insights found for focus ID {focus_id}, generating new ones")
-    return await generate_insights_for_focus(focus_id)
+    try:
+        # Calculate the cutoff time
+        cutoff_time = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+        
+        # Try to get recent insights from the database
+        filter_query = f"focus_id='{focus_id}' && created>='{cutoff_time}'"
+        recent_insights = pb.read(collection_name='insights', filter=filter_query, sort="-created")
+        
+        if recent_insights:
+            insights_logger.info(f"Found recent insights for focus ID {focus_id}")
+            return recent_insights[0]
+        
+        # No recent insights found, generate new ones
+        insights_logger.info(f"No recent insights found for focus ID {focus_id}, generating new ones")
+        return await generate_insights_for_focus(focus_id)
+    except Exception as e:
+        insights_logger.error(f"Error getting insights for focus: {e}")
+        return {
+            "focus_id": focus_id,
+            "error": f"Error getting insights: {str(e)}",
+            "generated_at": datetime.now().isoformat()
+        }
 
 # Utility functions for data mining
 

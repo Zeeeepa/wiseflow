@@ -1,12 +1,7 @@
-# WiseFlow Dependencies
-# This file includes all required dependencies for running WiseFlow
-
-# Include base requirements
--r requirements-base.txt
-
-# For optional features, install with:
-# pip install -r requirements-optional.txt
-
-# For development, install with:
-# pip install -r requirements-dev.txt
+openai>=1.0.0
+litellm>=0.1.0
+tiktoken>=0.5.0
+tenacity>=8.0.0
+loguru>=0.7.0
+asyncio>=3.4.3
 

@@ -12,11 +12,21 @@ import os
 import json
 import logging
 import re
+import random
 from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 import asyncio
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
+from core.llms.advanced.prompt_utils import (
+    get_token_count, 
+    get_model_token_limit,
+    chunk_content, 
+    truncate_content_to_fit,
+    parse_json_from_llm_response,
+    process_in_chunks
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +46,10 @@ TASK_ANALYSIS = "analysis"
 TASK_REASONING = "reasoning"
 TASK_COMPARISON = "comparison"
 
+# Define retryable exceptions
+RETRYABLE_EXCEPTIONS = (
+    Exception,  # Temporarily catch all exceptions for retry
+)
 
 class PromptTemplate:
     """
@@ -108,7 +122,6 @@ class PromptTemplate:
             return self.template.format(**kwargs)
         else:
             raise ValueError(f"Unsupported template format: {self.template_format}")
-
 
 class ContentTypePromptStrategy:
     """
@@ -434,12 +447,12 @@ class ContentTypePromptStrategy:
         return self.templates[template_name].format(**kwargs)
 
 
-class SpecializedPromptProcessor:
+class AdvancedPromptProcessor:
     """
-    Processor for handling specialized prompting strategies for different content types.
+    Advanced processor for specialized prompting with error handling and token management.
     
-    This class provides methods for processing content using specialized prompting
-    strategies, including multi-step reasoning and contextual understanding.
+    This class provides methods for processing content with specialized prompts,
+    handling errors, managing tokens, and processing responses.
     """
     
     def __init__(
@@ -447,25 +460,36 @@ class SpecializedPromptProcessor:
         default_model: Optional[str] = None,
         default_temperature: float = 0.7,
         default_max_tokens: int = 1000,
-        config: Optional[Dict[str, Any]] = None
+        prompt_strategy: Optional[Any] = None
     ):
         """
-        Initialize the specialized prompt processor.
+        Initialize the advanced prompt processor.
         
         Args:
-            default_model: The default LLM model to use
-            default_temperature: The default temperature for LLM generation
-            default_max_tokens: The default maximum tokens for LLM generation
-            config: Optional configuration dictionary
+            default_model: Default model to use for generation
+            default_temperature: Default temperature for generation
+            default_max_tokens: Default maximum tokens for generation
+            prompt_strategy: Optional prompt strategy to use
         """
         self.default_model = default_model or os.environ.get("PRIMARY_MODEL", "")
         self.default_temperature = default_temperature
         self.default_max_tokens = default_max_tokens
-        self.config = config or {}
         
-        # Initialize the prompt strategy
-        self.prompt_strategy = ContentTypePromptStrategy(config)
+        # Initialize prompt strategy if not provided
+        if prompt_strategy is None:
+            self.prompt_strategy = ContentTypePromptStrategy()
+        else:
+            self.prompt_strategy = prompt_strategy
+        
+        if not self.default_model:
+            logger.warning("No default model specified for AdvancedPromptProcessor")
     
+    @retry(
+        retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True
+    )
     async def process(
         self,
         content: str,
@@ -479,7 +503,7 @@ class SpecializedPromptProcessor:
         max_tokens: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Process content using specialized prompting strategies.
+        Process content with specialized prompting and error handling.
         
         Args:
             content: The content to process
@@ -495,13 +519,32 @@ class SpecializedPromptProcessor:
         Returns:
             Dict[str, Any]: The processing result
         """
-        metadata = metadata or {}
         model = model or self.default_model
         temperature = temperature if temperature is not None else self.default_temperature
         max_tokens = max_tokens or self.default_max_tokens
+        metadata = metadata or {}
         
-        # Get the appropriate prompt template
-        template_name = self.prompt_strategy.get_strategy_for_content(content_type, task)
+        # Check if content is too large for direct processing
+        content_tokens = get_token_count(content, model)
+        model_token_limit = get_model_token_limit(model)
+        
+        # If content is too large, use chunking
+        if content_tokens > model_token_limit - max_tokens - 1000:  # Reserve 1000 tokens for prompt
+            logger.info(f"Content too large ({content_tokens} tokens) for direct processing. Using chunking.")
+            return await self._process_large_content(
+                content=content,
+                focus_point=focus_point,
+                explanation=explanation,
+                content_type=content_type,
+                task=task,
+                metadata=metadata,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+        
+        # Determine the template to use
+        template_name = self._get_template_name(content_type, task)
         
         # Prepare template variables
         template_vars = {
@@ -541,10 +584,21 @@ class SpecializedPromptProcessor:
                 {"role": "user", "content": prompt}
             ]
             
+            # Check if messages are within token limits
+            total_tokens = sum(get_token_count(msg["content"], model) for msg in messages)
+            if total_tokens + max_tokens > model_token_limit:
+                logger.warning(f"Total tokens ({total_tokens} + {max_tokens}) exceeds model limit ({model_token_limit}). Truncating prompt.")
+                # Truncate the user prompt to fit
+                messages[1]["content"] = truncate_content_to_fit(
+                    prompt, 
+                    model_token_limit - max_tokens - get_token_count(messages[0]["content"], model),
+                    model
+                )
+            
             response = await litellm_llm_async(messages, model, temperature, max_tokens)
             
             # Parse the response
-            result = self._parse_llm_response(response)
+            result = parse_json_from_llm_response(response)
             
             # Add metadata
             result["metadata"] = {
@@ -573,40 +627,230 @@ class SpecializedPromptProcessor:
                 }
             }
     
-    def _parse_llm_response(self, response: str) -> Dict[str, Any]:
+    async def _process_large_content(
+        self,
+        content: str,
+        focus_point: str,
+        explanation: str = "",
+        content_type: str = CONTENT_TYPE_TEXT,
+        task: str = TASK_EXTRACTION,
+        metadata: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
-        Parse the LLM response into a structured format.
+        Process large content by chunking and combining results.
         
         Args:
-            response: The LLM response
+            content: The content to process
+            focus_point: The focus point for extraction
+            explanation: Additional explanation or context
+            content_type: The type of content
+            task: The task to perform
+            metadata: Additional metadata
+            model: The LLM model to use
+            temperature: The temperature for LLM generation
+            max_tokens: The maximum tokens for LLM generation
             
         Returns:
-            Dict[str, Any]: The parsed response
+            Dict[str, Any]: The combined processing result
         """
-        try:
-            # Try to extract JSON from the response
-            json_pattern = r'```json\s*([\s\S]*?)\s*```'
-            json_matches = re.findall(json_pattern, response)
-            
-            if json_matches:
-                for match in json_matches:
-                    try:
-                        return json.loads(match)
-                    except:
-                        continue
-            
-            # If no JSON found or parsing failed, try to parse the entire response
+        model = model or self.default_model
+        temperature = temperature if temperature is not None else self.default_temperature
+        max_tokens = max_tokens or self.default_max_tokens
+        metadata = metadata or {}
+        
+        # Calculate max chunk size
+        model_token_limit = get_model_token_limit(model)
+        max_chunk_tokens = model_token_limit - max_tokens - 1000  # Reserve 1000 tokens for prompt
+        
+        # Split content into chunks
+        chunks = chunk_content(content, max_chunk_tokens, model)
+        logger.info(f"Split content into {len(chunks)} chunks for processing")
+        
+        # Process each chunk
+        chunk_results = []
+        for i, chunk in enumerate(chunks):
             try:
-                return json.loads(response)
-            except:
-                pass
-            
-            # If all parsing attempts fail, return the raw response
-            return {"raw_response": response}
-        except Exception as e:
-            logger.error(f"Error parsing LLM response: {e}")
-            return {"raw_response": response, "parsing_error": str(e)}
+                logger.info(f"Processing chunk {i+1}/{len(chunks)}")
+                
+                # Add chunk information to metadata
+                chunk_metadata = metadata.copy()
+                chunk_metadata["chunk_index"] = i
+                chunk_metadata["total_chunks"] = len(chunks)
+                
+                # Process the chunk
+                result = await self.process(
+                    content=chunk,
+                    focus_point=focus_point,
+                    explanation=explanation,
+                    content_type=content_type,
+                    task=task,
+                    metadata=chunk_metadata,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                
+                chunk_results.append(result)
+            except Exception as e:
+                logger.error(f"Error processing chunk {i+1}/{len(chunks)}: {e}")
+                chunk_results.append({
+                    "error": str(e),
+                    "chunk_index": i,
+                    "total_chunks": len(chunks)
+                })
+        
+        # Combine results
+        combined_result = self._combine_chunk_results(chunk_results, task)
+        
+        # Add metadata
+        combined_result["metadata"] = {
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "content_type": content_type,
+            "task": task,
+            "chunks_processed": len(chunks),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        return combined_result
     
+    def _combine_chunk_results(self, results: List[Dict[str, Any]], task: str) -> Dict[str, Any]:
+        """
+        Combine results from multiple chunks based on the task type.
+        
+        Args:
+            results: List of results from individual chunks
+            task: The task that was performed
+            
+        Returns:
+            Dict[str, Any]: The combined result
+        """
+        if not results:
+            return {"error": "No results to combine"}
+        
+        # Filter out error results
+        valid_results = [r for r in results if "error" not in r]
+        
+        if not valid_results:
+            return {"error": "All chunk processing resulted in errors"}
+        
+        # Combine based on task type
+        if task == TASK_EXTRACTION:
+            # For extraction, combine extracted items
+            combined = {"extracted_info": []}
+            
+            for result in valid_results:
+                if "extracted_info" in result:
+                    combined["extracted_info"].extend(result["extracted_info"])
+                elif "raw_response" in result:
+                    # Handle raw responses
+                    combined.setdefault("raw_responses", []).append(result["raw_response"])
+            
+            # Add summary if available in any result
+            for result in valid_results:
+                if "summary" in result:
+                    combined["summary"] = result["summary"]
+                    break
+            
+            return combined
+            
+        elif task == TASK_SUMMARIZATION:
+            # For summarization, combine summaries
+            summaries = []
+            
+            for result in valid_results:
+                if "summary" in result:
+                    summaries.append(result["summary"])
+                elif "raw_response" in result:
+                    summaries.append(result["raw_response"])
+            
+            return {"summary": " ".join(summaries)}
+            
+        elif task in [TASK_ANALYSIS, TASK_REASONING, TASK_COMPARISON]:
+            # For analysis tasks, combine key points
+            combined = {}
+            
+            # Collect all keys from all results
+            all_keys = set()
+            for result in valid_results:
+                all_keys.update(result.keys())
+            
+            # Remove metadata and error keys
+            all_keys.discard("metadata")
+            all_keys.discard("error")
+            all_keys.discard("parsing_error")
+            all_keys.discard("raw_response")
+            
+            # Combine lists for each key
+            for key in all_keys:
+                combined[key] = []
+                
+                for result in valid_results:
+                    if key in result:
+                        if isinstance(result[key], list):
+                            combined[key].extend(result[key])
+                        else:
+                            combined[key].append(result[key])
+            
+            return combined
+        
+        else:
+            # For other tasks, just return the first valid result
+            return valid_results[0]
+    
+    def _get_template_name(self, content_type: str, task: str) -> str:
+        """
+        Determine the template name based on content type and task.
+        
+        Args:
+            content_type: The type of content
+            task: The task to perform
+            
+        Returns:
+            str: The template name
+        """
+        # Map content types to template prefixes
+        content_prefixes = {
+            CONTENT_TYPE_TEXT: "text",
+            CONTENT_TYPE_HTML: "text",
+            CONTENT_TYPE_MARKDOWN: "text",
+            CONTENT_TYPE_CODE: "code",
+            CONTENT_TYPE_ACADEMIC: "academic",
+            CONTENT_TYPE_VIDEO: "video",
+            CONTENT_TYPE_SOCIAL: "social"
+        }
+        
+        # Get the prefix based on content type
+        prefix = content_prefixes.get(content_type, "text")
+        
+        # Map tasks to template suffixes
+        task_suffixes = {
+            TASK_EXTRACTION: "extraction",
+            TASK_SUMMARIZATION: "summarization",
+            TASK_ANALYSIS: "analysis",
+            TASK_REASONING: "reasoning",
+            TASK_COMPARISON: "comparison"
+        }
+        
+        # Get the suffix based on task
+        suffix = task_suffixes.get(task, "extraction")
+        
+        # Combine to get the template name
+        template_name = f"{prefix}_{suffix}"
+        
+        # Check if the template exists, fall back to text_extraction if not
+        if template_name not in self.prompt_strategy.templates:
+            if f"{prefix}_extraction" in self.prompt_strategy.templates:
+                return f"{prefix}_extraction"
+            else:
+                return "text_extraction"
+        
+        return template_name
+
     async def multi_step_reasoning(
         self,
         content: str,
@@ -741,7 +985,7 @@ class SpecializedPromptProcessor:
         max_concurrency: int = 5
     ) -> List[Dict[str, Any]]:
         """
-        Process multiple items concurrently.
+        Process multiple items concurrently with improved error handling.
         
         Args:
             items: List of items to process
@@ -765,17 +1009,24 @@ class SpecializedPromptProcessor:
         
         async def process_item(item):
             async with semaphore:
-                return await self.process(
-                    content=item.get("content", ""),
-                    focus_point=focus_point,
-                    explanation=explanation,
-                    content_type=item.get("content_type", CONTENT_TYPE_TEXT),
-                    task=task,
-                    metadata=item.get("metadata"),
-                    model=model,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
+                try:
+                    return await self.process(
+                        content=item.get("content", ""),
+                        focus_point=focus_point,
+                        explanation=explanation,
+                        content_type=item.get("content_type", CONTENT_TYPE_TEXT),
+                        task=task,
+                        metadata=item.get("metadata"),
+                        model=model,
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
+                except Exception as e:
+                    logger.error(f"Error processing item: {e}")
+                    return {
+                        "error": str(e),
+                        "item": item.get("content", "")[:100] + "..." if len(item.get("content", "")) > 100 else item.get("content", "")
+                    }
         
         # Process all items concurrently
         tasks = [process_item(item) for item in items]

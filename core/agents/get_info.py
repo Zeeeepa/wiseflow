@@ -2,11 +2,20 @@
 import asyncio
 from loguru import logger
 import os, re
-from llms.openai_wrapper import openai_llm as llm
+import random
+from typing import List, Dict, Any, Optional, Union, Tuple
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# Fix import paths
+from core.llms.openai_wrapper import openai_llm as llm
 # from core.llms.siliconflow_wrapper import sfa_llm # or other llm wrapper
-from utils.general_utils import normalize_url, url_pattern
+from core.utils.general_utils import normalize_url, url_pattern
 from .get_info_prompts import *
 
+# Define retryable exceptions
+RETRYABLE_EXCEPTIONS = (
+    Exception,  # Temporarily catch all exceptions for retry
+)
 
 common_file_exts = [
     'jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'svg', 'm3u8',
@@ -22,6 +31,12 @@ common_tlds = [
     '.top', '.vip', '.pro', '.ltd', '.group', '.team', '.work'
 ]
 
+@retry(
+    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 async def pre_process(raw_markdown: str, base_url: str, used_img: list[str], 
                         recognized_img_cache: dict, existing_urls: set = set(), 
                         test_mode: bool = False) -> tuple[dict, list[str], list[str], dict]:
@@ -232,147 +247,244 @@ if not vl_model:
     print("VL_MODEL not set, will skip extracting info from img, some info may be lost!")
 
 
+@retry(
+    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 async def extract_info_from_img(url: str) -> str:
-    if not vl_model:
-        return '§to_be_recognized_by_visual_llm§'
+    """
+    Extract information from an image with retry logic.
+    
+    Args:
+        url: URL of the image
+        
+    Returns:
+        str: Extracted information
+    """
+    try:
+        if not vl_model:
+            return '\u00a7to_be_recognized_by_visual_llm\u00a7'
 
-    llm_output = await llm([{"role": "user",
-        "content": [{"type": "image_url", "image_url": {"url": url, "detail": "high"}},
-        {"type": "text", "text": "提取图片中的所有文字，如果图片不包含文字或者文字很少或者你判断图片仅是网站logo、商标、图标等，则输出NA。注意请仅输出提取出的文字，不要输出别的任何内容。"}]}],
-        model=vl_model)
+        llm_output = await llm([{"role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": url, "detail": "high"}},
+            {"type": "text", "text": "\u63d0\u53d6\u56fe\u7247\u4e2d\u7684\u6240\u6709\u6587\u5b57\uff0c\u5982\u679c\u56fe\u7247\u4e0d\u5305\u542b\u6587\u5b57\u6216\u8005\u6587\u5b57\u5f88\u5c11\u6216\u8005\u4f60\u5224\u65ad\u56fe\u7247\u4ec5\u662f\u7f51\u7ad9logo\u3001\u5546\u6807\u3001\u56fe\u6807\u7b49\uff0c\u5219\u8f93\u51faNA\u3002\u6ce8\u610f\u8bf7\u4ec5\u8f93\u51fa\u63d0\u53d6\u51fa\u7684\u6587\u5b57\uff0c\u4e0d\u8981\u8f93\u51fa\u522b\u7684\u4efb\u4f55\u5185\u5bb9\u3002"}]}],
+            model=vl_model)
 
-    return llm_output
+        return llm_output
+    except Exception as e:
+        logger.error(f"Error extracting info from image: {e}")
+        return '\u00a7error_extracting_image_info\u00a7'
 
 
+@retry(
+    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 async def get_author_and_publish_date(text: str, model: str, test_mode: bool = False, _logger: logger = None) -> tuple[str, str]:
-    if not text:
+    """
+    Get author and publish date from text with retry logic.
+    
+    Args:
+        text: Text to extract from
+        model: Model to use
+        test_mode: Whether to run in test mode
+        _logger: Optional logger
+        
+    Returns:
+        Tuple containing author and publish date
+    """
+    try:
+        if not text:
+            return "", ""
+
+        if len(text) > 2048:
+            text = f'{text[:2048]}......'
+
+        content = f'<text>\n{text}\n</text>\n\n{get_ap_suffix}'
+        result = await llm([{'role': 'system', 'content': get_ap_system}, {'role': 'user', 'content': content}],
+                                model=model, temperature=0.1)
+                         
+        if test_mode:
+            print(f"llm output:\n {result}")
+            
+        author = re.findall(r'<source>(.*?)</source>', result, re.DOTALL)
+        publish_date = re.findall(r'<publish_date>(.*?)</publish_date>', result, re.DOTALL)
+
+        author = author[-1] if author else ''
+        publish_date = publish_date[-1] if publish_date else ''
+
+        if not author or not publish_date:
+            if _logger:
+                _logger.warning(f"failed to parse from llm output: {result}")
+
+        return author if author.lower() != 'na' else '', publish_date
+    except Exception as e:
+        if _logger:
+            _logger.error(f"Error getting author and publish date: {e}")
         return "", ""
 
-    if len(text) > 2048:
-        text = f'{text[:2048]}......'
 
-    content = f'<text>\n{text}\n</text>\n\n{get_ap_suffix}'
-    result = await llm([{'role': 'system', 'content': get_ap_system}, {'role': 'user', 'content': content}],
-                            model=model, temperature=0.1)
-                     
-    if test_mode:
-        print(f"llm output:\n {result}")
-        
-    author = re.findall(r'<source>(.*?)</source>', result, re.DOTALL)
-    publish_date = re.findall(r'<publish_date>(.*?)</publish_date>', result, re.DOTALL)
-
-    author = author[-1] if author else ''
-    publish_date = publish_date[-1] if publish_date else ''
-
-    if not author or not publish_date:
-        if _logger:
-            _logger.warning(f"failed to parse from llm output: {result}")
-
-    return author if author.lower() != 'na' else '', publish_date
-
-
+@retry(
+    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 async def get_more_related_urls(texts: list[str], link_dict: dict, prompts: list[str], test_mode: bool = False,
                                 _logger: logger = None) -> set:
+    """
+    Get more related URLs with retry logic.
     
-    sys_prompt, suffix, model = prompts
-    text_batch = ''
-    cache = set()
-    while texts:
-        t = texts.pop(0)
-        text_batch = f'{text_batch}{t}\n\n'
-        if len(text_batch) > 2048 or len(texts) == 0:
-            content = f'<text>\n{text_batch}</text>\n\n{suffix}'
-            result = await llm(
-                    [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': content}],
-                    model=model, temperature=0.1)
+    Args:
+        texts: List of text strings
+        link_dict: Dictionary of links
+        prompts: List of prompts
+        test_mode: Whether to run in test mode
+        _logger: Optional logger
+        
+    Returns:
+        Set of related URLs
+    """
+    try:
+        sys_prompt, suffix, model = prompts
+        text_batch = ''
+        cache = set()
+        while texts:
+            t = texts.pop(0)
+            text_batch = f'{text_batch}{t}\n\n'
+            if len(text_batch) > 2048 or len(texts) == 0:
+                content = f'<text>\n{text_batch}</text>\n\n{suffix}'
+                result = await llm(
+                        [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': content}],
+                        model=model, temperature=0.1)
 
-            if test_mode:
-                print(f"llm output:\n {result}")
+                if test_mode:
+                    print(f"llm output:\n {result}")
 
-            result = re.findall(r'<answer>(.*?)</answer>', result, re.DOTALL)
-            if result:
-                links = re.findall(r'\[\d+]', result[-1])
-                for link in links:
-                    if link not in link_dict or link not in text_batch:
-                        if _logger:
-                            _logger.warning(f"model generating hallucination:\n{link}\n{result[-1]}\n{text_batch}")
-                        if test_mode:
-                            print(f"model hallucination:\n{link}\n{result[-1]}\n{text_batch}")
-                        continue
-                    cache.add(link)
-            text_batch = ''
+                result = re.findall(r'<answer>(.*?)</answer>', result, re.DOTALL)
+                if result:
+                    links = re.findall(r'\[\d+]', result[-1])
+                    for link in links:
+                        if link not in link_dict or link not in text_batch:
+                            if _logger:
+                                _logger.warning(f"model generating hallucination:\n{link}\n{result[-1]}\n{text_batch}")
+                            if test_mode:
+                                print(f"model hallucination:\n{link}\n{result[-1]}\n{text_batch}")
+                            continue
+                        cache.add(link)
+                text_batch = ''
 
-    more_urls = set()
-    for mark in cache:
-        url = link_dict[mark]
-        has_common_ext = any(url.endswith(ext) for ext in common_file_exts)
-        has_common_tld = any(url.endswith(tld) or url.endswith(tld + '/') for tld in common_tlds)
-        if has_common_ext or has_common_tld:
-            continue
-        more_urls.add(url)
-    
-    return more_urls
-    
+        more_urls = set()
+        for mark in cache:
+            url = link_dict[mark]
+            has_common_ext = any(url.endswith(ext) for ext in common_file_exts)
+            has_common_tld = any(url.endswith(tld) or url.endswith(tld + '/') for tld in common_tlds)
+            if has_common_ext or has_common_tld:
+                continue
+            more_urls.add(url)
+        
+        return more_urls
+    except Exception as e:
+        if _logger:
+            _logger.error(f"Error getting more related URLs: {e}")
+        return set()
 
+
+@retry(
+    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 async def get_info(texts: list[str], link_dict: dict, prompts: list[str], author: str, publish_date: str,
                    test_mode: bool = False, _logger: logger = None) -> list[dict]:
-
-    sys_prompt, suffix, model = prompts
-
-    if test_mode:
-        info_pre_fix = ''
-    else:
-        info_pre_fix = f"//{author} {publish_date}//"
+    """
+    Get information from texts with retry logic.
     
-    texts = [t for t in texts if t.strip()]
-    if not texts:
-        return []
+    Args:
+        texts: List of text strings
+        link_dict: Dictionary of links
+        prompts: List of prompts
+        author: Author name
+        publish_date: Publish date
+        test_mode: Whether to run in test mode
+        _logger: Optional logger
+        
+    Returns:
+        List of information dictionaries
+    """
+    try:
+        sys_prompt, suffix, model = prompts
 
-    batches = []
-    text_batch = f'Author: {author}\nPublish Date: {publish_date}\n'
-    while texts:
-        t = texts.pop(0)
-        text_batch = f'{text_batch}{t}# '
-        if len(text_batch) > 9999 or len(texts) == 0:
-            content = f'<text>\n{text_batch}</text>\n\n{suffix}'
-            batches.append(content)
-            text_batch = f'Author: {author}\nPublish Date: {publish_date}\n'
-
-    tasks = [
-        llm([{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': content}], model=model, temperature=0.1)
-        for content in batches]
-    results = await asyncio.gather(*tasks)
-
-    final = []
-    for res in results:
         if test_mode:
-            print(f"llm output:\n {res}")
-        res = re.findall(r'<summary>(.*?)</summary>', res, re.DOTALL)
-        if not res:
-            if _logger:
-                _logger.warning("model lightly hallucination: contains no summary tag")
+            info_pre_fix = ''
+        else:
+            info_pre_fix = f"//{author} {publish_date}//"
+        
+        texts = [t for t in texts if t.strip()]
+        if not texts:
+            return []
+
+        batches = []
+        text_batch = f'Author: {author}\nPublish Date: {publish_date}\n'
+        while texts:
+            t = texts.pop(0)
+            text_batch = f'{text_batch}{t}# '
+            if len(text_batch) > 9999 or len(texts) == 0:
+                content = f'<text>\n{text_batch}</text>\n\n{suffix}'
+                batches.append(content)
+                text_batch = f'Author: {author}\nPublish Date: {publish_date}\n'
+
+        # Process batches with error handling
+        results = []
+        for content in batches:
+            try:
+                res = await llm([{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': content}], 
+                               model=model, temperature=0.1)
+                results.append(res)
+            except Exception as e:
+                if _logger:
+                    _logger.error(f"Error processing batch: {e}")
+                # Continue with other batches
+
+        final = []
+        for res in results:
             if test_mode:
-                print("model lightly hallucination: contains no summary tag")
-            continue
-        res = res[-1].strip()
-        if _logger:
-            _logger.debug(res)
-        if test_mode:
-            print(res)
-        if len(res) < 3:
-            continue
-
-        url_tags = re.findall(r'\[\d+]', res)
-        refences = {}
-        for _tag in url_tags:
-            if _tag in link_dict:
-                refences[_tag] = link_dict[_tag]
-            else:
-                if _logger and link_dict: # avoid warning when link_dict is empty(search engine)
-                    _logger.warning(f"model hallucination: {res} \ncontains {_tag} which is not in link_dict")
+                print(f"llm output:\n {res}")
+            res = re.findall(r'<summary>(.*?)</summary>', res, re.DOTALL)
+            if not res:
+                if _logger:
+                    _logger.warning("model lightly hallucination: contains no summary tag")
                 if test_mode:
-                    print(f"model hallucination: {res} \ncontains {_tag} which is not in link_dict")
-                res = res.replace(_tag, '')
-        final.append({'content': f"{info_pre_fix}{res}", 'references': refences})
-    
-    return final
+                    print("model lightly hallucination: contains no summary tag")
+                continue
+            res = res[-1].strip()
+            if _logger:
+                _logger.debug(res)
+            if test_mode:
+                print(res)
+            if len(res) < 3:
+                continue
+
+            url_tags = re.findall(r'\[\d+]', res)
+            refences = {}
+            for _tag in url_tags:
+                if _tag in link_dict:
+                    refences[_tag] = link_dict[_tag]
+                else:
+                    if _logger and link_dict: # avoid warning when link_dict is empty(search engine)
+                        _logger.warning(f"model hallucination: {res} \ncontains {_tag} which is not in link_dict")
+                    if test_mode:
+                        print(f"model hallucination: {res} \ncontains {_tag} which is not in link_dict")
+                    res = res.replace(_tag, '')
+            final.append({'content': f"{info_pre_fix}{res}", 'references': refences})
+        
+        return final
+    except Exception as e:
+        if _logger:
+            _logger.error(f"Error getting info: {e}")
+        return []
