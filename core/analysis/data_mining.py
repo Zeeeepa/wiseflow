@@ -16,16 +16,21 @@ from loguru import logger
 from ..utils.general_utils import get_logger
 from ..utils.pb_api import PbTalker
 from ..llms.openai_wrapper import openai_llm as llm
+from ..utils.config import get_config
 
-project_dir = os.environ.get("PROJECT_DIR", "")
+# Get configuration
+config = get_config()
+project_dir = config.get("project_dir", os.environ.get("PROJECT_DIR", ""))
 if project_dir:
     os.makedirs(project_dir, exist_ok=True)
 data_mining_logger = get_logger('data_mining', project_dir)
 pb = PbTalker(data_mining_logger)
 
-model = os.environ.get("PRIMARY_MODEL", "")
+# Get model from config or environment variable
+model = config.get("primary_model", os.environ.get("PRIMARY_MODEL", ""))
 if not model:
-    raise ValueError("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
+    data_mining_logger.warning("PRIMARY_MODEL not set, using default model")
+    model = "gpt-3.5-turbo"  # Default model as fallback
 
 # Prompts for entity extraction
 ENTITY_EXTRACTION_PROMPT = """You are an expert in entity extraction. Your task is to identify and extract named entities from the provided text.
@@ -157,29 +162,45 @@ async def extract_entities(text: str) -> List[Dict[str, Any]]:
     """
     data_mining_logger.debug("Extracting entities from text")
     
+    # Validate input
+    if not text or not isinstance(text, str):
+        data_mining_logger.warning("Invalid input for entity extraction: empty or non-string text")
+        return []
+    
+    # Truncate text if too long
+    max_text_length = 8000  # Adjust based on model context window
+    if len(text) > max_text_length:
+        data_mining_logger.warning(f"Text too long ({len(text)} chars), truncating to {max_text_length} chars")
+        text = text[:max_text_length]
+    
     # Create the prompt
     prompt = ENTITY_EXTRACTION_PROMPT.format(text=text)
     
-    # Generate the analysis
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert in entity extraction.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.1)
-    
-    # Parse the JSON response
     try:
-        # Find JSON array in the response
-        json_match = re.search(r'\[\s*\{.*\}\s*\]', result, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            entities = json.loads(json_str)
-            data_mining_logger.debug(f"Extracted {len(entities)} entities")
-            return entities
-        else:
-            data_mining_logger.warning("No valid JSON found in entity extraction response")
-            return []
+        # Generate the analysis
+        result = await llm([
+            {'role': 'system', 'content': 'You are an expert in entity extraction.'},
+            {'role': 'user', 'content': prompt}
+        ], model=model, temperature=0.1)
+        
+        # Parse the JSON response
+        try:
+            # Find JSON array in the response
+            json_match = re.search(r'\[[\s\S]*\]', result, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                entities = json.loads(json_str)
+                data_mining_logger.debug(f"Extracted {len(entities)} entities")
+                return entities
+            else:
+                data_mining_logger.warning("No valid JSON found in entity extraction response")
+                return []
+        except json.JSONDecodeError as e:
+            data_mining_logger.error(f"Error parsing entity extraction response: {e}")
+            # Try to extract partial results
+            return _extract_partial_json(result, "entities")
     except Exception as e:
-        data_mining_logger.error(f"Error parsing entity extraction response: {e}")
+        data_mining_logger.error(f"Error in entity extraction: {e}")
         return []
 
 async def extract_topics(text: str) -> List[Dict[str, Any]]:
@@ -194,29 +215,45 @@ async def extract_topics(text: str) -> List[Dict[str, Any]]:
     """
     data_mining_logger.debug("Extracting topics from text")
     
+    # Validate input
+    if not text or not isinstance(text, str):
+        data_mining_logger.warning("Invalid input for topic extraction: empty or non-string text")
+        return []
+    
+    # Truncate text if too long
+    max_text_length = 8000  # Adjust based on model context window
+    if len(text) > max_text_length:
+        data_mining_logger.warning(f"Text too long ({len(text)} chars), truncating to {max_text_length} chars")
+        text = text[:max_text_length]
+    
     # Create the prompt
     prompt = TOPIC_EXTRACTION_PROMPT.format(text=text)
     
-    # Generate the analysis
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert in topic modeling and extraction.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.2)
-    
-    # Parse the JSON response
     try:
-        # Find JSON array in the response
-        json_match = re.search(r'\[\s*\{.*\}\s*\]', result, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            topics = json.loads(json_str)
-            data_mining_logger.debug(f"Extracted {len(topics)} topics")
-            return topics
-        else:
-            data_mining_logger.warning("No valid JSON found in topic extraction response")
-            return []
+        # Generate the analysis
+        result = await llm([
+            {'role': 'system', 'content': 'You are an expert in topic modeling and extraction.'},
+            {'role': 'user', 'content': prompt}
+        ], model=model, temperature=0.2)
+        
+        # Parse the JSON response
+        try:
+            # Find JSON array in the response
+            json_match = re.search(r'\[[\s\S]*\]', result, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                topics = json.loads(json_str)
+                data_mining_logger.debug(f"Extracted {len(topics)} topics")
+                return topics
+            else:
+                data_mining_logger.warning("No valid JSON found in topic extraction response")
+                return []
+        except json.JSONDecodeError as e:
+            data_mining_logger.error(f"Error parsing topic extraction response: {e}")
+            # Try to extract partial results
+            return _extract_partial_json(result, "topics")
     except Exception as e:
-        data_mining_logger.error(f"Error parsing topic extraction response: {e}")
+        data_mining_logger.error(f"Error in topic extraction: {e}")
         return []
 
 async def extract_sentiment(text: str) -> Dict[str, Any]:
@@ -231,29 +268,48 @@ async def extract_sentiment(text: str) -> Dict[str, Any]:
     """
     data_mining_logger.debug("Analyzing sentiment in text")
     
+    # Validate input
+    if not text or not isinstance(text, str):
+        data_mining_logger.warning("Invalid input for sentiment analysis: empty or non-string text")
+        return {"overall_sentiment": {"polarity": "neutral", "strength": 0.0, "explanation": "Invalid input"}}
+    
+    # Truncate text if too long
+    max_text_length = 8000  # Adjust based on model context window
+    if len(text) > max_text_length:
+        data_mining_logger.warning(f"Text too long ({len(text)} chars), truncating to {max_text_length} chars")
+        text = text[:max_text_length]
+    
     # Create the prompt
     prompt = SENTIMENT_ANALYSIS_PROMPT.format(text=text)
     
-    # Generate the analysis
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert in sentiment analysis.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.1)
-    
-    # Parse the JSON response
     try:
-        # Find JSON object in the response
-        json_match = re.search(r'\{\s*"overall_sentiment".*\}', result, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            sentiment = json.loads(json_str)
-            data_mining_logger.debug("Sentiment analysis completed successfully")
-            return sentiment
-        else:
-            data_mining_logger.warning("No valid JSON found in sentiment analysis response")
-            return {"overall_sentiment": {"polarity": "neutral", "strength": 0.0, "explanation": "Failed to parse response"}}
+        # Generate the analysis
+        result = await llm([
+            {'role': 'system', 'content': 'You are an expert in sentiment analysis.'},
+            {'role': 'user', 'content': prompt}
+        ], model=model, temperature=0.1)
+        
+        # Parse the JSON response
+        try:
+            # Find JSON object in the response
+            json_match = re.search(r'\{[\s\S]*\}', result, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                sentiment = json.loads(json_str)
+                data_mining_logger.debug("Sentiment analysis completed successfully")
+                return sentiment
+            else:
+                data_mining_logger.warning("No valid JSON found in sentiment analysis response")
+                return {"overall_sentiment": {"polarity": "neutral", "strength": 0.0, "explanation": "Failed to parse response"}}
+        except json.JSONDecodeError as e:
+            data_mining_logger.error(f"Error parsing sentiment analysis response: {e}")
+            # Try to extract partial results
+            partial_result = _extract_partial_json(result, "sentiment")
+            if partial_result:
+                return partial_result
+            return {"overall_sentiment": {"polarity": "neutral", "strength": 0.0, "explanation": f"Error: {str(e)}"}}
     except Exception as e:
-        data_mining_logger.error(f"Error parsing sentiment analysis response: {e}")
+        data_mining_logger.error(f"Error in sentiment analysis: {e}")
         return {"overall_sentiment": {"polarity": "neutral", "strength": 0.0, "explanation": f"Error: {str(e)}"}}
 
 async def extract_relationships(text: str) -> List[Dict[str, Any]]:
@@ -268,37 +324,53 @@ async def extract_relationships(text: str) -> List[Dict[str, Any]]:
     """
     data_mining_logger.debug("Extracting relationships from text")
     
+    # Validate input
+    if not text or not isinstance(text, str):
+        data_mining_logger.warning("Invalid input for relationship extraction: empty or non-string text")
+        return []
+    
+    # Truncate text if too long
+    max_text_length = 8000  # Adjust based on model context window
+    if len(text) > max_text_length:
+        data_mining_logger.warning(f"Text too long ({len(text)} chars), truncating to {max_text_length} chars")
+        text = text[:max_text_length]
+    
     # Create the prompt
     prompt = RELATIONSHIP_EXTRACTION_PROMPT.format(text=text)
     
-    # Generate the analysis
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert in relationship extraction.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.2)
-    
-    # Parse the JSON response
     try:
-        # Find JSON array in the response
-        json_match = re.search(r'\[\s*\{.*\}\s*\]', result, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            relationships = json.loads(json_str)
-            data_mining_logger.debug(f"Extracted {len(relationships)} relationships")
-            return relationships
-        else:
-            data_mining_logger.warning("No valid JSON found in relationship extraction response")
-            return []
+        # Generate the analysis
+        result = await llm([
+            {'role': 'system', 'content': 'You are an expert in relationship extraction.'},
+            {'role': 'user', 'content': prompt}
+        ], model=model, temperature=0.2)
+        
+        # Parse the JSON response
+        try:
+            # Find JSON array in the response
+            json_match = re.search(r'\[[\s\S]*\]', result, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                relationships = json.loads(json_str)
+                data_mining_logger.debug(f"Extracted {len(relationships)} relationships")
+                return relationships
+            else:
+                data_mining_logger.warning("No valid JSON found in relationship extraction response")
+                return []
+        except json.JSONDecodeError as e:
+            data_mining_logger.error(f"Error parsing relationship extraction response: {e}")
+            # Try to extract partial results
+            return _extract_partial_json(result, "relationships")
     except Exception as e:
-        data_mining_logger.error(f"Error parsing relationship extraction response: {e}")
+        data_mining_logger.error(f"Error in relationship extraction: {e}")
         return []
 
 async def analyze_temporal_patterns(items: List[Dict[str, Any]], start_date: str, end_date: str) -> Dict[str, Any]:
     """
-    Analyze temporal patterns in a collection of information items.
+    Analyze temporal patterns in a collection of items.
     
     Args:
-        items: List of information items with timestamps
+        items: List of items to analyze
         start_date: Start date of the analysis period
         end_date: End date of the analysis period
         
@@ -307,13 +379,29 @@ async def analyze_temporal_patterns(items: List[Dict[str, Any]], start_date: str
     """
     data_mining_logger.debug(f"Analyzing temporal patterns from {start_date} to {end_date}")
     
+    # Validate input
+    if not items:
+        data_mining_logger.warning("No items provided for temporal pattern analysis")
+        return {"patterns": [], "summary": "No items to analyze"}
+    
     # Format the items for the prompt
     formatted_items = []
     for i, item in enumerate(items, 1):
         content = item.get('content', '')
         timestamp = item.get('created', '')
         url = item.get('url', '')
+        
+        # Truncate content if too long
+        if len(content) > 500:
+            content = content[:497] + "..."
+            
         formatted_items.append(f"Item {i} ({timestamp}):\nContent: {content}\nSource: {url}\n")
+    
+    # Limit the number of items if there are too many
+    max_items = 50
+    if len(formatted_items) > max_items:
+        data_mining_logger.warning(f"Too many items ({len(formatted_items)}), limiting to {max_items}")
+        formatted_items = formatted_items[:max_items]
     
     items_text = "\n".join(formatted_items)
     
@@ -324,27 +412,104 @@ async def analyze_temporal_patterns(items: List[Dict[str, Any]], start_date: str
         items=items_text
     )
     
-    # Generate the analysis
-    result = await llm([
-        {'role': 'system', 'content': 'You are an expert in temporal pattern analysis.'},
-        {'role': 'user', 'content': prompt}
-    ], model=model, temperature=0.2)
-    
-    # Parse the JSON response
     try:
-        # Find JSON object in the response
-        json_match = re.search(r'\{\s*"patterns".*\}', result, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            patterns = json.loads(json_str)
-            data_mining_logger.debug("Temporal pattern analysis completed successfully")
-            return patterns
-        else:
-            data_mining_logger.warning("No valid JSON found in temporal pattern analysis response")
-            return {"patterns": [], "summary": "Failed to parse response"}
+        # Generate the analysis
+        result = await llm([
+            {'role': 'system', 'content': 'You are an expert in temporal pattern analysis.'},
+            {'role': 'user', 'content': prompt}
+        ], model=model, temperature=0.2)
+        
+        # Parse the JSON response
+        try:
+            # Find JSON object in the response
+            json_match = re.search(r'\{[\s\S]*\}', result, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                patterns = json.loads(json_str)
+                data_mining_logger.debug("Temporal pattern analysis completed successfully")
+                return patterns
+            else:
+                data_mining_logger.warning("No valid JSON found in temporal pattern analysis response")
+                return {"patterns": [], "summary": "Failed to parse response"}
+        except json.JSONDecodeError as e:
+            data_mining_logger.error(f"Error parsing temporal pattern analysis response: {e}")
+            # Try to extract partial results
+            partial_result = _extract_partial_json(result, "temporal_patterns")
+            if partial_result:
+                return partial_result
+            return {"patterns": [], "summary": f"Error: {str(e)}"}
     except Exception as e:
-        data_mining_logger.error(f"Error parsing temporal pattern analysis response: {e}")
+        data_mining_logger.error(f"Error in temporal pattern analysis: {e}")
         return {"patterns": [], "summary": f"Error: {str(e)}"}
+
+def _extract_partial_json(text: str, data_type: str) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Attempt to extract partial JSON from a malformed response.
+    
+    Args:
+        text: The text to parse
+        data_type: The type of data being extracted (for logging)
+        
+    Returns:
+        Extracted data or empty list/dict
+    """
+    data_mining_logger.debug(f"Attempting to extract partial JSON for {data_type}")
+    
+    # For list results
+    if data_type in ["entities", "topics", "relationships"]:
+        # Try to find objects in the response
+        objects = []
+        object_matches = re.finditer(r'\{[^{}]*\}', text)
+        
+        for match in object_matches:
+            try:
+                obj = json.loads(match.group(0))
+                objects.append(obj)
+            except:
+                continue
+        
+        if objects:
+            data_mining_logger.debug(f"Extracted {len(objects)} partial objects for {data_type}")
+            return objects
+        return []
+    
+    # For dictionary results
+    elif data_type in ["sentiment", "temporal_patterns"]:
+        # Try to find the most complete object
+        best_match = None
+        max_length = 0
+        
+        # Look for objects with expected keys
+        expected_keys = {
+            "sentiment": ["overall_sentiment"],
+            "temporal_patterns": ["patterns", "summary"]
+        }
+        
+        object_matches = re.finditer(r'\{[^{}]*\}', text)
+        for match in object_matches:
+            try:
+                obj_str = match.group(0)
+                if len(obj_str) > max_length:
+                    obj = json.loads(obj_str)
+                    # Check if object has expected keys
+                    if any(key in obj for key in expected_keys.get(data_type, [])):
+                        best_match = obj
+                        max_length = len(obj_str)
+            except:
+                continue
+        
+        if best_match:
+            data_mining_logger.debug(f"Extracted partial object for {data_type}")
+            return best_match
+        
+        # Return default values
+        if data_type == "sentiment":
+            return {"overall_sentiment": {"polarity": "neutral", "strength": 0.0, "explanation": "Failed to parse response"}}
+        elif data_type == "temporal_patterns":
+            return {"patterns": [], "summary": "Failed to parse response"}
+    
+    # Default fallback
+    return [] if data_type in ["entities", "topics", "relationships"] else {}
 
 def generate_knowledge_graph(relationships: List[Dict[str, Any]], output_path: Optional[str] = None) -> nx.DiGraph:
     """
@@ -358,6 +523,11 @@ def generate_knowledge_graph(relationships: List[Dict[str, Any]], output_path: O
         NetworkX DiGraph object representing the knowledge graph
     """
     data_mining_logger.debug("Generating knowledge graph")
+    
+    # Validate input
+    if not relationships:
+        data_mining_logger.warning("No relationships provided for knowledge graph generation")
+        return nx.DiGraph()
     
     # Create a directed graph
     G = nx.DiGraph()
@@ -446,6 +616,12 @@ async def analyze_info_items(info_items: List[Dict[str, Any]], focus_id: str) ->
     # Combine all content for entity and topic extraction
     combined_text = "\n\n".join([item.get('content', '') for item in info_items])
     
+    # Truncate combined text if too long
+    max_combined_length = 15000  # Adjust based on model context window
+    if len(combined_text) > max_combined_length:
+        data_mining_logger.warning(f"Combined text too long ({len(combined_text)} chars), truncating to {max_combined_length} chars")
+        combined_text = combined_text[:max_combined_length]
+    
     # Extract entities, topics, and relationships in parallel
     entities_task = asyncio.create_task(extract_entities(combined_text))
     topics_task = asyncio.create_task(extract_topics(combined_text))
@@ -459,49 +635,55 @@ async def analyze_info_items(info_items: List[Dict[str, Any]], focus_id: str) ->
     # Analyze temporal patterns
     temporal_patterns_task = asyncio.create_task(analyze_temporal_patterns(info_items, start_date, end_date))
     
-    # Wait for all tasks to complete
-    entities = await entities_task
-    topics = await topics_task
-    relationships = await relationships_task
-    temporal_patterns = await temporal_patterns_task
-    
-    # Generate knowledge graph
-    graph_output_path = os.path.join(project_dir, f"knowledge_graph_{focus_id}.png")
-    knowledge_graph = generate_knowledge_graph(relationships, graph_output_path)
-    
-    # Create the result
-    result = {
-        "focus_id": focus_id,
-        "item_count": len(info_items),
-        "entities": entities,
-        "topics": topics,
-        "relationships": relationships,
-        "temporal_patterns": temporal_patterns,
-        "knowledge_graph_path": graph_output_path if os.path.exists(graph_output_path) else None,
-        "generated_at": datetime.now().isoformat()
-    }
-    
-    # Save the analysis to the database
     try:
-        analysis_record = {
+        # Wait for all tasks to complete
+        entities = await entities_task
+        topics = await topics_task
+        relationships = await relationships_task
+        temporal_patterns = await temporal_patterns_task
+        
+        # Generate knowledge graph
+        graph_output_path = os.path.join(project_dir, f"knowledge_graph_{focus_id}.png")
+        knowledge_graph = generate_knowledge_graph(relationships, graph_output_path)
+        
+        # Create the result
+        result = {
             "focus_id": focus_id,
-            "entities": json.dumps(entities),
-            "topics": json.dumps(topics),
-            "relationships": json.dumps(relationships),
-            "temporal_patterns": json.dumps(temporal_patterns),
+            "item_count": len(info_items),
+            "entities": entities,
+            "topics": topics,
+            "relationships": relationships,
+            "temporal_patterns": temporal_patterns,
             "knowledge_graph_path": graph_output_path if os.path.exists(graph_output_path) else None,
-            "item_count": len(info_items)
+            "generated_at": datetime.now().isoformat()
         }
-        pb.add(collection_name='data_mining_analysis', body=analysis_record)
-        data_mining_logger.info(f"Analysis for focus ID {focus_id} saved to database")
+        
+        # Save the analysis to the database
+        try:
+            analysis_record = {
+                "focus_id": focus_id,
+                "entities": json.dumps(entities),
+                "topics": json.dumps(topics),
+                "relationships": json.dumps(relationships),
+                "temporal_patterns": json.dumps(temporal_patterns),
+                "knowledge_graph_path": graph_output_path if os.path.exists(graph_output_path) else None,
+                "item_count": len(info_items)
+            }
+            pb.add(collection_name='data_mining_analysis', body=analysis_record)
+            data_mining_logger.info(f"Analysis for focus ID {focus_id} saved to database")
+        except Exception as e:
+            data_mining_logger.error(f"Error saving analysis to database: {e}")
+            # Save to a local file as backup
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            backup_path = os.path.join(project_dir, f'{timestamp}_analysis_{focus_id}.json')
+            with open(backup_path, 'w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, indent=4)
+            data_mining_logger.info(f"Analysis saved to backup file: {backup_path}")
+        
+        return result
     except Exception as e:
-        data_mining_logger.error(f"Error saving analysis to database: {e}")
-        # Save to a local file as backup
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        with open(os.path.join(project_dir, f'{timestamp}_analysis_{focus_id}.json'), 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=4)
-    
-    return result
+        data_mining_logger.error(f"Error in comprehensive analysis: {e}")
+        return {"error": f"Analysis failed: {str(e)}"}
 
 async def get_analysis_for_focus(focus_id: str, max_age_hours: int = 24) -> Dict[str, Any]:
     """
@@ -516,36 +698,46 @@ async def get_analysis_for_focus(focus_id: str, max_age_hours: int = 24) -> Dict
     """
     data_mining_logger.info(f"Getting data mining analysis for focus ID: {focus_id}")
     
+    # Validate input
+    if not focus_id:
+        data_mining_logger.error("Invalid focus ID provided")
+        return {"error": "Invalid focus ID"}
+    
     # Calculate the cutoff time
     cutoff_time = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
     
-    # Try to get recent analysis from the database
-    filter_query = f"focus_id='{focus_id}' && created>='{cutoff_time}'"
-    recent_analysis = pb.read(collection_name='data_mining_analysis', filter=filter_query, sort="-created")
-    
-    if recent_analysis:
-        data_mining_logger.info(f"Found recent data mining analysis for focus ID {focus_id}")
-        analysis = recent_analysis[0]
+    try:
+        # Try to get recent analysis from the database
+        filter_query = f"focus_id='{focus_id}' && created>='{cutoff_time}'"
+        recent_analysis = pb.read(collection_name='data_mining_analysis', filter=filter_query, sort="-created")
         
-        # Convert JSON strings back to objects
-        for field in ['entities', 'topics', 'relationships', 'temporal_patterns']:
-            if field in analysis and isinstance(analysis[field], str):
-                try:
-                    analysis[field] = json.loads(analysis[field])
-                except:
-                    analysis[field] = []
+        if recent_analysis:
+            data_mining_logger.info(f"Found recent data mining analysis for focus ID {focus_id}")
+            analysis = recent_analysis[0]
+            
+            # Convert JSON strings back to objects
+            for field in ['entities', 'topics', 'relationships', 'temporal_patterns']:
+                if field in analysis and isinstance(analysis[field], str):
+                    try:
+                        analysis[field] = json.loads(analysis[field])
+                    except json.JSONDecodeError as e:
+                        data_mining_logger.error(f"Error parsing {field} JSON: {e}")
+                        analysis[field] = []
+            
+            return analysis
         
-        return analysis
-    
-    # No recent analysis found, generate a new one
-    data_mining_logger.info(f"No recent analysis found for focus ID {focus_id}, generating new one")
-    
-    # Get information items for this focus point
-    info_items = pb.read(collection_name='infos', filter=f"tag='{focus_id}'")
-    
-    if not info_items:
-        data_mining_logger.warning(f"No information items found for focus ID {focus_id}")
-        return {"error": f"No information items found for focus ID {focus_id}"}
-    
-    # Perform analysis
-    return await analyze_info_items(info_items, focus_id)
+        # No recent analysis found, generate a new one
+        data_mining_logger.info(f"No recent analysis found for focus ID {focus_id}, generating new one")
+        
+        # Get information items for this focus point
+        info_items = pb.read(collection_name='infos', filter=f"tag='{focus_id}'")
+        
+        if not info_items:
+            data_mining_logger.warning(f"No information items found for focus ID {focus_id}")
+            return {"error": f"No information items found for focus ID {focus_id}"}
+        
+        # Perform analysis
+        return await analyze_info_items(info_items, focus_id)
+    except Exception as e:
+        data_mining_logger.error(f"Error getting analysis for focus ID {focus_id}: {e}")
+        return {"error": f"Failed to get analysis: {str(e)}"}
