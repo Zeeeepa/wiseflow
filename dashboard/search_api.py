@@ -2,9 +2,15 @@
 Search API endpoints for the dashboard.
 """
 
-from fastapi import APIRouter, HTTPException, Body
-from typing import Dict, Any, List, Optional
 import logging
+from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, Body
+
+from core.api import (
+    format_success_response,
+    format_error_response,
+    ValidationError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +35,30 @@ async def search_github(
         Dictionary containing search results
     """
     try:
+        # Validate required fields
+        if "search_goal" not in search_data:
+            raise ValidationError(detail="search_goal is required")
+        
         # In a real implementation, this would connect to GitHub API
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "message": "GitHub search started successfully",
-            "search_id": "github_search_123"
-        }
+        return format_success_response(
+            data={"search_id": "github_search_123"},
+            message="GitHub search started successfully"
+        )
     
+    except ValidationError as e:
+        logger.error(f"Validation error searching GitHub: {str(e)}")
+        return format_error_response(
+            error="Validation Error",
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error searching GitHub: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching GitHub: {str(e)}")
+        logger.error(f"Error searching GitHub: {str(e)}")
+        return format_error_response(
+            error="Search Error",
+            detail=f"Error searching GitHub: {str(e)}"
+        )
 
 @router.post("/api/search/arxiv")
 async def search_arxiv(
@@ -60,18 +78,30 @@ async def search_arxiv(
         Dictionary containing search results
     """
     try:
+        # Validate required fields
+        if "search_goal" not in search_data:
+            raise ValidationError(detail="search_goal is required")
+        
         # In a real implementation, this would connect to Arxiv API
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "message": "Arxiv search started successfully",
-            "search_id": "arxiv_search_123"
-        }
+        return format_success_response(
+            data={"search_id": "arxiv_search_123"},
+            message="Arxiv search started successfully"
+        )
     
+    except ValidationError as e:
+        logger.error(f"Validation error searching Arxiv: {str(e)}")
+        return format_error_response(
+            error="Validation Error",
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error searching Arxiv: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching Arxiv: {str(e)}")
+        logger.error(f"Error searching Arxiv: {str(e)}")
+        return format_error_response(
+            error="Search Error",
+            detail=f"Error searching Arxiv: {str(e)}"
+        )
 
 @router.post("/api/search/web")
 async def search_web(
@@ -91,18 +121,30 @@ async def search_web(
         Dictionary containing search results
     """
     try:
+        # Validate required fields
+        if "search_goal" not in search_data:
+            raise ValidationError(detail="search_goal is required")
+        
         # In a real implementation, this would connect to a web search API
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "message": "Web search started successfully",
-            "search_id": "web_search_123"
-        }
+        return format_success_response(
+            data={"search_id": "web_search_123"},
+            message="Web search started successfully"
+        )
     
+    except ValidationError as e:
+        logger.error(f"Validation error searching web: {str(e)}")
+        return format_error_response(
+            error="Validation Error",
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error searching web: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching web: {str(e)}")
+        logger.error(f"Error searching web: {str(e)}")
+        return format_error_response(
+            error="Search Error",
+            detail=f"Error searching web: {str(e)}"
+        )
 
 @router.post("/api/search/youtube")
 async def search_youtube(
@@ -122,18 +164,30 @@ async def search_youtube(
         Dictionary containing search results
     """
     try:
+        # Validate required fields
+        if "search_goal" not in search_data:
+            raise ValidationError(detail="search_goal is required")
+        
         # In a real implementation, this would connect to YouTube API
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "message": "YouTube search started successfully",
-            "search_id": "youtube_search_123"
-        }
+        return format_success_response(
+            data={"search_id": "youtube_search_123"},
+            message="YouTube search started successfully"
+        )
     
+    except ValidationError as e:
+        logger.error(f"Validation error searching YouTube: {str(e)}")
+        return format_error_response(
+            error="Validation Error",
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error searching YouTube: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching YouTube: {str(e)}")
+        logger.error(f"Error searching YouTube: {str(e)}")
+        return format_error_response(
+            error="Search Error",
+            detail=f"Error searching YouTube: {str(e)}"
+        )
 
 @router.get("/api/search/listings")
 async def get_search_listings() -> Dict[str, Any]:
@@ -178,14 +232,14 @@ async def get_search_listings() -> Dict[str, Any]:
             }
         ]
         
-        return {
-            "status": "success",
-            "listings": listings
-        }
+        return format_success_response(data=listings)
     
     except Exception as e:
-        logger.error(f"Error getting search listings: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting search listings: {str(e)}")
+        logger.error(f"Error getting search listings: {str(e)}")
+        return format_error_response(
+            error="Listing Error",
+            detail=f"Error getting search listings: {str(e)}"
+        )
 
 @router.post("/api/search/toggle/{search_id}")
 async def toggle_search(
@@ -203,17 +257,30 @@ async def toggle_search(
         Dictionary containing the updated status
     """
     try:
+        # Validate action
+        if "action" not in action or action["action"] not in ["on", "off", "remove"]:
+            raise ValidationError(detail="Invalid action. Must be 'on', 'off', or 'remove'")
+        
         # In a real implementation, this would update the database
         # For demonstration, we'll return mock data
         
-        return {
-            "status": "success",
-            "search_id": search_id,
-            "new_status": action.get("action", "unknown"),
-            "message": f"Search listing {search_id} {action.get('action', 'updated')} successfully"
-        }
+        return format_success_response(
+            data={
+                "search_id": search_id,
+                "new_status": action.get("action", "unknown")
+            },
+            message=f"Search listing {search_id} {action.get('action', 'updated')} successfully"
+        )
     
+    except ValidationError as e:
+        logger.error(f"Validation error toggling search listing: {str(e)}")
+        return format_error_response(
+            error="Validation Error",
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error toggling search listing: {e}")
-        raise HTTPException(status_code=500, detail=f"Error toggling search listing: {str(e)}")
-
+        logger.error(f"Error toggling search listing: {str(e)}")
+        return format_error_response(
+            error="Toggle Error",
+            detail=f"Error toggling search listing: {str(e)}"
+        )

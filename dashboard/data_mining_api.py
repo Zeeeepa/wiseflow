@@ -2,20 +2,31 @@
 Data Mining API endpoints for the dashboard.
 """
 
-from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form, BackgroundTasks
-from typing import Dict, Any, List, Optional
 import logging
 import json
 import os
 import asyncio
 from datetime import datetime
+from typing import Dict, Any, List, Optional, Set
+from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form, BackgroundTasks, status, Depends
+from fastapi.responses import JSONResponse
 
+from core.api import (
+    format_success_response,
+    format_error_response,
+    ResourceManager,
+    NotFoundError,
+    ValidationError
+)
 from core.task.data_mining_manager import data_mining_manager
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
+
+# Active background tasks tracking
+active_tasks: Set[asyncio.Task] = set()
 
 @router.post("/api/data-mining/tasks")
 async def create_data_mining_task(
@@ -41,7 +52,10 @@ async def create_data_mining_task(
     """
     try:
         # Parse search parameters
-        search_params_dict = json.loads(search_params)
+        try:
+            search_params_dict = json.loads(search_params)
+        except json.JSONDecodeError:
+            raise ValidationError(detail="Invalid JSON in search_params")
         
         # Save context files if provided
         saved_files = []
@@ -54,26 +68,40 @@ async def create_data_mining_task(
                 saved_files.append(file_path)
         
         # Create the task
-        task_id = await data_mining_manager.create_task(
-            name=name,
-            task_type=task_type,
-            description=description,
-            search_params=search_params_dict,
-            context_files=saved_files
+        task_id = await ResourceManager.with_timeout(
+            data_mining_manager.create_task(
+                name=name,
+                task_type=task_type,
+                description=description,
+                search_params=search_params_dict,
+                context_files=saved_files
+            ),
+            timeout=10.0,
+            error_message="Task creation timed out"
         )
         
-        # Run the task in the background
-        background_tasks.add_task(data_mining_manager.run_task, task_id)
+        # Run the task in the background with proper task tracking
+        task = asyncio.create_task(data_mining_manager.run_task(task_id))
+        active_tasks.add(task)
+        task.add_done_callback(active_tasks.discard)
         
-        return {
-            "status": "success",
-            "message": f"Data mining task created successfully",
-            "task_id": task_id
-        }
+        return format_success_response(
+            data={"task_id": task_id},
+            message="Data mining task created successfully"
+        )
     
+    except ValidationError as e:
+        logger.error(f"Validation error creating data mining task: {str(e)}")
+        return format_error_response(
+            error="Validation Error",
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error creating data mining task: {e}")
-        raise HTTPException(status_code=500, detail=f"Error creating data mining task: {str(e)}")
+        logger.error(f"Error creating data mining task: {str(e)}")
+        return format_error_response(
+            error="Task Creation Error",
+            detail=str(e)
+        )
 
 @router.get("/api/data-mining/tasks")
 async def get_data_mining_tasks(
@@ -89,19 +117,23 @@ async def get_data_mining_tasks(
         Dictionary containing the list of tasks
     """
     try:
-        tasks = await data_mining_manager.get_all_tasks(status)
+        tasks = await ResourceManager.with_timeout(
+            data_mining_manager.get_all_tasks(status),
+            timeout=10.0,
+            error_message="Task retrieval timed out"
+        )
         
         # Convert tasks to dictionaries
         task_dicts = [task.to_dict() for task in tasks]
         
-        return {
-            "status": "success",
-            "tasks": task_dicts
-        }
+        return format_success_response(data=task_dicts)
     
     except Exception as e:
-        logger.error(f"Error getting data mining tasks: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting data mining tasks: {str(e)}")
+        logger.error(f"Error getting data mining tasks: {str(e)}")
+        return format_error_response(
+            error="Task Retrieval Error",
+            detail=str(e)
+        )
 
 @router.post("/api/data-mining/templates")
 async def save_data_mining_template(
@@ -119,24 +151,32 @@ async def save_data_mining_template(
     try:
         # Validate template data
         if "name" not in template_data:
-            raise ValueError("Template name is required")
+            raise ValidationError(detail="Template name is required")
         
         # Save the template
-        template_id = await data_mining_manager.save_template(template_data)
+        template_id = await ResourceManager.with_timeout(
+            data_mining_manager.save_template(template_data),
+            timeout=10.0,
+            error_message="Template saving timed out"
+        )
         
-        return {
-            "status": "success",
-            "message": "Template saved successfully",
-            "template_id": template_id
-        }
+        return format_success_response(
+            data={"template_id": template_id},
+            message="Template saved successfully"
+        )
     
-    except ValueError as e:
-        logger.error(f"Invalid template data: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    
+    except ValidationError as e:
+        logger.error(f"Validation error saving template: {str(e)}")
+        return format_error_response(
+            error="Validation Error",
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error saving template: {e}")
-        raise HTTPException(status_code=500, detail=f"Error saving template: {str(e)}")
+        logger.error(f"Error saving template: {str(e)}")
+        return format_error_response(
+            error="Template Error",
+            detail=str(e)
+        )
 
 @router.get("/api/data-mining/templates")
 async def get_data_mining_templates(
@@ -152,16 +192,20 @@ async def get_data_mining_templates(
         Dictionary containing the list of templates
     """
     try:
-        templates = await data_mining_manager.get_templates(template_type)
+        templates = await ResourceManager.with_timeout(
+            data_mining_manager.get_templates(template_type),
+            timeout=10.0,
+            error_message="Template retrieval timed out"
+        )
         
-        return {
-            "status": "success",
-            "templates": templates
-        }
+        return format_success_response(data=templates)
     
     except Exception as e:
-        logger.error(f"Error getting templates: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting templates: {str(e)}")
+        logger.error(f"Error getting templates: {str(e)}")
+        return format_error_response(
+            error="Template Retrieval Error",
+            detail=str(e)
+        )
 
 @router.post("/api/data-mining/preview")
 async def preview_data_mining_task(
@@ -178,18 +222,26 @@ async def preview_data_mining_task(
     """
     try:
         # Generate preview
-        preview_data = await data_mining_manager.generate_preview(search_params)
+        preview_data = await ResourceManager.with_timeout(
+            data_mining_manager.generate_preview(search_params),
+            timeout=15.0,
+            error_message="Preview generation timed out"
+        )
         
-        return {
-            "status": "success",
-            "estimated_repos": preview_data.get("estimated_repos", 0),
-            "estimated_files": preview_data.get("estimated_files", 0),
-            "estimated_time": preview_data.get("estimated_time", "Unknown")
-        }
+        return format_success_response(
+            data={
+                "estimated_repos": preview_data.get("estimated_repos", 0),
+                "estimated_files": preview_data.get("estimated_files", 0),
+                "estimated_time": preview_data.get("estimated_time", "Unknown")
+            }
+        )
     
     except Exception as e:
-        logger.error(f"Error generating preview: {e}")
-        raise HTTPException(status_code=500, detail=f"Error generating preview: {str(e)}")
+        logger.error(f"Error generating preview: {str(e)}")
+        return format_error_response(
+            error="Preview Error",
+            detail=str(e)
+        )
 
 @router.get("/api/data-mining/tasks/{task_id}")
 async def get_data_mining_task(
@@ -205,21 +257,26 @@ async def get_data_mining_task(
         Dictionary containing the task details
     """
     try:
-        task = await data_mining_manager.get_task(task_id)
+        task = await ResourceManager.with_timeout(
+            data_mining_manager.get_task(task_id),
+            timeout=10.0,
+            error_message="Task retrieval timed out"
+        )
         
         if not task:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Task {task_id} not found"
+            )
         
-        return {
-            "status": "success",
-            "task": task.to_dict()
-        }
+        return format_success_response(data=task.to_dict())
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error getting data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting data mining task: {str(e)}")
+        logger.error(f"Error getting data mining task {task_id}: {str(e)}")
+        return format_error_response(
+            error="Task Retrieval Error",
+            detail=str(e)
+        )
 
 @router.put("/api/data-mining/tasks/{task_id}")
 async def update_data_mining_task(
@@ -237,21 +294,28 @@ async def update_data_mining_task(
         Dictionary containing the update status
     """
     try:
-        success = await data_mining_manager.update_task(task_id, updates)
+        success = await ResourceManager.with_timeout(
+            data_mining_manager.update_task(task_id, updates),
+            timeout=10.0,
+            error_message="Task update timed out"
+        )
         
         if not success:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Task {task_id} not found"
+            )
         
-        return {
-            "status": "success",
-            "message": f"Task {task_id} updated successfully"
-        }
+        return format_success_response(
+            message=f"Task {task_id} updated successfully"
+        )
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error updating data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error updating data mining task: {str(e)}")
+        logger.error(f"Error updating data mining task {task_id}: {str(e)}")
+        return format_error_response(
+            error="Task Update Error",
+            detail=str(e)
+        )
 
 @router.delete("/api/data-mining/tasks/{task_id}")
 async def delete_data_mining_task(
@@ -267,21 +331,28 @@ async def delete_data_mining_task(
         Dictionary containing the deletion status
     """
     try:
-        success = await data_mining_manager.delete_task(task_id)
+        success = await ResourceManager.with_timeout(
+            data_mining_manager.delete_task(task_id),
+            timeout=10.0,
+            error_message="Task deletion timed out"
+        )
         
         if not success:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Task {task_id} not found"
+            )
         
-        return {
-            "status": "success",
-            "message": f"Task {task_id} deleted successfully"
-        }
+        return format_success_response(
+            message=f"Task {task_id} deleted successfully"
+        )
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error deleting data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error deleting data mining task: {str(e)}")
+        logger.error(f"Error deleting data mining task {task_id}: {str(e)}")
+        return format_error_response(
+            error="Task Deletion Error",
+            detail=str(e)
+        )
 
 @router.post("/api/data-mining/tasks/{task_id}/toggle")
 async def toggle_data_mining_task(
@@ -300,23 +371,30 @@ async def toggle_data_mining_task(
     """
     try:
         active = action.get("active", True)
-        success = await data_mining_manager.toggle_task_status(task_id, active)
+        success = await ResourceManager.with_timeout(
+            data_mining_manager.toggle_task_status(task_id, active),
+            timeout=10.0,
+            error_message="Task status toggle timed out"
+        )
         
         if not success:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Task {task_id} not found"
+            )
         
-        status = "active" if active else "inactive"
+        status_str = "active" if active else "inactive"
         
-        return {
-            "status": "success",
-            "message": f"Task {task_id} set to {status} successfully"
-        }
+        return format_success_response(
+            message=f"Task {task_id} set to {status_str} successfully"
+        )
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error toggling data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error toggling data mining task: {str(e)}")
+        logger.error(f"Error toggling data mining task {task_id}: {str(e)}")
+        return format_error_response(
+            error="Task Toggle Error",
+            detail=str(e)
+        )
 
 @router.post("/api/data-mining/tasks/{task_id}/run")
 async def run_data_mining_task(
@@ -333,24 +411,33 @@ async def run_data_mining_task(
         Dictionary containing the run status
     """
     try:
-        task = await data_mining_manager.get_task(task_id)
+        task = await ResourceManager.with_timeout(
+            data_mining_manager.get_task(task_id),
+            timeout=10.0,
+            error_message="Task retrieval timed out"
+        )
         
         if not task:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Task {task_id} not found"
+            )
         
-        # Run the task in the background
-        background_tasks.add_task(data_mining_manager.run_task, task_id)
+        # Run the task in the background with proper task tracking
+        task = asyncio.create_task(data_mining_manager.run_task(task_id))
+        active_tasks.add(task)
+        task.add_done_callback(active_tasks.discard)
         
-        return {
-            "status": "success",
-            "message": f"Task {task_id} started running"
-        }
+        return format_success_response(
+            message=f"Task {task_id} started running"
+        )
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error running data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error running data mining task: {str(e)}")
+        logger.error(f"Error running data mining task {task_id}: {str(e)}")
+        return format_error_response(
+            error="Task Run Error",
+            detail=str(e)
+        )
 
 @router.get("/api/data-mining/tasks/{task_id}/results")
 async def get_data_mining_task_results(
@@ -366,21 +453,26 @@ async def get_data_mining_task_results(
         Dictionary containing the task results
     """
     try:
-        results = await data_mining_manager.get_task_results(task_id)
+        results = await ResourceManager.with_timeout(
+            data_mining_manager.get_task_results(task_id),
+            timeout=15.0,
+            error_message="Task results retrieval timed out"
+        )
         
         if "error" in results and results["error"] == "Task not found":
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Task {task_id} not found"
+            )
         
-        return {
-            "status": "success",
-            "results": results
-        }
+        return format_success_response(data=results)
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error getting data mining task results {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting data mining task results: {str(e)}")
+        logger.error(f"Error getting data mining task results {task_id}: {str(e)}")
+        return format_error_response(
+            error="Results Retrieval Error",
+            detail=str(e)
+        )
 
 @router.post("/api/data-mining/tasks/{task_id}/analyze")
 async def analyze_data_mining_task(
@@ -397,24 +489,33 @@ async def analyze_data_mining_task(
         Dictionary containing the analysis status
     """
     try:
-        task = await data_mining_manager.get_task(task_id)
+        task = await ResourceManager.with_timeout(
+            data_mining_manager.get_task(task_id),
+            timeout=10.0,
+            error_message="Task retrieval timed out"
+        )
         
         if not task:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Task {task_id} not found"
+            )
         
-        # Run the analysis in the background
-        background_tasks.add_task(data_mining_manager.analyze_task_results, task_id)
+        # Run the analysis in the background with proper task tracking
+        task = asyncio.create_task(data_mining_manager.analyze_task_results(task_id))
+        active_tasks.add(task)
+        task.add_done_callback(active_tasks.discard)
         
-        return {
-            "status": "success",
-            "message": f"Analysis for task {task_id} started"
-        }
+        return format_success_response(
+            message=f"Analysis for task {task_id} started"
+        )
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error analyzing data mining task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error analyzing data mining task: {str(e)}")
+        logger.error(f"Error analyzing data mining task {task_id}: {str(e)}")
+        return format_error_response(
+            error="Analysis Error",
+            detail=str(e)
+        )
 
 @router.post("/api/data-mining/tasks/{task_id}/interconnect")
 async def interconnect_tasks(
@@ -435,44 +536,69 @@ async def interconnect_tasks(
         Dictionary containing the interconnection status
     """
     try:
+        # Validate interconnection data
+        if "target_task_id" not in interconnection_data:
+            raise ValidationError(detail="Target task ID is required")
+        
+        if "interconnection_type" not in interconnection_data:
+            raise ValidationError(detail="Interconnection type is required")
+        
         # Get the source task
-        source_task = await data_mining_manager.get_task(task_id)
+        source_task = await ResourceManager.with_timeout(
+            data_mining_manager.get_task(task_id),
+            timeout=10.0,
+            error_message="Source task retrieval timed out"
+        )
+        
         if not source_task:
-            raise HTTPException(status_code=404, detail=f"Source task {task_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Source task {task_id} not found"
+            )
         
         # Get the target task
         target_task_id = interconnection_data.get('target_task_id')
-        if not target_task_id:
-            raise HTTPException(status_code=400, detail="Target task ID is required")
-        
-        target_task = await data_mining_manager.get_task(target_task_id)
-        if not target_task:
-            raise HTTPException(status_code=404, detail=f"Target task {target_task_id} not found")
-        
-        # Get interconnection type
-        interconnection_type = interconnection_data.get('interconnection_type')
-        if not interconnection_type:
-            raise HTTPException(status_code=400, detail="Interconnection type is required")
-        
-        # Create the interconnection
-        interconnection_id = await data_mining_manager.create_task_interconnection(
-            source_task_id=task_id,
-            target_task_id=target_task_id,
-            interconnection_type=interconnection_type,
-            description=interconnection_data.get('description', '')
+        target_task = await ResourceManager.with_timeout(
+            data_mining_manager.get_task(target_task_id),
+            timeout=10.0,
+            error_message="Target task retrieval timed out"
         )
         
-        return {
-            "status": "success",
-            "message": f"Tasks interconnected successfully",
-            "interconnection_id": interconnection_id
-        }
+        if not target_task:
+            return format_error_response(
+                error="Not Found",
+                detail=f"Target task {target_task_id} not found"
+            )
+        
+        # Create the interconnection
+        interconnection_id = await ResourceManager.with_timeout(
+            data_mining_manager.create_task_interconnection(
+                source_task_id=task_id,
+                target_task_id=target_task_id,
+                interconnection_type=interconnection_data.get('interconnection_type'),
+                description=interconnection_data.get('description', '')
+            ),
+            timeout=10.0,
+            error_message="Interconnection creation timed out"
+        )
+        
+        return format_success_response(
+            data={"interconnection_id": interconnection_id},
+            message="Tasks interconnected successfully"
+        )
     
-    except HTTPException:
-        raise
+    except ValidationError as e:
+        logger.error(f"Validation error interconnecting tasks: {str(e)}")
+        return format_error_response(
+            error="Validation Error",
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error interconnecting tasks: {e}")
-        raise HTTPException(status_code=500, detail=f"Error interconnecting tasks: {str(e)}")
+        logger.error(f"Error interconnecting tasks: {str(e)}")
+        return format_error_response(
+            error="Interconnection Error",
+            detail=str(e)
+        )
 
 @router.get("/api/data-mining/interconnections")
 async def get_task_interconnections() -> Dict[str, Any]:
@@ -483,16 +609,20 @@ async def get_task_interconnections() -> Dict[str, Any]:
         Dictionary containing the list of interconnections
     """
     try:
-        interconnections = await data_mining_manager.get_all_task_interconnections()
+        interconnections = await ResourceManager.with_timeout(
+            data_mining_manager.get_all_task_interconnections(),
+            timeout=10.0,
+            error_message="Interconnections retrieval timed out"
+        )
         
-        return {
-            "status": "success",
-            "interconnections": interconnections
-        }
+        return format_success_response(data=interconnections)
     
     except Exception as e:
-        logger.error(f"Error getting task interconnections: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting task interconnections: {str(e)}")
+        logger.error(f"Error getting task interconnections: {str(e)}")
+        return format_error_response(
+            error="Interconnection Retrieval Error",
+            detail=str(e)
+        )
 
 @router.delete("/api/data-mining/interconnections/{interconnection_id}")
 async def delete_task_interconnection(
@@ -508,18 +638,36 @@ async def delete_task_interconnection(
         Dictionary containing the deletion status
     """
     try:
-        success = await data_mining_manager.delete_task_interconnection(interconnection_id)
+        success = await ResourceManager.with_timeout(
+            data_mining_manager.delete_task_interconnection(interconnection_id),
+            timeout=10.0,
+            error_message="Interconnection deletion timed out"
+        )
         
         if not success:
-            raise HTTPException(status_code=404, detail=f"Interconnection {interconnection_id} not found")
+            return format_error_response(
+                error="Not Found",
+                detail=f"Interconnection {interconnection_id} not found"
+            )
         
-        return {
-            "status": "success",
-            "message": f"Interconnection {interconnection_id} deleted successfully"
-        }
+        return format_success_response(
+            message=f"Interconnection {interconnection_id} deleted successfully"
+        )
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error deleting task interconnection {interconnection_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error deleting task interconnection: {str(e)}")
+        logger.error(f"Error deleting task interconnection {interconnection_id}: {str(e)}")
+        return format_error_response(
+            error="Interconnection Deletion Error",
+            detail=str(e)
+        )
+
+# Cleanup function for active tasks
+async def cleanup_active_tasks():
+    """Clean up any active tasks."""
+    for task in active_tasks:
+        if not task.done():
+            task.cancel()
+    
+    if active_tasks:
+        await asyncio.gather(*active_tasks, return_exceptions=True)
+        active_tasks.clear()
