@@ -1,0 +1,26 @@
+{
+  "name": "wiseflow-dashboard",
+  "version": "1.0.0",
+  "description": "Dashboard UI for Wiseflow - Extract insights from massive amounts of information",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "bootstrap": "^5.3.0",
+    "bootstrap-icons": "^1.10.3",
+    "d3": "^7.0.0",
+    "express": "^4.18.2",
+    "body-parser": "^1.20.2"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "author": "",
+  "license": "ISC"
+}
+

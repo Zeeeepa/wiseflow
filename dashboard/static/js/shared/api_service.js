@@ -6,47 +6,99 @@
  */
 
 const ApiService = (function() {
-    // Base API URL
-    const baseUrl = '/api';
+    // Base API URL - configurable based on environment
+    const baseUrl = window.API_BASE_URL || '/api';
+    
+    // API version
+    const apiVersion = window.API_VERSION || 'v1';
+    
+    // Full API URL with version
+    const apiUrl = `${baseUrl}/${apiVersion}`;
     
     // Default request options
     const defaultOptions = {
         headers: {
-            'Content-Type': 'application/json'
-        }
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        credentials: 'same-origin' // Include cookies for same-origin requests
     };
     
     // Request queue for rate limiting
     const requestQueue = [];
     let isProcessingQueue = false;
     
+    // Maximum number of concurrent requests
+    const MAX_CONCURRENT_REQUESTS = 5;
+    
+    // Current number of active requests
+    let activeRequests = 0;
+    
     // Process the request queue
     function processQueue() {
-        if (isProcessingQueue || requestQueue.length === 0) {
+        if (isProcessingQueue || requestQueue.length === 0 || activeRequests >= MAX_CONCURRENT_REQUESTS) {
             return;
         }
         
         isProcessingQueue = true;
         
-        const { url, options, resolve, reject } = requestQueue.shift();
-        
-        fetch(url, options)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                resolve(data);
-                isProcessingQueue = false;
-                processQueue();
-            })
-            .catch(error => {
-                reject(error);
-                isProcessingQueue = false;
-                processQueue();
-            });
+        while (requestQueue.length > 0 && activeRequests < MAX_CONCURRENT_REQUESTS) {
+            const { url, options, resolve, reject } = requestQueue.shift();
+            
+            activeRequests++;
+            
+            fetch(url, options)
+                .then(response => {
+                    if (!response.ok) {
+                        // Try to parse error response as JSON
+                        return response.json()
+                            .then(errorData => {
+                                throw new Error(errorData.message || `HTTP error ${response.status}: ${response.statusText}`);
+                            })
+                            .catch(jsonError => {
+                                // If JSON parsing fails, use status text
+                                throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                            });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    resolve(data);
+                    activeRequests--;
+                    
+                    // Emit event for successful API response
+                    if (window.EventBus) {
+                        EventBus.emit(EVENTS.DATA_LOADED, { 
+                            endpoint: url, 
+                            data: data 
+                        });
+                    }
+                })
+                .catch(error => {
+                    reject(error);
+                    activeRequests--;
+                    
+                    // Emit event for API error
+                    if (window.EventBus) {
+                        EventBus.emit(EVENTS.DATA_ERROR, { 
+                            endpoint: url, 
+                            error: error.message 
+                        });
+                    }
+                    
+                    // Log error
+                    console.error(`API Error (${url}):`, error);
+                    
+                    // Show error toast if Utils is available
+                    if (window.Utils && typeof Utils.showToast === 'function') {
+                        Utils.showToast(`API Error: ${error.message}`, 'error');
+                    }
+                })
+                .finally(() => {
+                    isProcessingQueue = false;
+                    processQueue();
+                });
+        }
     }
     
     // Add a request to the queue
@@ -57,7 +109,67 @@ const ApiService = (function() {
         });
     }
     
+    // Handle API errors
+    function handleApiError(error, endpoint) {
+        // Log error
+        console.error(`API Error (${endpoint}):`, error);
+        
+        // Emit event for API error
+        if (window.EventBus) {
+            EventBus.emit(EVENTS.DATA_ERROR, { 
+                endpoint: endpoint, 
+                error: error.message 
+            });
+        }
+        
+        // Show error toast if Utils is available
+        if (window.Utils && typeof Utils.showToast === 'function') {
+            Utils.showToast(`API Error: ${error.message}`, 'error');
+        }
+        
+        // Rethrow error for caller to handle
+        throw error;
+    }
+    
+    // Build full URL with query parameters
+    function buildUrl(endpoint, params = {}) {
+        const url = new URL(apiUrl + endpoint, window.location.origin);
+        
+        // Add query parameters
+        Object.keys(params).forEach(key => {
+            if (params[key] !== undefined && params[key] !== null) {
+                url.searchParams.append(key, params[key]);
+            }
+        });
+        
+        return url.toString();
+    }
+    
     return {
+        /**
+         * Get the base API URL
+         * @returns {string} Base API URL
+         */
+        getBaseUrl: function() {
+            return baseUrl;
+        },
+        
+        /**
+         * Get the API version
+         * @returns {string} API version
+         */
+        getApiVersion: function() {
+            return apiVersion;
+        },
+        
+        /**
+         * Get the full API URL with version
+         * @returns {string} Full API URL
+         */
+        getApiUrl: function() {
+            return apiUrl;
+        },
+        
         /**
          * Make a GET request
          * @param {string} endpoint - API endpoint
@@ -66,14 +178,7 @@ const ApiService = (function() {
          * @returns {Promise} Promise that resolves with the response data
          */
         get: function(endpoint, params = {}, useQueue = false) {
-            const url = new URL(baseUrl + endpoint, window.location.origin);
-            
-            // Add query parameters
-            Object.keys(params).forEach(key => {
-                if (params[key] !== undefined && params[key] !== null) {
-                    url.searchParams.append(key, params[key]);
-                }
-            });
+            const url = buildUrl(endpoint, params);
             
             const options = {
                 ...defaultOptions,
@@ -81,16 +186,36 @@ const ApiService = (function() {
             };
             
             if (useQueue) {
-                return queueRequest(url.toString(), options);
+                return queueRequest(url, options);
             }
             
-            return fetch(url.toString(), options)
+            return fetch(url, options)
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                        // Try to parse error response as JSON
+                        return response.json()
+                            .then(errorData => {
+                                throw new Error(errorData.message || `HTTP error ${response.status}: ${response.statusText}`);
+                            })
+                            .catch(jsonError => {
+                                // If JSON parsing fails, use status text
+                                throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                            });
                     }
                     return response.json();
-                });
+                })
+                .then(data => {
+                    // Emit event for successful API response
+                    if (window.EventBus) {
+                        EventBus.emit(EVENTS.DATA_LOADED, { 
+                            endpoint: endpoint, 
+                            data: data 
+                        });
+                    }
+                    
+                    return data;
+                })
+                .catch(error => handleApiError(error, endpoint));
         },
         
         /**
@@ -101,7 +226,7 @@ const ApiService = (function() {
          * @returns {Promise} Promise that resolves with the response data
          */
         post: function(endpoint, data = {}, useQueue = false) {
-            const url = baseUrl + endpoint;
+            const url = apiUrl + endpoint;
             
             const options = {
                 ...defaultOptions,
@@ -116,10 +241,30 @@ const ApiService = (function() {
             return fetch(url, options)
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                        // Try to parse error response as JSON
+                        return response.json()
+                            .then(errorData => {
+                                throw new Error(errorData.message || `HTTP error ${response.status}: ${response.statusText}`);
+                            })
+                            .catch(jsonError => {
+                                // If JSON parsing fails, use status text
+                                throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                            });
                     }
                     return response.json();
-                });
+                })
+                .then(data => {
+                    // Emit event for successful API response
+                    if (window.EventBus) {
+                        EventBus.emit(EVENTS.DATA_SAVED, { 
+                            endpoint: endpoint, 
+                            data: data 
+                        });
+                    }
+                    
+                    return data;
+                })
+                .catch(error => handleApiError(error, endpoint));
         },
         
         /**
@@ -130,7 +275,7 @@ const ApiService = (function() {
          * @returns {Promise} Promise that resolves with the response data
          */
         put: function(endpoint, data = {}, useQueue = false) {
-            const url = baseUrl + endpoint;
+            const url = apiUrl + endpoint;
             
             const options = {
                 ...defaultOptions,
@@ -145,10 +290,30 @@ const ApiService = (function() {
             return fetch(url, options)
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                        // Try to parse error response as JSON
+                        return response.json()
+                            .then(errorData => {
+                                throw new Error(errorData.message || `HTTP error ${response.status}: ${response.statusText}`);
+                            })
+                            .catch(jsonError => {
+                                // If JSON parsing fails, use status text
+                                throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                            });
                     }
                     return response.json();
-                });
+                })
+                .then(data => {
+                    // Emit event for successful API response
+                    if (window.EventBus) {
+                        EventBus.emit(EVENTS.DATA_SAVED, { 
+                            endpoint: endpoint, 
+                            data: data 
+                        });
+                    }
+                    
+                    return data;
+                })
+                .catch(error => handleApiError(error, endpoint));
         },
         
         /**
@@ -158,7 +323,7 @@ const ApiService = (function() {
          * @returns {Promise} Promise that resolves with the response data
          */
         delete: function(endpoint, useQueue = false) {
-            const url = baseUrl + endpoint;
+            const url = apiUrl + endpoint;
             
             const options = {
                 ...defaultOptions,
@@ -172,10 +337,30 @@ const ApiService = (function() {
             return fetch(url, options)
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                        // Try to parse error response as JSON
+                        return response.json()
+                            .then(errorData => {
+                                throw new Error(errorData.message || `HTTP error ${response.status}: ${response.statusText}`);
+                            })
+                            .catch(jsonError => {
+                                // If JSON parsing fails, use status text
+                                throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                            });
                     }
                     return response.json();
-                });
+                })
+                .then(data => {
+                    // Emit event for successful API response
+                    if (window.EventBus) {
+                        EventBus.emit(EVENTS.DATA_DELETED, { 
+                            endpoint: endpoint, 
+                            data: data 
+                        });
+                    }
+                    
+                    return data;
+                })
+                .catch(error => handleApiError(error, endpoint));
         },
         
         /**
@@ -186,12 +371,19 @@ const ApiService = (function() {
          * @returns {Promise} Promise that resolves with the response data
          */
         upload: function(endpoint, formData, progressCallback = null) {
-            const url = baseUrl + endpoint;
+            const url = apiUrl + endpoint;
             
             return new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
                 
                 xhr.open('POST', url, true);
+                
+                // Add default headers (except Content-Type, which is set automatically for FormData)
+                Object.entries(defaultOptions.headers).forEach(([key, value]) => {
+                    if (key !== 'Content-Type') {
+                        xhr.setRequestHeader(key, value);
+                    }
+                });
                 
                 // Set up progress event
                 if (progressCallback && typeof progressCallback === 'function') {
@@ -207,17 +399,33 @@ const ApiService = (function() {
                     if (xhr.status >= 200 && xhr.status < 300) {
                         try {
                             const data = JSON.parse(xhr.responseText);
+                            
+                            // Emit event for successful API response
+                            if (window.EventBus) {
+                                EventBus.emit(EVENTS.DATA_SAVED, { 
+                                    endpoint: endpoint, 
+                                    data: data 
+                                });
+                            }
+                            
                             resolve(data);
                         } catch (error) {
                             reject(new Error('Invalid JSON response'));
                         }
                     } else {
-                        reject(new Error(`HTTP error ${xhr.status}: ${xhr.statusText}`));
+                        try {
+                            const errorData = JSON.parse(xhr.responseText);
+                            reject(new Error(errorData.message || `HTTP error ${xhr.status}: ${xhr.statusText}`));
+                        } catch (jsonError) {
+                            reject(new Error(`HTTP error ${xhr.status}: ${xhr.statusText}`));
+                        }
                     }
                 };
                 
                 xhr.onerror = function() {
-                    reject(new Error('Network error'));
+                    const error = new Error('Network error');
+                    handleApiError(error, endpoint);
+                    reject(error);
                 };
                 
                 xhr.send(formData);
@@ -402,4 +610,3 @@ const ApiService = (function() {
 
 // Export ApiService for use in other modules
 window.ApiService = ApiService;
-
