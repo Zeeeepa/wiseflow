@@ -8,15 +8,24 @@ import os
 import logging
 from typing import Dict, List, Any, Optional, Union, Type
 
-# Import the plugin manager class but avoid circular imports
-from core.plugins.base import BasePlugin, ConnectorPlugin, ProcessorPlugin, AnalyzerPlugin, PluginManager
+# Import types but avoid circular imports
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from core.plugins.base import BasePlugin, ConnectorPlugin, ProcessorPlugin, AnalyzerPlugin, PluginManager
+else:
+    # Use string type annotations to avoid circular imports
+    BasePlugin = 'BasePlugin'
+    ConnectorPlugin = 'ConnectorPlugin'
+    ProcessorPlugin = 'ProcessorPlugin'
+    AnalyzerPlugin = 'AnalyzerPlugin'
+    PluginManager = 'PluginManager'
 
 logger = logging.getLogger(__name__)
 
 # Global plugin manager instance
 _plugin_manager: Optional[PluginManager] = None
 
-def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "core/plugins/config.json") -> PluginManager:
+def get_plugin_manager(plugins_dir: str = "core/plugins", config_file: str = "core/plugins/config.json") -> 'PluginManager':
     """
     Get the global plugin manager instance.
     
