@@ -2,13 +2,13 @@ import os
 import time
 import psutil
 from colorama import Fore
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Tuple, Set
 import asyncio
 import gc
 import logging
 import traceback
-
-# from contextlib import nullcontext, asynccontextmanager
+import weakref
+import signal
 from contextlib import asynccontextmanager
 
 from .async_configs import BrowserConfig, CrawlerRunConfig, CacheMode
@@ -16,7 +16,10 @@ from .async_crawler_strategy import AsyncCrawlerStrategy
 from .async_database import AsyncDatabaseManager
 from .async_logger import AsyncLogger
 from .cache_context import CacheContext
+from .enhanced_cache import EnhancedCache
 from .models import CrawlResult
+from .errors import Crawl4AIError, NetworkError, TimeoutError, ResourceError
+from .url_utils import normalize_url, get_domain_from_url
 from .utils import (
     create_box_message,
     sanitize_input_encode,
@@ -41,6 +44,8 @@ class AsyncWebCrawler:
     _max_memory_history_size = 10
     # Domain-specific cooldown tracking
     _domain_cooldowns: Dict[str, float] = {}
+    # Global instance registry for cleanup
+    _instances: Set['AsyncWebCrawler'] = set()
 
     def __init__(
         self,
@@ -49,7 +54,7 @@ class AsyncWebCrawler:
         thread_safe: bool = False,
         memory_threshold_percent: float = 85.0,
         memory_warning_percent: float = 75.0,
-        memory_check_interval: float = 10.0,
+        memory_check_interval: float = 10.0,  # 10 seconds
         cooldown_period: int = 300,  # 5 minutes in seconds
         max_retries: int = 3,
         retry_delay: int = 5,
@@ -78,16 +83,30 @@ class AsyncWebCrawler:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.browser_config = config or BrowserConfig()
+        self.base_directory = base_directory
+        
+        # Create crawl4ai directory if it doesn't exist
+        self.crawl4ai_folder = os.path.join(base_directory, ".crawl4ai")
+        os.makedirs(self.crawl4ai_folder, exist_ok=True)
         
         # Initialize logger first since other components may need it
         self.logger = AsyncLogger(
-            log_file=os.path.join(base_directory, ".crawl4ai", "crawler.log"),
+            log_file=os.path.join(self.crawl4ai_folder, "crawler.log"),
             console=True,
         )
 
         # Initialize database manager
         self.async_db_manager = AsyncDatabaseManager(
             base_directory=base_directory,
+            logger=self.logger,
+        )
+
+        # Initialize enhanced cache
+        self.enhanced_cache = EnhancedCache(
+            cache_dir=os.path.join(self.crawl4ai_folder, "cache"),
+            ttl=kwargs.get("cache_ttl", 86400),  # 24 hours in seconds
+            max_size=kwargs.get("cache_max_size", 1000),
+            cleanup_interval=kwargs.get("cache_cleanup_interval", 3600),  # 1 hour in seconds
             logger=self.logger,
         )
 
@@ -107,10 +126,6 @@ class AsyncWebCrawler:
         self._lock = asyncio.Lock() if thread_safe else None
         self._memory_monitor_task = None
 
-        # Initialize directories
-        self.crawl4ai_folder = os.path.join(base_directory, ".craw4ai-de")
-        os.makedirs(self.crawl4ai_folder, exist_ok=True)
-
         # Initialize robots.txt parser
         self.robots_parser = RobotsParser()
 
@@ -122,6 +137,42 @@ class AsyncWebCrawler:
         # Track active crawl tasks
         self._active_tasks = set()
         self._task_lock = asyncio.Lock()
+        
+        # Register instance for global cleanup
+        AsyncWebCrawler._instances.add(weakref.ref(self))
+        
+        # Register signal handlers for graceful shutdown
+        self._register_signal_handlers()
+    
+    def _register_signal_handlers(self):
+        """Register signal handlers for graceful shutdown."""
+        # Only register if not already registered
+        if not hasattr(AsyncWebCrawler, "_signals_registered"):
+            try:
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    signal.signal(sig, AsyncWebCrawler._signal_handler)
+                AsyncWebCrawler._signals_registered = True
+            except (ValueError, AttributeError):
+                # Signal handling might not be available in all environments
+                pass
+    
+    @staticmethod
+    def _signal_handler(signum, frame):
+        """Handle signals for graceful shutdown."""
+        logging.info(f"Received signal {signum}, shutting down all crawlers...")
+        
+        # Create a new event loop for cleanup
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Close all active crawlers
+        for ref in list(AsyncWebCrawler._instances):
+            instance = ref()
+            if instance is not None:
+                loop.run_until_complete(instance.close())
+        
+        # Exit with appropriate status
+        os._exit(0)
 
     async def _monitor_memory_usage(self):
         """
@@ -142,10 +193,15 @@ class AsyncWebCrawler:
                 # Calculate average memory usage
                 avg_memory = sum(self._memory_history) / len(self._memory_history)
                 
-                # Log memory usage at warning level
-                if memory_percent >= self.memory_warning_percent:
+                # Log memory usage at appropriate level
+                if memory_percent >= self.memory_threshold_percent:
+                    self.logger.error(
+                        f"Memory usage critical at {memory_percent:.1f}% (avg: {avg_memory:.1f}%), "
+                        f"threshold: {self.memory_threshold_percent}%"
+                    )
+                elif memory_percent >= self.memory_warning_percent:
                     self.logger.warning(
-                        f"Memory usage at {memory_percent:.1f}% (avg: {avg_memory:.1f}%), "
+                        f"Memory usage high at {memory_percent:.1f}% (avg: {avg_memory:.1f}%), "
                         f"threshold: {self.memory_threshold_percent}%"
                     )
                 else:
@@ -157,6 +213,14 @@ class AsyncWebCrawler:
                 if avg_memory > self.memory_warning_percent:
                     self.logger.warning("Triggering garbage collection due to high memory usage")
                     gc.collect()
+                    
+                    # If memory is still critical after GC, take more drastic measures
+                    if psutil.virtual_memory().percent >= self.memory_threshold_percent:
+                        self.logger.error("Memory still critical after garbage collection, pausing operations")
+                        # Put all domains in cooldown
+                        current_time = time.time()
+                        for domain in self._domain_last_hit.keys():
+                            self._domain_cooldowns[domain] = current_time + self.cooldown_period
         except asyncio.CancelledError:
             self.logger.info("Memory monitor task cancelled")
         except Exception as e:
@@ -172,14 +236,23 @@ class AsyncWebCrawler:
         Returns:
             self: The crawler instance
         """
-        await self.crawler_strategy.__aenter__()
-        await self.awarmup()
-        
-        # Start memory monitoring
-        if self._memory_monitor_task is None or self._memory_monitor_task.done():
-            self._memory_monitor_task = asyncio.create_task(self._monitor_memory_usage())
+        try:
+            await self.crawler_strategy.__aenter__()
+            await self.awarmup()
             
-        return self
+            # Start memory monitoring
+            if self._memory_monitor_task is None or self._memory_monitor_task.done():
+                self._memory_monitor_task = asyncio.create_task(self._monitor_memory_usage())
+                
+            return self
+        except Exception as e:
+            self.logger.error(f"Error starting crawler: {e}")
+            # Clean up resources if startup fails
+            try:
+                await self.close()
+            except Exception as cleanup_error:
+                self.logger.error(f"Error during cleanup after failed start: {cleanup_error}")
+            raise ResourceError("Failed to start crawler", original_error=e)
 
     async def close(self):
         """
@@ -188,8 +261,10 @@ class AsyncWebCrawler:
         This method cleans up resources used by the crawler.
         
         Steps:
-        1. Clean up browser resources
-        2. Close any open pages and contexts
+        1. Cancel memory monitor task
+        2. Cancel any active tasks
+        3. Close crawler strategy
+        4. Force garbage collection
         """
         # Cancel memory monitor task
         if self._memory_monitor_task and not self._memory_monitor_task.done():
@@ -211,10 +286,19 @@ class AsyncWebCrawler:
             self._active_tasks.clear()
         
         # Close crawler strategy
-        await self.crawler_strategy.__aexit__(None, None, None)
+        try:
+            await self.crawler_strategy.__aexit__(None, None, None)
+        except Exception as e:
+            self.logger.error(f"Error closing crawler strategy: {e}")
         
         # Force garbage collection
         gc.collect()
+        
+        # Remove from instance registry
+        for ref in list(AsyncWebCrawler._instances):
+            if ref() is self:
+                AsyncWebCrawler._instances.remove(ref)
+                break
 
     async def __aenter__(self):
         return await self.start()
@@ -227,8 +311,9 @@ class AsyncWebCrawler:
         self.ready = True
         return self
 
+    @asynccontextmanager
     async def nullcontext(self):
-        """异步空上下文管理器"""
+        """Async null context manager."""
         yield
 
     async def _check_and_handle_memory(self, url: str) -> bool:
@@ -243,9 +328,8 @@ class AsyncWebCrawler:
         
         # Extract domain from URL for domain-specific cooldown
         try:
-            from urllib.parse import urlparse
-            domain = urlparse(url).netloc
-        except:
+            domain = get_domain_from_url(url)
+        except Exception:
             domain = "unknown"
             
         # Check if domain is in cooldown
@@ -275,7 +359,7 @@ class AsyncWebCrawler:
             # Try to free memory
             gc.collect()
             
-            # Restart crawler if memory is still high
+            # Check if memory is still high after garbage collection
             if psutil.virtual_memory().percent >= self.memory_threshold_percent:
                 self.logger.warning("Memory still high after garbage collection, restarting crawler")
                 await self.close()
@@ -302,6 +386,13 @@ class AsyncWebCrawler:
             
         Returns:
             CrawlResult: The result of the crawl operation
+            
+        Raises:
+            ValidationError: If the URL is invalid
+            NetworkError: If there are network-related errors
+            TimeoutError: If the crawl operation times out
+            ResourceError: If there are resource management issues
+            Crawl4AIError: For other crawl-related errors
         """
         crawler_config = config or CrawlerRunConfig()
         
@@ -333,15 +424,19 @@ class AsyncWebCrawler:
                     self._active_tasks.add(task)
 
             try:
+                # Normalize URL for consistency
+                try:
+                    normalized_url = normalize_url(url)
+                except Exception as e:
+                    self.logger.error(f"Failed to normalize URL {url}: {e}")
+                    normalized_url = url
+
                 # Create cache context
                 cache_context = CacheContext(
-                    url=url,
+                    url=normalized_url,
                     cache_mode=crawler_config.cache_mode,
                     logger=self.logger,
                 )
-
-                # Get the database manager
-                async_db_manager = self.async_db_manager
 
                 # Start timing
                 start_time = time.perf_counter()
@@ -353,12 +448,19 @@ class AsyncWebCrawler:
                 cached_result = None
 
                 if cache_context.should_read():
-                    cached_result = await async_db_manager.aget_url_cache(url)
+                    # Try enhanced cache first
+                    cached_result = await self.enhanced_cache.get(normalized_url)
+                    
+                    # Fall back to legacy cache if not found
+                    if not cached_result:
+                        cached_result = await self.async_db_manager.aget_url_cache(normalized_url)
+                    
                     if cached_result:
                         html = cached_result.html
                         screenshot_data = cached_result.screenshot
                         pdf_data = cached_result.pdf
-                        # if config.screenshot and not screenshot or config.pdf and not pdf:
+                        
+                        # Check if we need to refetch for missing assets
                         if crawler_config.screenshot and not screenshot_data:
                             cached_result = None
                 
@@ -368,24 +470,21 @@ class AsyncWebCrawler:
                     
                     # Check robots.txt if enabled
                     if crawler_config and crawler_config.check_robots_txt:
-                        if not await self.robots_parser.can_fetch(url, self.browser_config.user_agent):
+                        if not await self.robots_parser.can_fetch(normalized_url, self.browser_config.user_agent):
                             self.logger.warning(
-                                f"URL {url} is disallowed by robots.txt"
+                                f"URL {normalized_url} is disallowed by robots.txt"
                             )
                             return CrawlResult(
-                                url=url,
+                                url=normalized_url,
                                 html="",
                                 success=False,
                                 error_message="URL is disallowed by robots.txt",
                             )
 
                     # Update domain last hit time
-                    domain = get_domain_from_url(url)
+                    domain = get_domain_from_url(normalized_url)
                     self._domain_last_hit[domain] = time.time()
 
-                    ##############################
-                    # Call CrawlerStrategy.crawl #
-                    ##############################
                     # Implement retry logic for network errors
                     retry_count = 0
                     last_error = None
@@ -393,7 +492,7 @@ class AsyncWebCrawler:
                     while retry_count <= self.max_retries:
                         try:
                             async_response = await self.crawler_strategy.crawl(
-                                url,
+                                normalized_url,
                                 config=crawler_config,  # Pass the entire config object
                             )
                             # If successful, break out of retry loop
@@ -404,12 +503,23 @@ class AsyncWebCrawler:
                             
                             # Log the error
                             self.logger.warning(
-                                f"Error crawling {url} (attempt {retry_count}/{self.max_retries}): {str(e)}"
+                                f"Error crawling {normalized_url} (attempt {retry_count}/{self.max_retries}): {str(e)}"
                             )
                             
                             # If we've reached max retries, re-raise the exception
                             if retry_count > self.max_retries:
-                                raise
+                                if isinstance(e, (asyncio.TimeoutError, TimeoutError)):
+                                    raise TimeoutError(
+                                        f"Timeout crawling {normalized_url} after {self.max_retries} retries",
+                                        url=normalized_url,
+                                        original_error=e
+                                    )
+                                else:
+                                    raise NetworkError(
+                                        f"Failed to crawl {normalized_url} after {self.max_retries} retries",
+                                        url=normalized_url,
+                                        original_error=e
+                                    )
                             
                             # Exponential backoff for retries
                             backoff_time = self.retry_delay * (2 ** (retry_count - 1))
@@ -418,10 +528,10 @@ class AsyncWebCrawler:
                     
                     # If we got here without a response, it means all retries failed
                     if not async_response:
-                        error_msg = f"Failed to crawl {url} after {self.max_retries} retries"
+                        error_msg = f"Failed to crawl {normalized_url} after {self.max_retries} retries"
                         self.logger.error(error_msg)
                         return CrawlResult(
-                            url=url,
+                            url=normalized_url,
                             html="",
                             success=False,
                             error_message=error_msg,
@@ -434,28 +544,32 @@ class AsyncWebCrawler:
 
                     # Create a CrawlResult
                     crawl_result = CrawlResult(
-                        url=url,
+                        url=normalized_url,
                         html=html,
                         markdown=async_response.markdown,
                         screenshot=screenshot_data,
                         pdf=pdf_data,
                         media=async_response.media,
                         metadata=async_response.metadata,
-                        redirected_url=async_response.redirected_url or url,
+                        redirected_url=async_response.redirected_url or normalized_url,
                         timing=time.perf_counter() - t1,
                     )
 
                     # Add SSL certificate
-                    crawl_result.ssl_certificate = await get_ssl_certificate(
-                        url=url, logger=self.logger
-                    )  # Add SSL certificate
+                    try:
+                        crawl_result.ssl_certificate = await get_ssl_certificate(
+                            url=normalized_url, logger=self.logger
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"Failed to get SSL certificate for {normalized_url}: {e}")
+                        crawl_result.ssl_certificate = None
 
                     crawl_result.success = bool(html)
                     crawl_result.session_id = getattr(crawler_config, "session_id", None)
 
                     self.logger.success(
                         message="{url:.50}... | Status: {status} | Total: {timing}",
-                        url=url,
+                        url=normalized_url,
                         status=crawl_result.success,
                         timing=time.perf_counter() - start_time,
                         tag="CRAWL",
@@ -463,7 +577,10 @@ class AsyncWebCrawler:
 
                     # Cache the result if needed
                     if cache_context.should_write() and not bool(cached_result):
-                        await async_db_manager.acache_url(crawl_result)
+                        # Use enhanced cache
+                        await self.enhanced_cache.set(crawl_result)
+                        # Also update legacy cache for backward compatibility
+                        await self.async_db_manager.acache_url(crawl_result)
 
                     # Remove this task from active tasks
                     task = asyncio.current_task()
@@ -477,7 +594,7 @@ class AsyncWebCrawler:
                     # Use cached result
                     self.logger.success(
                         message="{url:.50}... | Status: {status} | Total: {timing}",
-                        url=url,
+                        url=normalized_url,
                         status=bool(html),
                         timing=time.perf_counter() - start_time,
                         tag="CACHE",
@@ -485,7 +602,7 @@ class AsyncWebCrawler:
 
                     cached_result.success = bool(html)
                     cached_result.session_id = getattr(crawler_config, "session_id", None)
-                    cached_result.redirected_url = cached_result.redirected_url or url
+                    cached_result.redirected_url = cached_result.redirected_url or normalized_url
                     
                     # Remove this task from active tasks
                     task = asyncio.current_task()
@@ -495,6 +612,25 @@ class AsyncWebCrawler:
                             
                     return cached_result
 
+            except Crawl4AIError as e:
+                # Re-raise custom exceptions
+                raise e
+            except asyncio.TimeoutError as e:
+                error_message = f"Timeout crawling {url}"
+                self.logger.error(
+                    message="{url:.50}... | Error: {error}",
+                    url=url,
+                    error=create_box_message(error_message, type="error"),
+                    tag="ERROR",
+                )
+                
+                # Remove this task from active tasks
+                task = asyncio.current_task()
+                if task:
+                    async with self._task_lock:
+                        self._active_tasks.discard(task)
+                
+                raise TimeoutError(error_message, url=url, original_error=e)
             except Exception as e:
                 error_message = f"Error crawling {url}: {str(e)}"
                 self.logger.error(
@@ -510,6 +646,7 @@ class AsyncWebCrawler:
                     async with self._task_lock:
                         self._active_tasks.discard(task)
 
+                # Return error result
                 return CrawlResult(
                     url=url, html="", success=False, error_message=error_message
                 )

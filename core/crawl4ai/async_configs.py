@@ -7,17 +7,19 @@ from .config import (
     SOCIAL_MEDIA_DOMAINS,
 )
 
-from .user_agent_generator import UAGen, ValidUAGenerator # , OnlineUAGenerator
-# from .extraction_strategy import ExtractionStrategy
-# from .chunking_strategy import ChunkingStrategy, RegexChunking
+from .user_agent_generator import UAGen, ValidUAGenerator
 from .markdown_generation_strategy import MarkdownGenerationStrategy
 from .content_scraping_strategy import ContentScrapingStrategy, WebScrapingStrategy
-from typing import Union, List
+from .enhanced_content_scraping import EnhancedWebScrapingStrategy
+from typing import Union, List, Optional, Dict, Any
 from .cache_context import CacheMode
 
 import inspect
-from typing import Any, Dict
 from enum import Enum 
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 def to_serializable_dict(obj: Any) -> Dict:
     """
@@ -121,56 +123,6 @@ class BrowserConfig():
     This class centralizes all parameters that affect browser and context creation. Instead of passing
     scattered keyword arguments, users can instantiate and modify this configuration object. The crawler
     code will then reference these settings to initialize the browser in a consistent, documented manner.
-
-    Attributes:
-        browser_type (str): The type of browser to launch. Supported values: "chromium", "firefox", "webkit".
-                            Default: "chromium".
-        headless (bool): Whether to run the browser in headless mode (no visible GUI).
-                         Default: True.
-        use_managed_browser (bool): Launch the browser using a managed approach (e.g., via CDP), allowing
-                                    advanced manipulation. Default: False.
-        cdp_url (str): URL for the Chrome DevTools Protocol (CDP) endpoint. Default: "ws://localhost:9222/devtools/browser/".
-        debugging_port (int): Port for the browser debugging protocol. Default: 9222.
-        use_persistent_context (bool): Use a persistent browser context (like a persistent profile).
-                                       Automatically sets use_managed_browser=True. Default: False.
-        user_data_dir (str or None): Path to a user data directory for persistent sessions. If None, a
-                                     temporary directory may be used. Default: None.
-        chrome_channel (str): The Chrome channel to launch (e.g., "chrome", "msedge"). Only applies if browser_type
-                              is "chromium". Default: "chromium".
-        channel (str): The channel to launch (e.g., "chromium", "chrome", "msedge"). Only applies if browser_type
-                              is "chromium". Default: "chromium".
-        proxy (Optional[str]): Proxy server URL (e.g., "http://username:password@proxy:port"). If None, no proxy is used.
-                             Default: None.
-        proxy_config (dict or None): Detailed proxy configuration, e.g. {"server": "...", "username": "..."}.
-                                     If None, no additional proxy config. Default: None.
-        viewport_width (int): Default viewport width for pages. Default: 1080.
-        viewport_height (int): Default viewport height for pages. Default: 600.
-        verbose (bool): Enable verbose logging.
-                        Default: True.
-        accept_downloads (bool): Whether to allow file downloads. If True, requires a downloads_path.
-                                 Default: False.
-        downloads_path (str or None): Directory to store downloaded files. If None and accept_downloads is True,
-                                      a default path will be created. Default: None.
-        storage_state (str or dict or None): Path or object describing storage state (cookies, localStorage).
-                                             Default: None.
-        ignore_https_errors (bool): Ignore HTTPS certificate errors. Default: True.
-        java_script_enabled (bool): Enable JavaScript execution in pages. Default: True.
-        cookies (list): List of cookies to add to the browser context. Each cookie is a dict with fields like
-                        {"name": "...", "value": "...", "url": "..."}.
-                        Default: [].
-        headers (dict): Extra HTTP headers to apply to all requests in this context.
-                        Default: {}.
-        user_agent (str): Custom User-Agent string to use. Default: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36".
-        user_agent_mode (str or None): Mode for generating the user agent (e.g., "random"). If None, use the provided
-                                       user_agent as-is. Default: None.
-        user_agent_generator_config (dict or None): Configuration for user agent generation if user_agent_mode is set.
-                                                    Default: None.
-        text_mode (bool): If True, disables images and other rich content for potentially faster load times.
-                          Default: False.
-        light_mode (bool): Disables certain background features for performance gains. Default: False.
-        extra_args (list): Additional command-line arguments passed to the browser.
-                           Default: [].
     """
 
     def __init__(
@@ -197,9 +149,6 @@ class BrowserConfig():
         cookies: list = None,
         headers: dict = None,
         user_agent: str = (
-            # "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) AppleWebKit/537.36 "
-            # "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            # "(KHTML, like Gecko) Chrome/116.0.5845.187 Safari/604.1 Edg/117.0.2045.47"
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/116.0.0.0 Safari/537.36"
         ),
         user_agent_mode: str = "",
@@ -218,9 +167,6 @@ class BrowserConfig():
         self.user_data_dir = user_data_dir
         self.chrome_channel = chrome_channel or self.browser_type or "chromium"
         self.channel = channel or self.browser_type or "chromium"
-        if self.browser_type in ["firefox", "webkit"]:
-            self.channel = ""
-            self.chrome_channel = ""
         self.proxy = proxy
         self.proxy_config = proxy_config
         self.viewport_width = viewport_width
@@ -230,68 +176,29 @@ class BrowserConfig():
         self.storage_state = storage_state
         self.ignore_https_errors = ignore_https_errors
         self.java_script_enabled = java_script_enabled
-        self.cookies = cookies if cookies is not None else []
-        self.headers = headers if headers is not None else {}
+        self.sleep_on_close = sleep_on_close
+        self.verbose = verbose
+        self.cookies = cookies or []
+        self.headers = headers or {}
         self.user_agent = user_agent
         self.user_agent_mode = user_agent_mode
         self.user_agent_generator_config = user_agent_generator_config
         self.text_mode = text_mode
         self.light_mode = light_mode
-        self.extra_args = extra_args if extra_args is not None else []
-        self.sleep_on_close = sleep_on_close
-        self.verbose = verbose
+        self.extra_args = extra_args or []
         self.debugging_port = debugging_port
+        self.host = host
 
-        fa_user_agenr_generator = ValidUAGenerator()
-        if self.user_agent_mode == "random":
-            self.user_agent = fa_user_agenr_generator.generate(
-                **(self.user_agent_generator_config or {})
-            )
-        else:
-            pass
-        
-        self.browser_hint = UAGen.generate_client_hints(self.user_agent)
-        self.headers.setdefault("sec-ch-ua", self.browser_hint)
+        # Validate and set user agent
+        if self.user_agent_mode:
+            try:
+                ua_gen = ValidUAGenerator(**self.user_agent_generator_config)
+                self.user_agent = ua_gen.get_ua()
+            except Exception as e:
+                logger.warning(f"Error generating user agent: {e}. Using default user agent.")
 
-        # If persistent context is requested, ensure managed browser is enabled
-        if self.use_persistent_context:
-            self.use_managed_browser = True
-
-    @staticmethod
-    def from_kwargs(kwargs: dict) -> "BrowserConfig":
-        return BrowserConfig(
-            browser_type=kwargs.get("browser_type", "chromium"),
-            headless=kwargs.get("headless", True),
-            use_managed_browser=kwargs.get("use_managed_browser", False),
-            cdp_url=kwargs.get("cdp_url"),
-            use_persistent_context=kwargs.get("use_persistent_context", False),
-            user_data_dir=kwargs.get("user_data_dir"),
-            chrome_channel=kwargs.get("chrome_channel", "chromium"),
-            channel=kwargs.get("channel", "chromium"),
-            proxy=kwargs.get("proxy"),
-            proxy_config=kwargs.get("proxy_config"),
-            viewport_width=kwargs.get("viewport_width", 1080),
-            viewport_height=kwargs.get("viewport_height", 600),
-            accept_downloads=kwargs.get("accept_downloads", False),
-            downloads_path=kwargs.get("downloads_path"),
-            storage_state=kwargs.get("storage_state"),
-            ignore_https_errors=kwargs.get("ignore_https_errors", True),
-            java_script_enabled=kwargs.get("java_script_enabled", True),
-            cookies=kwargs.get("cookies", []),
-            headers=kwargs.get("headers", {}),
-            user_agent=kwargs.get(
-                "user_agent",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
-            ),
-            user_agent_mode=kwargs.get("user_agent_mode"),
-            user_agent_generator_config=kwargs.get("user_agent_generator_config"),
-            text_mode=kwargs.get("text_mode", False),
-            light_mode=kwargs.get("light_mode", False),
-            extra_args=kwargs.get("extra_args", []),
-        )
-
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the configuration to a dictionary."""
         return {
             "browser_type": self.browser_type,
             "headless": self.headless,
@@ -310,6 +217,8 @@ class BrowserConfig():
             "storage_state": self.storage_state,
             "ignore_https_errors": self.ignore_https_errors,
             "java_script_enabled": self.java_script_enabled,
+            "sleep_on_close": self.sleep_on_close,
+            "verbose": self.verbose,
             "cookies": self.cookies,
             "headers": self.headers,
             "user_agent": self.user_agent,
@@ -318,215 +227,74 @@ class BrowserConfig():
             "text_mode": self.text_mode,
             "light_mode": self.light_mode,
             "extra_args": self.extra_args,
-            "sleep_on_close": self.sleep_on_close,
-            "verbose": self.verbose,
             "debugging_port": self.debugging_port,
+            "host": self.host,
         }
 
-    def clone(self, **kwargs):
-        """Create a copy of this configuration with updated values.
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'BrowserConfig':
+        """Create a BrowserConfig from a dictionary."""
+        return cls(**config_dict)
+
+    @classmethod
+    def from_env(cls) -> 'BrowserConfig':
+        """Create a BrowserConfig from environment variables."""
+        config = {}
         
-        Args:
-            **kwargs: Key-value pairs of configuration options to update
-            
-        Returns:
-            BrowserConfig: A new instance with the specified updates
-        """
-        config_dict = self.to_dict()
-        config_dict.update(kwargs)
-        return BrowserConfig.from_kwargs(config_dict)
+        # Map environment variables to config parameters
+        env_mapping = {
+            "CRAWL4AI_BROWSER_TYPE": "browser_type",
+            "CRAWL4AI_HEADLESS": "headless",
+            "CRAWL4AI_VIEWPORT_WIDTH": "viewport_width",
+            "CRAWL4AI_VIEWPORT_HEIGHT": "viewport_height",
+            "CRAWL4AI_USER_AGENT": "user_agent",
+            "CRAWL4AI_IGNORE_HTTPS_ERRORS": "ignore_https_errors",
+            "CRAWL4AI_JAVASCRIPT_ENABLED": "java_script_enabled",
+        }
+        
+        # Process environment variables
+        for env_var, config_key in env_mapping.items():
+            if env_var in os.environ:
+                value = os.environ[env_var]
+                
+                # Convert value to appropriate type
+                if value.lower() in ("true", "false"):
+                    value = value.lower() == "true"
+                elif value.isdigit():
+                    value = int(value)
+                
+                config[config_key] = value
+        
+        return cls(**config)
 
-    # Create a funciton returns dict of the object
-    def dump(self) -> dict:
-        # Serialize the object to a dictionary
-        return to_serializable_dict(self)
-
-    @staticmethod
-    def load( data: dict) -> "BrowserConfig":
-        # Deserialize the object from a dictionary
-        return from_serializable_dict(data) if data else BrowserConfig()
-
-
-class CrawlerRunConfig():
+class AsyncConfigs:
     """
-    Configuration class for controlling how the crawler runs each crawl operation.
-    This includes parameters for content extraction, page manipulation, waiting conditions,
-    caching, and other runtime behaviors.
-
-    This centralizes parameters that were previously scattered as kwargs to `arun()` and related methods.
-    By using this class, you have a single place to understand and adjust the crawling options.
-
-    Attributes:
-        # Content Processing Parameters
-        word_count_threshold (int): Minimum word count threshold before processing content.
-                                    Default: MIN_WORD_THRESHOLD (typically 200).
-        extraction_strategy (ExtractionStrategy or None): Strategy to extract structured data from crawled pages.
-                                                          Default: None (NoExtractionStrategy is used if None).
-        chunking_strategy (ChunkingStrategy): Strategy to chunk content before extraction.
-                                              Default: RegexChunking().
-        markdown_generator (MarkdownGenerationStrategy): Strategy for generating markdown.
-                                                         Default: None.
-        content_filter (RelevantContentFilter or None): Optional filter to prune irrelevant content.
-                                                        Default: None.
-        only_text (bool): If True, attempt to extract text-only content where applicable.
-                          Default: False.
-        css_selector (str or None): CSS selector to extract a specific portion of the page.
-                                    Default: None.
-        excluded_tags (list of str or None): List of HTML tags to exclude from processing.
-                                             Default: None.
-        excluded_selector (str or None): CSS selector to exclude from processing.
-                                         Default: None.
-        keep_data_attributes (bool): If True, retain `data-*` attributes while removing unwanted attributes.
-                                     Default: False.
-        keep_attrs (list of str): List of HTML attributes to keep during processing.
-                                      Default: [].
-        remove_forms (bool): If True, remove all `<form>` elements from the HTML.
-                             Default: False.
-        prettiify (bool): If True, apply `fast_format_html` to produce prettified HTML output.
-                          Default: False.
-        parser_type (str): Type of parser to use for HTML parsing.
-                           Default: "lxml".
-        scraping_strategy (ContentScrapingStrategy): Scraping strategy to use.
-                           Default: WebScrapingStrategy.
-        proxy_config (dict or None): Detailed proxy configuration, e.g. {"server": "...", "username": "..."}.
-                                     If None, no additional proxy config. Default: None.
-
-        # SSL Parameters
-        fetch_ssl_certificate: bool = False,
-        # Caching Parameters
-        cache_mode (CacheMode or None): Defines how caching is handled.
-                                        If None, defaults to CacheMode.ENABLED internally.
-                                        Default: None.
-        session_id (str or None): Optional session ID to persist the browser context and the created
-                                  page instance. If the ID already exists, the crawler does not
-                                  create a new page and uses the current page to preserve the state.
-        bypass_cache (bool): Legacy parameter, if True acts like CacheMode.BYPASS.
-                             Default: False.
-        disable_cache (bool): Legacy parameter, if True acts like CacheMode.DISABLED.
-                              Default: False.
-        no_cache_read (bool): Legacy parameter, if True acts like CacheMode.WRITE_ONLY.
-                              Default: False.
-        no_cache_write (bool): Legacy parameter, if True acts like CacheMode.READ_ONLY.
-                               Default: False.
-        shared_data (dict or None): Shared data to be passed between hooks.
-                                     Default: None.
-
-        # Page Navigation and Timing Parameters
-        wait_until (str): The condition to wait for when navigating, e.g. "domcontentloaded".
-                          Default: "domcontentloaded".
-        page_timeout (int): Timeout in ms for page operations like navigation.
-                            Default: 60000 (60 seconds).
-        wait_for (str or None): A CSS selector or JS condition to wait for before extracting content.
-                                Default: None.
-        wait_for_images (bool): If True, wait for images to load before extracting content.
-                                Default: False.
-        delay_before_return_html (float): Delay in seconds before retrieving final HTML.
-                                          Default: 0.1.
-        mean_delay (float): Mean base delay between requests when calling arun_many.
-                            Default: 0.1.
-        max_range (float): Max random additional delay range for requests in arun_many.
-                           Default: 0.3.
-        semaphore_count (int): Number of concurrent operations allowed.
-                               Default: 5.
-
-        # Page Interaction Parameters
-        js_code (str or list of str or None): JavaScript code/snippets to run on the page.
-                                              Default: None.
-        js_only (bool): If True, indicates subsequent calls are JS-driven updates, not full page loads.
-                        Default: False.
-        ignore_body_visibility (bool): If True, ignore whether the body is visible before proceeding.
-                                       Default: True.
-        scan_full_page (bool): If True, scroll through the entire page to load all content.
-                               Default: False.
-        scroll_delay (float): Delay in seconds between scroll steps if scan_full_page is True.
-                              Default: 0.2.
-        process_iframes (bool): If True, attempts to process and inline iframe content.
-                                Default: False.
-        remove_overlay_elements (bool): If True, remove overlays/popups before extracting HTML.
-                                        Default: False.
-        simulate_user (bool): If True, simulate user interactions (mouse moves, clicks) for anti-bot measures.
-                              Default: False.
-        override_navigator (bool): If True, overrides navigator properties for more human-like behavior.
-                                   Default: False.
-        magic (bool): If True, attempts automatic handling of overlays/popups.
-                      Default: False.
-        adjust_viewport_to_content (bool): If True, adjust viewport according to the page content dimensions.
-                                           Default: False.
-
-        # Media Handling Parameters
-        screenshot (bool): Whether to take a screenshot after crawling.
-                           Default: False.
-        screenshot_wait_for (float or None): Additional wait time before taking a screenshot.
-                                             Default: None.
-        screenshot_height_threshold (int): Threshold for page height to decide screenshot strategy.
-                                           Default: SCREENSHOT_HEIGHT_TRESHOLD (from config, e.g. 20000).
-        pdf (bool): Whether to generate a PDF of the page.
-                    Default: False.
-        image_description_min_word_threshold (int): Minimum words for image description extraction.
-                                                    Default: IMAGE_DESCRIPTION_MIN_WORD_THRESHOLD (e.g., 50).
-        image_score_threshold (int): Minimum score threshold for processing an image.
-                                     Default: IMAGE_SCORE_THRESHOLD (e.g., 3).
-        exclude_external_images (bool): If True, exclude all external images from processing.
-                                         Default: False.
-
-        # Link and Domain Handling Parameters
-        exclude_social_media_domains (list of str): List of domains to exclude for social media links.
-                                                    Default: SOCIAL_MEDIA_DOMAINS (from config).
-        exclude_external_links (bool): If True, exclude all external links from the results.
-                                       Default: False.
-        exclude_internal_links (bool): If True, exclude internal links from the results.
-                                       Default: False.
-        exclude_social_media_links (bool): If True, exclude links pointing to social media domains.
-                                           Default: False.
-        exclude_domains (list of str): List of specific domains to exclude from results.
-                                       Default: [].
-        exclude_internal_links (bool): If True, exclude internal links from the results.
-                                       Default: False.
-
-        # Debugging and Logging Parameters
-        verbose (bool): Enable verbose logging.
-                        Default: True.
-        log_console (bool): If True, log console messages from the page.
-                            Default: False.
-
-        # Streaming Parameters
-        stream (bool): If True, enables streaming of crawled URLs as they are processed when used with arun_many.
-                      Default: False.
-
-        # Optional Parameters
-        stream (bool): If True, stream the page content as it is being loaded.
-        url: str = None  # This is not a compulsory parameter
-        check_robots_txt (bool): Whether to check robots.txt rules before crawling. Default: False
-        user_agent (str): Custom User-Agent string to use. Default: None
-        user_agent_mode (str or None): Mode for generating the user agent (e.g., "random"). If None, use the provided
-                                       user_agent as-is. Default: None.
-        user_agent_generator_config (dict or None): Configuration for user agent generation if user_agent_mode is set.
-                                                    Default: None.
+    Configuration class for AsyncWebCrawler.
+    
+    This class centralizes all parameters for the AsyncWebCrawler, including
+    browser configuration, content processing, caching, and more.
     """
 
     def __init__(
         self,
         # Content Processing Parameters
         word_count_threshold: int = MIN_WORD_THRESHOLD,
-        # extraction_strategy: ExtractionStrategy = None,
-        # chunking_strategy: ChunkingStrategy = RegexChunking(),
-        markdown_generator: MarkdownGenerationStrategy = None,
-        # content_filter : RelevantContentFilter = None,
+        markdown_generator: Optional[MarkdownGenerationStrategy] = None,
         only_text: bool = False,
         css_selector: str = None,
-        excluded_tags: list = None,
-        excluded_selector: str = None,
+        excluded_tags: List[str] = None,
+        excluded_selector: str = "",
         keep_data_attributes: bool = False,
-        keep_attrs: list = None,
+        keep_attrs: List[str] = None,
         remove_forms: bool = False,
         prettiify: bool = False,
         parser_type: str = "lxml",
-        scraping_strategy: ContentScrapingStrategy = None,
+        scraping_strategy: Optional[ContentScrapingStrategy] = None,
         proxy_config: dict = None,
         # SSL Parameters
         fetch_ssl_certificate: bool = False,
         # Caching Parameters
-        cache_mode: CacheMode =CacheMode.DISABLED,
+        cache_mode: CacheMode = CacheMode.ENABLED,
         session_id: str = None,
         shared_data: dict = None,
         # Page Navigation and Timing Parameters
@@ -539,7 +307,7 @@ class CrawlerRunConfig():
         max_range: float = 0.3,
         semaphore_count: int = 5,
         # Page Interaction Parameters
-        js_code: Union[str, List[str]] = None,
+        js_code: str = None,
         js_only: bool = False,
         ignore_body_visibility: bool = True,
         scan_full_page: bool = False,
@@ -552,47 +320,51 @@ class CrawlerRunConfig():
         adjust_viewport_to_content: bool = False,
         # Media Handling Parameters
         screenshot: bool = False,
-        screenshot_wait_for: float = None,
+        screenshot_wait_for: str = None,
         screenshot_height_threshold: int = SCREENSHOT_HEIGHT_TRESHOLD,
         pdf: bool = False,
         image_description_min_word_threshold: int = IMAGE_DESCRIPTION_MIN_WORD_THRESHOLD,
-        image_score_threshold: int = IMAGE_SCORE_THRESHOLD,
+        image_score_threshold: float = IMAGE_SCORE_THRESHOLD,
         exclude_external_images: bool = False,
         # Link and Domain Handling Parameters
-        exclude_social_media_domains: list = None,
+        exclude_social_media_domains: List[str] = None,
         exclude_external_links: bool = False,
         exclude_social_media_links: bool = False,
-        exclude_domains: list = None,
+        exclude_domains: List[str] = None,
         exclude_internal_links: bool = False,
         # Debugging and Logging Parameters
         verbose: bool = True,
         log_console: bool = False,
         # Streaming Parameters
         stream: bool = False,
+        # URL Parameter
         url: str = None,
+        # Robots.txt Handling Parameters
         check_robots_txt: bool = False,
+        # User Agent Parameters
         user_agent: str = None,
         user_agent_mode: str = None,
-        user_agent_generator_config: dict = {},
+        user_agent_generator_config: dict = None,
+        # Crawler Parameters
+        max_depth: int = 1,
+        max_pages: int = 10,
+        timeout: int = 60000,  # 60 seconds in milliseconds
+        # Additional Parameters
+        **kwargs
     ):
-        self.url = url
-
         # Content Processing Parameters
         self.word_count_threshold = word_count_threshold
-        # self.extraction_strategy = extraction_strategy
-        # self.chunking_strategy = chunking_strategy
         self.markdown_generator = markdown_generator
-        # self.content_filter = content_filter
         self.only_text = only_text
         self.css_selector = css_selector
         self.excluded_tags = excluded_tags or []
-        self.excluded_selector = excluded_selector or ""
+        self.excluded_selector = excluded_selector
         self.keep_data_attributes = keep_data_attributes
         self.keep_attrs = keep_attrs or []
         self.remove_forms = remove_forms
         self.prettiify = prettiify
         self.parser_type = parser_type
-        self.scraping_strategy = scraping_strategy or WebScrapingStrategy()
+        self.scraping_strategy = scraping_strategy or EnhancedWebScrapingStrategy()
         self.proxy_config = proxy_config
 
         # SSL Parameters
@@ -650,6 +422,9 @@ class CrawlerRunConfig():
 
         # Streaming Parameters
         self.stream = stream
+        
+        # URL Parameter
+        self.url = url
 
         # Robots.txt Handling Parameters
         self.check_robots_txt = check_robots_txt
@@ -657,18 +432,25 @@ class CrawlerRunConfig():
         # User Agent Parameters
         self.user_agent = user_agent
         self.user_agent_mode = user_agent_mode
-        self.user_agent_generator_config = user_agent_generator_config
+        self.user_agent_generator_config = user_agent_generator_config or {}
+        
+        # Crawler Parameters
+        self.max_depth = max_depth
+        self.max_pages = max_pages
+        self.timeout = timeout
+        
+        # Process additional parameters
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
     @staticmethod
-    def from_kwargs(kwargs: dict) -> "CrawlerRunConfig":
-        return CrawlerRunConfig(
+    def from_kwargs(kwargs: dict) -> "AsyncConfigs":
+        """Create an AsyncConfigs instance from keyword arguments."""
+        return AsyncConfigs(
             # Content Processing Parameters
-            word_count_threshold=kwargs.get("word_count_threshold", 200),
-            # extraction_strategy=kwargs.get("extraction_strategy"),
-            # chunking_strategy=kwargs.get("chunking_strategy", RegexChunking()),
+            word_count_threshold=kwargs.get("word_count_threshold", MIN_WORD_THRESHOLD),
             markdown_generator=kwargs.get("markdown_generator"),
-            # content_filter=kwargs.get("content_filter"),
             only_text=kwargs.get("only_text", False),
             css_selector=kwargs.get("css_selector"),
             excluded_tags=kwargs.get("excluded_tags", []),
@@ -688,7 +470,7 @@ class CrawlerRunConfig():
             shared_data=kwargs.get("shared_data", None),
             # Page Navigation and Timing Parameters
             wait_until=kwargs.get("wait_until", "domcontentloaded"),
-            page_timeout=kwargs.get("page_timeout", 60000),
+            page_timeout=kwargs.get("page_timeout", PAGE_TIMEOUT),
             wait_for=kwargs.get("wait_for"),
             wait_for_images=kwargs.get("wait_for_images", False),
             delay_before_return_html=kwargs.get("delay_before_return_html", 0.1),
@@ -740,6 +522,10 @@ class CrawlerRunConfig():
             user_agent=kwargs.get("user_agent"),
             user_agent_mode=kwargs.get("user_agent_mode"),
             user_agent_generator_config=kwargs.get("user_agent_generator_config", {}),
+            # Crawler Parameters
+            max_depth=kwargs.get("max_depth", 1),
+            max_pages=kwargs.get("max_pages", 10),
+            timeout=kwargs.get("timeout", PAGE_TIMEOUT),
         )
 
     # Create a funciton returns dict of the object
@@ -748,11 +534,12 @@ class CrawlerRunConfig():
         return to_serializable_dict(self)
 
     @staticmethod
-    def load(data: dict) -> "CrawlerRunConfig":
+    def load(data: dict) -> "AsyncConfigs":
         # Deserialize the object from a dictionary
-        return from_serializable_dict(data) if data else CrawlerRunConfig()
+        return from_serializable_dict(data) if data else AsyncConfigs()
 
     def to_dict(self):
+        """Convert the configuration to a dictionary."""
         return {
             "word_count_threshold": self.word_count_threshold,
             "markdown_generator": self.markdown_generator,
@@ -810,6 +597,9 @@ class CrawlerRunConfig():
             "user_agent": self.user_agent,
             "user_agent_mode": self.user_agent_mode,
             "user_agent_generator_config": self.user_agent_generator_config,
+            "max_depth": self.max_depth,
+            "max_pages": self.max_pages,
+            "timeout": self.timeout,
         }
 
     def clone(self, **kwargs):
@@ -819,7 +609,7 @@ class CrawlerRunConfig():
             **kwargs: Key-value pairs of configuration options to update
             
         Returns:
-            CrawlerRunConfig: A new instance with the specified updates
+            AsyncConfigs: A new instance with the specified updates
             
         Example:
             ```python
@@ -836,4 +626,37 @@ class CrawlerRunConfig():
         """
         config_dict = self.to_dict()
         config_dict.update(kwargs)
-        return CrawlerRunConfig.from_kwargs(config_dict)
+        return AsyncConfigs.from_kwargs(config_dict)
+        
+    @classmethod
+    def from_env(cls) -> 'AsyncConfigs':
+        """Create an AsyncConfigs from environment variables."""
+        config = {}
+        
+        # Map environment variables to config parameters
+        env_mapping = {
+            "CRAWL4AI_WORD_COUNT_THRESHOLD": "word_count_threshold",
+            "CRAWL4AI_PAGE_TIMEOUT": "page_timeout",
+            "CRAWL4AI_MAX_DEPTH": "max_depth",
+            "CRAWL4AI_MAX_PAGES": "max_pages",
+            "CRAWL4AI_TIMEOUT": "timeout",
+            "CRAWL4AI_SEMAPHORE_COUNT": "semaphore_count",
+            "CRAWL4AI_CHECK_ROBOTS_TXT": "check_robots_txt",
+        }
+        
+        # Process environment variables
+        for env_var, config_key in env_mapping.items():
+            if env_var in os.environ:
+                value = os.environ[env_var]
+                
+                # Convert value to appropriate type
+                if value.lower() in ("true", "false"):
+                    value = value.lower() == "true"
+                elif value.isdigit():
+                    value = int(value)
+                elif value.replace(".", "", 1).isdigit() and value.count(".") == 1:
+                    value = float(value)
+                
+                config[config_key] = value
+        
+        return cls(**config)
