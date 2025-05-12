@@ -127,30 +127,88 @@
                     </div>
                     
                     <div class="mb-3">
-                        <label class="form-label">Advanced Options</label>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="clone-repositories" name="clone-repositories" checked>
-                            <label class="form-check-label" for="clone-repositories">
-                                Clone repositories locally
-                            </label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="follow-repository-links" name="follow-repository-links" checked>
-                            <label class="form-check-label" for="follow-repository-links">
-                                Follow repository links
-                            </label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="include-forks" name="include-forks">
-                            <label class="form-check-label" for="include-forks">
-                                Include forks
-                            </label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="save-findings" name="save-findings" checked>
-                            <label class="form-check-label" for="save-findings">
-                                Save findings to database
-                            </label>
+                        <button class="btn btn-outline-secondary w-100" type="button" id="advanced-options-toggle" aria-expanded="false" aria-controls="advanced-options-panel">
+                            <i class="bi bi-chevron-down"></i> Advanced Options
+                        </button>
+                        
+                        <div class="collapse mt-3" id="advanced-options-panel">
+                            <div class="card card-body">
+                                <div class="mb-3">
+                                    <h5>GitHub API Configuration</h5>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="cache-ttl" class="form-label">Cache TTL (seconds)</label>
+                                            <input type="number" class="form-control" id="cache-ttl" name="cache-ttl" min="0" max="86400" value="300" 
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Time-to-live for cached API responses">
+                                            <div class="form-text">Time to keep cached responses (0-86400)</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="rate-limit-pause" class="form-label">Rate Limit Pause (seconds)</label>
+                                            <input type="number" class="form-control" id="rate-limit-pause" name="rate-limit-pause" min="0" max="3600" value="60"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Time to pause when rate limited">
+                                            <div class="form-text">Pause time when rate limited (0-3600)</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="max-retries" class="form-label">Max Retries</label>
+                                            <input type="number" class="form-control" id="max-retries" name="max-retries" min="0" max="10" value="3"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Maximum number of retries for failed requests">
+                                            <div class="form-text">Maximum retry attempts (0-10)</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="timeout" class="form-label">Timeout (seconds)</label>
+                                            <input type="number" class="form-control" id="timeout" name="timeout" min="1" max="300" value="30"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Request timeout in seconds">
+                                            <div class="form-text">Request timeout (1-300)</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="pool-connections" class="form-label">Pool Connections</label>
+                                            <input type="number" class="form-control" id="pool-connections" name="pool-connections" min="1" max="100" value="10"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Number of connection pool connections">
+                                            <div class="form-text">Connection pool size (1-100)</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="pool-maxsize" class="form-label">Pool Max Size</label>
+                                            <input type="number" class="form-control" id="pool-maxsize" name="pool-maxsize" min="1" max="100" value="10"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Maximum size of the connection pool">
+                                            <div class="form-text">Max pool size (1-100)</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="page-size" class="form-label">Page Size</label>
+                                            <input type="number" class="form-control" id="page-size" name="page-size" min="1" max="100" value="30"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Number of items per page for paginated results">
+                                            <div class="form-text">Items per page (1-100)</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <h5>Processing Options</h5>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="clone-repositories" name="clone-repositories" checked>
+                                        <label class="form-check-label" for="clone-repositories">
+                                            Clone repositories locally
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="follow-repository-links" name="follow-repository-links" checked>
+                                        <label class="form-check-label" for="follow-repository-links">
+                                            Follow repository links
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="include-forks" name="include-forks">
+                                        <label class="form-check-label" for="include-forks">
+                                            Include forks
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="save-findings" name="save-findings" checked>
+                                        <label class="form-check-label" for="save-findings">
+                                            Save findings to database
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
@@ -246,4 +304,3 @@
     <script src="/static/js/github_config.js"></script>
 </body>
 </html>
-
