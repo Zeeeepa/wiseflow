@@ -5,12 +5,15 @@ Code search connector plugin for mining code repositories from various sources.
 import os
 import time
 import json
+import asyncio
 from typing import Any, Dict, List, Optional, Union
 import requests
 import logging
 import re
 
 from core.plugins.base import ConnectorPlugin
+from core.connectors.code_search import CodeSearchConnector as BaseCodeSearchConnector
+from core.utils.error_handling import handle_exceptions, ConnectionError, CodeSearchError
 
 logger = logging.getLogger(__name__)
 
@@ -27,21 +30,44 @@ class CodeSearchConnector(ConnectorPlugin):
                 - rate_limit_pause: Seconds to pause when rate limited (default: 60)
                 - max_retries: Maximum number of retries for API calls (default: 3)
                 - default_service: Default service to use ('github', 'gitlab', 'searchcode')
+                - cache_enabled: Whether to enable caching (default: True)
+                - cache_ttl: Cache time-to-live in seconds (default: 3600)
+                - concurrency: Maximum number of concurrent requests (default: 5)
         """
         super().__init__(config)
+        
+        # Extract API keys from config
         self.api_keys = self.config.get('api_keys', {})
-        self.rate_limit_pause = self.config.get('rate_limit_pause', 60)
-        self.max_retries = self.config.get('max_retries', 3)
-        self.default_service = self.config.get('default_service', 'github')
+        
+        # Configure the base connector
+        base_config = {
+            "github_token": self.api_keys.get('github', ''),
+            "gitlab_token": self.api_keys.get('gitlab', ''),
+            "bitbucket_token": self.api_keys.get('bitbucket', ''),
+            "sourcegraph_token": self.api_keys.get('sourcegraph', ''),
+            "concurrency": self.config.get('concurrency', 5),
+            "timeout": self.config.get('timeout', 30),
+            "cache_enabled": self.config.get('cache_enabled', True),
+            "cache_ttl": self.config.get('cache_ttl', 3600),
+            "github_rate_limit": self.config.get('github_rate_limit', 30),
+            "gitlab_rate_limit": self.config.get('gitlab_rate_limit', 30),
+            "bitbucket_rate_limit": self.config.get('bitbucket_rate_limit', 30),
+            "sourcegraph_rate_limit": self.config.get('sourcegraph_rate_limit', 30),
+        }
+        
+        # Create the base connector instance
+        self.base_connector = BaseCodeSearchConnector(base_config)
         
         # Service-specific base URLs
         self.base_urls = {
             'github': 'https://api.github.com',
             'gitlab': 'https://gitlab.com/api/v4',
-            'searchcode': 'https://searchcode.com/api'
+            'searchcode': 'https://searchcode.com/api',
+            'sourcegraph': self.config.get('sourcegraph_url', 'https://sourcegraph.com')
         }
         
-        self.session = None
+        self.default_service = self.config.get('default_service', 'github')
+        self.initialized = False
         
     def initialize(self) -> bool:
         """Initialize the code search connector.
@@ -53,7 +79,9 @@ class CodeSearchConnector(ConnectorPlugin):
             logger.error("Invalid code search connector configuration")
             return False
         
-        self.session = requests.Session()
+        # Initialize the base connector
+        self.base_connector.initialize()
+        
         self.initialized = True
         return True
         
@@ -90,76 +118,21 @@ class CodeSearchConnector(ConnectorPlugin):
         Returns:
             bool: True if disconnection was successful, False otherwise
         """
-        if self.session:
-            self.session.close()
-            self.session = None
+        # Close the base connector's session
+        if hasattr(self, 'base_connector') and self.base_connector:
+            asyncio.run(self.base_connector._close_session())
         
         self.initialized = False
         return True
-        
-    def _make_request(self, service: str, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Make a request to the code search service API with retry logic.
-        
-        Args:
-            service: Service name ('github', 'gitlab', 'searchcode')
-            endpoint: API endpoint to call
-            params: Query parameters for the request
-            
-        Returns:
-            Dict[str, Any]: Response data
-            
-        Raises:
-            Exception: If the request fails after max retries
-        """
-        if not self.session:
-            self.connect()
-            
-        if service not in self.base_urls:
-            raise ValueError(f"Unsupported service: {service}")
-            
-        url = f"{self.base_urls[service]}/{endpoint.lstrip('/')}"
-        headers = {}
-        
-        # Add authentication headers if API key is available
-        if service in self.api_keys and self.api_keys[service]:
-            if service == 'github':
-                headers['Authorization'] = f"token {self.api_keys[service]}"
-                headers['Accept'] = 'application/vnd.github.v3+json'
-            elif service == 'gitlab':
-                headers['PRIVATE-TOKEN'] = self.api_keys[service]
-        
-        retries = 0
-        
-        while retries < self.max_retries:
-            try:
-                response = self.session.get(url, params=params, headers=headers)
-                
-                if response.status_code == 200:
-                    return response.json()
-                elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
-                    logger.warning(f"Rate limit exceeded for {service}. Pausing for {self.rate_limit_pause} seconds.")
-                    time.sleep(self.rate_limit_pause)
-                    retries += 1
-                else:
-                    logger.error(f"{service} API error: {response.status_code} - {response.text}")
-                    raise Exception(f"{service} API error: {response.status_code} - {response.text}")
-                    
-            except Exception as e:
-                logger.error(f"Error making {service} API request: {str(e)}")
-                retries += 1
-                if retries >= self.max_retries:
-                    raise
-                time.sleep(2 ** retries)  # Exponential backoff
-                
-        raise Exception(f"Failed to make {service} API request after {self.max_retries} retries")
-        
+    
+    @handle_exceptions(error_types=[Exception], default_message="Failed to fetch data from code search service", log_error=True)
     def fetch_data(self, query: str, **kwargs) -> Dict[str, Any]:
         """Fetch code data based on query.
         
         Args:
             query: Query string for code search
             **kwargs: Additional parameters:
-                - service: Service to use ('github', 'gitlab', 'searchcode')
+                - service: Service to use ('github', 'gitlab', 'searchcode', 'sourcegraph')
                 - language: Programming language filter
                 - sort: Sort field
                 - order: Sort order ('asc' or 'desc')
@@ -174,114 +147,128 @@ class CodeSearchConnector(ConnectorPlugin):
             
         service = kwargs.get('service', self.default_service)
         
+        # Map the parameters to the base connector format
+        base_params = {
+            "query": query,
+            "source": service,
+            "max_results": kwargs.get('per_page', 30),
+        }
+        
+        # Add language filter if provided
+        if 'language' in kwargs:
+            base_params['language'] = kwargs['language']
+        
+        # Add repository filter if provided
+        if 'repo' in kwargs:
+            base_params['repo'] = kwargs['repo']
+        
+        # Add path filter if provided
+        if 'path' in kwargs:
+            base_params['path'] = kwargs['path']
+        
+        # Add extension filter if provided
+        if 'extension' in kwargs:
+            base_params['extension'] = kwargs['extension']
+        
+        # Add sorting if provided
+        if 'sort' in kwargs:
+            base_params['sort'] = kwargs['sort']
+        
+        # Add order if provided
+        if 'order' in kwargs:
+            base_params['order'] = kwargs['order']
+        
+        # Use the base connector to fetch data
+        results = asyncio.run(self.base_connector.collect(base_params))
+        
+        # Convert the results to the expected format
+        return self._convert_results_to_dict(results, service)
+    
+    def _convert_results_to_dict(self, results: List[Any], service: str) -> Dict[str, Any]:
+        """Convert the base connector results to the expected dictionary format."""
         if service == 'github':
-            return self._github_code_search(query, **kwargs)
+            items = []
+            for item in results:
+                items.append({
+                    "name": item.metadata.get("name", ""),
+                    "path": item.metadata.get("path", ""),
+                    "repository": {
+                        "full_name": item.metadata.get("repo", "")
+                    },
+                    "html_url": item.url,
+                    "content": item.content
+                })
+            
+            return {
+                "total_count": len(items),
+                "incomplete_results": False,
+                "items": items
+            }
+        
         elif service == 'gitlab':
-            return self._gitlab_code_search(query, **kwargs)
+            items = []
+            for item in results:
+                items.append({
+                    "path": item.metadata.get("path", ""),
+                    "project_id": item.metadata.get("project_id", ""),
+                    "ref": item.metadata.get("ref", ""),
+                    "content": item.content
+                })
+            
+            return items
+        
         elif service == 'searchcode':
-            return self._searchcode_search(query, **kwargs)
+            items = []
+            for item in results:
+                items.append({
+                    "name": item.metadata.get("name", ""),
+                    "path": item.metadata.get("path", ""),
+                    "repo": item.metadata.get("repo", ""),
+                    "url": item.url,
+                    "content": item.content
+                })
+            
+            return {
+                "total": len(items),
+                "results": items
+            }
+        
+        elif service == 'sourcegraph':
+            items = []
+            for item in results:
+                items.append({
+                    "repository": {
+                        "name": item.metadata.get("repo", "")
+                    },
+                    "file": {
+                        "path": item.metadata.get("path", ""),
+                        "url": item.url,
+                        "content": item.content
+                    },
+                    "lineMatches": item.metadata.get("line_matches", [])
+                })
+            
+            return {
+                "data": {
+                    "search": {
+                        "results": {
+                            "results": items
+                        }
+                    }
+                }
+            }
+        
         else:
-            raise ValueError(f"Unsupported service: {service}")
-            
-    def _github_code_search(self, query: str, **kwargs) -> Dict[str, Any]:
-        """Search code on GitHub.
-        
-        Args:
-            query: Query string for code search
-            **kwargs: Additional parameters:
-                - language: Programming language filter
-                - sort: Sort field ('indexed', 'best-match')
-                - order: Sort order ('asc' or 'desc')
-                - per_page: Results per page (max 100)
-                - page: Page number
-                
-        Returns:
-            Dict[str, Any]: Search results
-        """
-        # Build the search query
-        search_query = query
-        
-        if kwargs.get('language'):
-            search_query += f" language:{kwargs['language']}"
-            
-        if kwargs.get('repo'):
-            search_query += f" repo:{kwargs['repo']}"
-            
-        if kwargs.get('path'):
-            search_query += f" path:{kwargs['path']}"
-            
-        if kwargs.get('extension'):
-            search_query += f" extension:{kwargs['extension']}"
-            
-        # Build the search parameters
-        search_params = {
-            'q': search_query,
-            'sort': kwargs.get('sort', 'best-match'),
-            'order': kwargs.get('order', 'desc'),
-            'per_page': min(kwargs.get('per_page', 30), 100),
-            'page': kwargs.get('page', 1)
-        }
-        
-        return self._make_request('github', 'search/code', search_params)
-        
-    def _gitlab_code_search(self, query: str, **kwargs) -> Dict[str, Any]:
-        """Search code on GitLab.
-        
-        Args:
-            query: Query string for code search
-            **kwargs: Additional parameters:
-                - scope: Search scope ('blobs', 'projects', 'issues', 'merge_requests')
-                - per_page: Results per page (max 100)
-                - page: Page number
-                
-        Returns:
-            Dict[str, Any]: Search results
-        """
-        search_params = {
-            'search': query,
-            'scope': kwargs.get('scope', 'blobs'),
-            'per_page': min(kwargs.get('per_page', 20), 100),
-            'page': kwargs.get('page', 1)
-        }
-        
-        if kwargs.get('project_id'):
-            return self._make_request('gitlab', f"projects/{kwargs['project_id']}/search", search_params)
-        else:
-            return self._make_request('gitlab', 'search', search_params)
-            
-    def _searchcode_search(self, query: str, **kwargs) -> Dict[str, Any]:
-        """Search code on searchcode.com.
-        
-        Args:
-            query: Query string for code search
-            **kwargs: Additional parameters:
-                - lan: Programming language filter
-                - src: Source filter
-                - per_page: Results per page (max 100)
-                - page: Page number
-                
-        Returns:
-            Dict[str, Any]: Search results
-        """
-        search_params = {
-            'q': query,
-            'per_page': min(kwargs.get('per_page', 20), 100),
-            'p': kwargs.get('page', 0)  # searchcode uses 0-based indexing
-        }
-        
-        if kwargs.get('lan'):
-            search_params['lan'] = kwargs['lan']
-            
-        if kwargs.get('src'):
-            search_params['src'] = kwargs['src']
-            
-        return self._make_request('searchcode', 'codesearch/json', search_params)
-        
+            # Generic format
+            return {
+                "items": [item.to_dict() for item in results]
+            }
+    
     def get_file_content(self, service: str, file_url: str) -> str:
         """Get the content of a file from a code search result.
         
         Args:
-            service: Service name ('github', 'gitlab', 'searchcode')
+            service: Service name ('github', 'gitlab', 'searchcode', 'sourcegraph')
             file_url: URL or path to the file
             
         Returns:
@@ -291,59 +278,10 @@ class CodeSearchConnector(ConnectorPlugin):
             ValueError: If the service is not supported
             Exception: If the file content cannot be retrieved
         """
-        if service == 'github':
-            # Extract owner, repo, and path from GitHub URL
-            match = re.search(r'github\.com/([^/]+)/([^/]+)/blob/[^/]+/(.+)', file_url)
-            if not match:
-                raise ValueError(f"Invalid GitHub file URL: {file_url}")
-                
-            owner, repo, path = match.groups()
-            endpoint = f"repos/{owner}/{repo}/contents/{path}"
-            
-            response = self._make_request('github', endpoint)
-            if 'content' in response:
-                import base64
-                return base64.b64decode(response['content']).decode('utf-8')
-            else:
-                raise Exception(f"Could not retrieve file content from GitHub: {file_url}")
-                
-        elif service == 'gitlab':
-            # Extract project ID and path from GitLab URL
-            match = re.search(r'gitlab\.com/([^/]+/[^/]+)/-/blob/[^/]+/(.+)', file_url)
-            if not match:
-                raise ValueError(f"Invalid GitLab file URL: {file_url}")
-                
-            project_path, file_path = match.groups()
-            
-            # URL encode the project path
-            project_path_encoded = requests.utils.quote(project_path, safe='')
-            
-            endpoint = f"projects/{project_path_encoded}/repository/files/{requests.utils.quote(file_path, safe='')}/raw"
-            
-            # Make a direct request to get the raw file content
-            url = f"{self.base_urls['gitlab']}/{endpoint}"
-            headers = {}
-            
-            if 'gitlab' in self.api_keys and self.api_keys['gitlab']:
-                headers['PRIVATE-TOKEN'] = self.api_keys['gitlab']
-                
-            response = self.session.get(url, headers=headers)
-            
-            if response.status_code == 200:
-                return response.text
-            else:
-                raise Exception(f"Could not retrieve file content from GitLab: {file_url}")
-                
-        elif service == 'searchcode':
-            # searchcode doesn't provide direct file content access through API
-            # We need to make a request to the raw URL
-            response = self.session.get(file_url)
-            
-            if response.status_code == 200:
-                return response.text
-            else:
-                raise Exception(f"Could not retrieve file content from searchcode: {file_url}")
-                
-        else:
-            raise ValueError(f"Unsupported service: {service}")
-
+        # Use the base connector to get file content
+        content = asyncio.run(self.base_connector.get_file_content(file_url))
+        
+        if content is None:
+            raise Exception(f"Could not retrieve file content from {service}: {file_url}")
+        
+        return content
