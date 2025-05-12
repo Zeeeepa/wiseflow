@@ -13,6 +13,7 @@ import asyncio
 from typing import Dict, List, Optional, Tuple, Union, Any, Callable, Awaitable
 from datetime import datetime, timedelta
 
+from .config import llm_config
 from .error_handling import (
     with_retries, 
     LLMError, 
@@ -23,7 +24,10 @@ from .error_handling import (
     ServiceUnavailableError,
     ModelNotFoundError,
     ContextLengthExceededError,
-    ContentFilterError
+    ContentFilterError,
+    QuotaExceededError,
+    TimeoutError,
+    ServerOverloadedError
 )
 
 class ModelCapabilities:
@@ -34,125 +38,210 @@ class ModelCapabilities:
     context length, supported features, and performance characteristics.
     """
     
-    # Default model capabilities
-    DEFAULT_CAPABILITIES = {
-        "gpt-3.5-turbo": {
-            "context_length": 4096,
-            "supports_functions": True,
-            "supports_vision": False,
-            "supports_json_mode": True,
-            "typical_performance": {
-                "reasoning": "medium",
-                "knowledge": "medium",
-                "coding": "medium",
-                "creativity": "medium"
-            }
-        },
-        "gpt-3.5-turbo-16k": {
-            "context_length": 16384,
-            "supports_functions": True,
-            "supports_vision": False,
-            "supports_json_mode": True,
-            "typical_performance": {
-                "reasoning": "medium",
-                "knowledge": "medium",
-                "coding": "medium",
-                "creativity": "medium"
-            }
-        },
-        "gpt-4": {
-            "context_length": 8192,
-            "supports_functions": True,
-            "supports_vision": False,
-            "supports_json_mode": True,
-            "typical_performance": {
-                "reasoning": "high",
-                "knowledge": "high",
-                "coding": "high",
-                "creativity": "high"
-            }
-        },
-        "gpt-4-32k": {
-            "context_length": 32768,
-            "supports_functions": True,
-            "supports_vision": False,
-            "supports_json_mode": True,
-            "typical_performance": {
-                "reasoning": "high",
-                "knowledge": "high",
-                "coding": "high",
-                "creativity": "high"
-            }
-        },
-        "gpt-4-vision-preview": {
-            "context_length": 128000,
-            "supports_functions": True,
-            "supports_vision": True,
-            "supports_json_mode": True,
-            "typical_performance": {
-                "reasoning": "high",
-                "knowledge": "high",
-                "coding": "high",
-                "creativity": "high",
-                "vision": "high"
-            }
-        },
-        "gpt-4-1106-preview": {
-            "context_length": 128000,
-            "supports_functions": True,
-            "supports_vision": False,
-            "supports_json_mode": True,
-            "typical_performance": {
-                "reasoning": "high",
-                "knowledge": "high",
-                "coding": "high",
-                "creativity": "high"
-            }
-        },
-        "claude-2": {
-            "context_length": 100000,
-            "supports_functions": False,
-            "supports_vision": False,
-            "supports_json_mode": False,
-            "typical_performance": {
-                "reasoning": "high",
-                "knowledge": "high",
-                "coding": "medium",
-                "creativity": "high"
-            }
-        },
-        "claude-instant-1": {
-            "context_length": 100000,
-            "supports_functions": False,
-            "supports_vision": False,
-            "supports_json_mode": False,
-            "typical_performance": {
-                "reasoning": "medium",
-                "knowledge": "medium",
-                "coding": "medium",
-                "creativity": "medium"
-            }
-        }
-    }
-    
-    def __init__(self, custom_capabilities: Optional[Dict[str, Dict[str, Any]]] = None):
+    def __init__(self, custom_capabilities_path: Optional[str] = None):
         """
         Initialize model capabilities.
         
         Args:
-            custom_capabilities: Optional dictionary of custom model capabilities
+            custom_capabilities_path: Optional path to a JSON file with custom capabilities
         """
-        self.capabilities = self.DEFAULT_CAPABILITIES.copy()
+        # Load default capabilities
+        self.capabilities = self._load_default_capabilities()
         
-        # Add custom capabilities
-        if custom_capabilities:
+        # Load custom capabilities if provided
+        if custom_capabilities_path and os.path.exists(custom_capabilities_path):
+            self._load_custom_capabilities(custom_capabilities_path)
+    
+    def _load_default_capabilities(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Load default model capabilities.
+        
+        Returns:
+            Dictionary of model capabilities
+        """
+        return {
+            # OpenAI models
+            "gpt-3.5-turbo": {
+                "context_length": 4096,
+                "supports_functions": True,
+                "supports_vision": False,
+                "supports_json_mode": True,
+                "typical_performance": {
+                    "reasoning": "medium",
+                    "knowledge": "medium",
+                    "coding": "medium",
+                    "creativity": "medium"
+                },
+                "provider": "openai",
+                "cost_per_1k_tokens": {
+                    "input": 0.0015,
+                    "output": 0.002
+                }
+            },
+            "gpt-3.5-turbo-16k": {
+                "context_length": 16384,
+                "supports_functions": True,
+                "supports_vision": False,
+                "supports_json_mode": True,
+                "typical_performance": {
+                    "reasoning": "medium",
+                    "knowledge": "medium",
+                    "coding": "medium",
+                    "creativity": "medium"
+                },
+                "provider": "openai",
+                "cost_per_1k_tokens": {
+                    "input": 0.003,
+                    "output": 0.004
+                }
+            },
+            "gpt-4": {
+                "context_length": 8192,
+                "supports_functions": True,
+                "supports_vision": False,
+                "supports_json_mode": True,
+                "typical_performance": {
+                    "reasoning": "high",
+                    "knowledge": "high",
+                    "coding": "high",
+                    "creativity": "high"
+                },
+                "provider": "openai",
+                "cost_per_1k_tokens": {
+                    "input": 0.03,
+                    "output": 0.06
+                }
+            },
+            "gpt-4-32k": {
+                "context_length": 32768,
+                "supports_functions": True,
+                "supports_vision": False,
+                "supports_json_mode": True,
+                "typical_performance": {
+                    "reasoning": "high",
+                    "knowledge": "high",
+                    "coding": "high",
+                    "creativity": "high"
+                },
+                "provider": "openai",
+                "cost_per_1k_tokens": {
+                    "input": 0.06,
+                    "output": 0.12
+                }
+            },
+            "gpt-4-vision-preview": {
+                "context_length": 128000,
+                "supports_functions": True,
+                "supports_vision": True,
+                "supports_json_mode": True,
+                "typical_performance": {
+                    "reasoning": "high",
+                    "knowledge": "high",
+                    "coding": "high",
+                    "creativity": "high",
+                    "vision": "high"
+                },
+                "provider": "openai",
+                "cost_per_1k_tokens": {
+                    "input": 0.01,
+                    "output": 0.03
+                }
+            },
+            "gpt-4-1106-preview": {
+                "context_length": 128000,
+                "supports_functions": True,
+                "supports_vision": False,
+                "supports_json_mode": True,
+                "typical_performance": {
+                    "reasoning": "high",
+                    "knowledge": "high",
+                    "coding": "high",
+                    "creativity": "high"
+                },
+                "provider": "openai",
+                "cost_per_1k_tokens": {
+                    "input": 0.01,
+                    "output": 0.03
+                }
+            },
+            
+            # Anthropic models
+            "claude-2": {
+                "context_length": 100000,
+                "supports_functions": False,
+                "supports_vision": False,
+                "supports_json_mode": False,
+                "typical_performance": {
+                    "reasoning": "high",
+                    "knowledge": "high",
+                    "coding": "medium",
+                    "creativity": "high"
+                },
+                "provider": "anthropic",
+                "cost_per_1k_tokens": {
+                    "input": 0.008,
+                    "output": 0.024
+                }
+            },
+            "claude-instant-1": {
+                "context_length": 100000,
+                "supports_functions": False,
+                "supports_vision": False,
+                "supports_json_mode": False,
+                "typical_performance": {
+                    "reasoning": "medium",
+                    "knowledge": "medium",
+                    "coding": "medium",
+                    "creativity": "medium"
+                },
+                "provider": "anthropic",
+                "cost_per_1k_tokens": {
+                    "input": 0.0016,
+                    "output": 0.0056
+                }
+            },
+            
+            # Llama models
+            "llama-2-70b-chat": {
+                "context_length": 4096,
+                "supports_functions": False,
+                "supports_vision": False,
+                "supports_json_mode": False,
+                "typical_performance": {
+                    "reasoning": "medium",
+                    "knowledge": "medium",
+                    "coding": "medium",
+                    "creativity": "medium"
+                },
+                "provider": "replicate",
+                "cost_per_1k_tokens": {
+                    "input": 0.0007,
+                    "output": 0.0007
+                }
+            }
+        }
+    
+    def _load_custom_capabilities(self, file_path: str) -> None:
+        """
+        Load custom model capabilities from a JSON file.
+        
+        Args:
+            file_path: Path to the JSON file
+        """
+        try:
+            with open(file_path, "r") as f:
+                custom_capabilities = json.load(f)
+            
+            # Update capabilities with custom values
             for model, capabilities in custom_capabilities.items():
                 if model in self.capabilities:
-                    # Update existing capabilities
+                    # Update existing model capabilities
                     self.capabilities[model].update(capabilities)
                 else:
                     # Add new model
                     self.capabilities[model] = capabilities
+        except Exception as e:
+            logging.error(f"Error loading custom model capabilities: {e}")
     
     def get_capability(self, model: str, capability: str) -> Any:
         """
@@ -211,6 +300,31 @@ class ModelCapabilities:
             return performance[task]
         return "unknown"
     
+    def get_provider(self, model: str) -> str:
+        """
+        Get the provider for a model.
+        
+        Args:
+            model: Model name
+            
+        Returns:
+            Provider name, or "unknown" if not found
+        """
+        return self.get_capability(model, "provider") or "unknown"
+    
+    def get_cost(self, model: str) -> Dict[str, float]:
+        """
+        Get the cost per 1K tokens for a model.
+        
+        Args:
+            model: Model name
+            
+        Returns:
+            Dictionary with input and output costs, or default costs if not found
+        """
+        default_cost = {"input": 0.002, "output": 0.002}
+        return self.get_capability(model, "cost_per_1k_tokens") or default_cost
+    
     def add_model(self, model: str, capabilities: Dict[str, Any]) -> None:
         """
         Add or update a model's capabilities.
@@ -232,6 +346,21 @@ class ModelCapabilities:
             List of model names
         """
         return list(self.capabilities.keys())
+    
+    def get_models_by_provider(self, provider: str) -> List[str]:
+        """
+        Get a list of models from a specific provider.
+        
+        Args:
+            provider: Provider name
+            
+        Returns:
+            List of model names
+        """
+        return [
+            model for model, capabilities in self.capabilities.items()
+            if capabilities.get("provider") == provider
+        ]
     
     def get_suitable_models(self, requirements: Dict[str, Any]) -> List[str]:
         """
@@ -271,6 +400,11 @@ class ModelCapabilities:
                            not self._meets_performance_requirement(capabilities["typical_performance"][perf_key], perf_value):
                             meets_requirements = False
                             break
+                elif req_key == "provider":
+                    # Provider requirement
+                    if "provider" not in capabilities or capabilities["provider"] != req_value:
+                        meets_requirements = False
+                        break
                 else:
                     # Direct value comparison
                     if req_key not in capabilities or capabilities[req_key] != req_value:
@@ -291,17 +425,44 @@ class ModelCapabilities:
             required: Required performance rating
             
         Returns:
-            True if the actual rating meets or exceeds the required rating
+            True if the actual performance meets or exceeds the requirement
         """
-        ratings = {"low": 1, "medium": 2, "high": 3, "unknown": 0}
-        return ratings.get(actual, 0) >= ratings.get(required, 0)
+        performance_levels = {
+            "low": 1,
+            "medium": 2,
+            "high": 3,
+            "unknown": 0
+        }
+        
+        actual_level = performance_levels.get(actual.lower(), 0)
+        required_level = performance_levels.get(required.lower(), 0)
+        
+        return actual_level >= required_level
+    
+    def export_capabilities(self, file_path: str) -> bool:
+        """
+        Export model capabilities to a JSON file.
+        
+        Args:
+            file_path: Path to save the JSON file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with open(file_path, "w") as f:
+                json.dump(self.capabilities, f, indent=2)
+            return True
+        except Exception as e:
+            logging.error(f"Error exporting model capabilities: {e}")
+            return False
 
 class ModelSelector:
     """
     Class for selecting appropriate models based on task requirements.
     
     This class provides methods for selecting models based on task requirements,
-    token counts, and other factors.
+    token counts, and other criteria.
     """
     
     def __init__(
@@ -315,8 +476,8 @@ class ModelSelector:
         Initialize the model selector.
         
         Args:
-            primary_model: Default primary model
-            secondary_model: Default secondary model
+            primary_model: Primary model name
+            secondary_model: Secondary model name
             model_capabilities: ModelCapabilities instance
             logger: Optional logger
         """
@@ -324,8 +485,117 @@ class ModelSelector:
         self.secondary_model = secondary_model
         self.model_capabilities = model_capabilities
         self.logger = logger
+        
+        # Task-specific model preferences
+        self.task_model_preferences = {
+            "general": [primary_model, secondary_model],
+            "reasoning": self._get_models_by_performance("reasoning", "high"),
+            "knowledge": self._get_models_by_performance("knowledge", "high"),
+            "coding": self._get_models_by_performance("coding", "high"),
+            "creativity": self._get_models_by_performance("creativity", "high"),
+            "extraction": self._get_models_by_performance("reasoning", "medium"),
+            "summarization": self._get_models_by_performance("reasoning", "medium"),
+            "classification": self._get_models_by_performance("reasoning", "medium"),
+            "translation": self._get_models_by_performance("reasoning", "medium"),
+            "vision": self._get_models_with_feature("vision")
+        }
     
-    def select_model(
+    def _get_models_by_performance(self, task: str, min_performance: str) -> List[str]:
+        """
+        Get models that meet a minimum performance level for a task.
+        
+        Args:
+            task: Task name
+            min_performance: Minimum performance level
+            
+        Returns:
+            List of model names
+        """
+        models = []
+        
+        for model in self.model_capabilities.get_all_models():
+            performance = self.model_capabilities.get_performance_rating(model, task)
+            if self._performance_meets_requirement(performance, min_performance):
+                models.append(model)
+        
+        # Ensure primary and secondary models are included if they meet requirements
+        if self.primary_model not in models:
+            primary_performance = self.model_capabilities.get_performance_rating(self.primary_model, task)
+            if self._performance_meets_requirement(primary_performance, min_performance):
+                models.insert(0, self.primary_model)
+        else:
+            # Move primary model to the front
+            models.remove(self.primary_model)
+            models.insert(0, self.primary_model)
+        
+        if self.secondary_model not in models:
+            secondary_performance = self.model_capabilities.get_performance_rating(self.secondary_model, task)
+            if self._performance_meets_requirement(secondary_performance, min_performance):
+                models.insert(1 if self.primary_model in models else 0, self.secondary_model)
+        elif models.index(self.secondary_model) > 1:
+            # Move secondary model to the second position
+            models.remove(self.secondary_model)
+            models.insert(1 if self.primary_model in models else 0, self.secondary_model)
+        
+        return models
+    
+    def _get_models_with_feature(self, feature: str) -> List[str]:
+        """
+        Get models that support a specific feature.
+        
+        Args:
+            feature: Feature name
+            
+        Returns:
+            List of model names
+        """
+        models = []
+        
+        for model in self.model_capabilities.get_all_models():
+            if self.model_capabilities.supports_feature(model, feature):
+                models.append(model)
+        
+        # Ensure primary and secondary models are included if they support the feature
+        if self.primary_model not in models and self.model_capabilities.supports_feature(self.primary_model, feature):
+            models.insert(0, self.primary_model)
+        elif self.primary_model in models:
+            # Move primary model to the front
+            models.remove(self.primary_model)
+            models.insert(0, self.primary_model)
+        
+        if self.secondary_model not in models and self.model_capabilities.supports_feature(self.secondary_model, feature):
+            models.insert(1 if self.primary_model in models else 0, self.secondary_model)
+        elif self.secondary_model in models and models.index(self.secondary_model) > 1:
+            # Move secondary model to the second position
+            models.remove(self.secondary_model)
+            models.insert(1 if self.primary_model in models else 0, self.secondary_model)
+        
+        return models
+    
+    def _performance_meets_requirement(self, actual: str, required: str) -> bool:
+        """
+        Check if a performance rating meets a requirement.
+        
+        Args:
+            actual: Actual performance rating
+            required: Required performance rating
+            
+        Returns:
+            True if the actual performance meets or exceeds the requirement
+        """
+        performance_levels = {
+            "low": 1,
+            "medium": 2,
+            "high": 3,
+            "unknown": 0
+        }
+        
+        actual_level = performance_levels.get(actual.lower(), 0)
+        required_level = performance_levels.get(required.lower(), 0)
+        
+        return actual_level >= required_level
+    
+    def select_model_for_task(
         self,
         task_type: str,
         token_count: Optional[int] = None,
@@ -333,76 +603,121 @@ class ModelSelector:
         performance_requirements: Optional[Dict[str, str]] = None
     ) -> str:
         """
-        Select an appropriate model based on task requirements.
+        Select an appropriate model for a task.
         
         Args:
-            task_type: Type of task (e.g., "extraction", "summarization", "coding")
-            token_count: Optional token count for the input
-            required_features: Optional list of required features (e.g., ["functions", "vision"])
-            performance_requirements: Optional performance requirements (e.g., {"reasoning": "high"})
+            task_type: Type of task
+            token_count: Optional token count
+            required_features: Optional list of required features
+            performance_requirements: Optional performance requirements
             
         Returns:
             Selected model name
         """
-        requirements = {}
+        # Start with task-specific model preferences
+        preferred_models = self.task_model_preferences.get(task_type, [self.primary_model, self.secondary_model])
         
-        # Add context length requirement if token count is provided
+        # Filter by token count if provided
         if token_count is not None:
-            # Add some buffer for the response
-            requirements["min_context_length"] = token_count + 1000
+            preferred_models = [
+                model for model in preferred_models
+                if self.model_capabilities.get_context_length(model) >= token_count
+            ]
         
-        # Add feature requirements
+        # Filter by required features if provided
         if required_features:
             for feature in required_features:
-                requirements[f"supports_{feature}"] = True
+                preferred_models = [
+                    model for model in preferred_models
+                    if self.model_capabilities.supports_feature(model, feature)
+                ]
         
-        # Add performance requirements
+        # Filter by performance requirements if provided
         if performance_requirements:
-            requirements["performance"] = performance_requirements
+            for task, level in performance_requirements.items():
+                preferred_models = [
+                    model for model in preferred_models
+                    if self._performance_meets_requirement(
+                        self.model_capabilities.get_performance_rating(model, task),
+                        level
+                    )
+                ]
         
-        # Get suitable models
-        suitable_models = self.model_capabilities.get_suitable_models(requirements)
-        
-        if not suitable_models:
-            # No models meet all requirements, try to find the best match
+        # If no models meet all requirements, fall back to primary model
+        if not preferred_models:
             if self.logger:
-                self.logger.warning(f"No models meet all requirements for {task_type}. Using primary model.")
-            
-            # Check if primary model meets context length requirement
-            if token_count is not None:
-                primary_context_length = self.model_capabilities.get_context_length(self.primary_model)
-                if primary_context_length < token_count + 1000:
-                    # Primary model doesn't have enough context, find a model with sufficient context
-                    for model in self.model_capabilities.get_all_models():
-                        if self.model_capabilities.get_context_length(model) >= token_count + 1000:
-                            if self.logger:
-                                self.logger.info(f"Selected {model} for {task_type} due to context length requirement.")
-                            return model
-            
-            # Fall back to primary model
+                self.logger.warning(f"No models meet all requirements for {task_type}. Falling back to primary model.")
             return self.primary_model
         
-        # Check if primary model is suitable
-        if self.primary_model in suitable_models:
-            return self.primary_model
+        # Return the first (highest priority) model
+        return preferred_models[0]
+    
+    def get_fallback_models(
+        self,
+        primary_model: str,
+        task_type: str,
+        token_count: Optional[int] = None,
+        required_features: Optional[List[str]] = None,
+        performance_requirements: Optional[Dict[str, str]] = None
+    ) -> List[str]:
+        """
+        Get a list of fallback models for a primary model.
         
-        # Check if secondary model is suitable
-        if self.secondary_model in suitable_models:
-            return self.secondary_model
+        Args:
+            primary_model: Primary model name
+            task_type: Type of task
+            token_count: Optional token count
+            required_features: Optional list of required features
+            performance_requirements: Optional performance requirements
+            
+        Returns:
+            List of fallback model names
+        """
+        # Start with task-specific model preferences
+        preferred_models = self.task_model_preferences.get(task_type, [self.primary_model, self.secondary_model])
         
-        # Return the first suitable model
-        selected_model = suitable_models[0]
-        if self.logger:
-            self.logger.info(f"Selected {selected_model} for {task_type} based on requirements.")
+        # Remove the primary model from the list
+        if primary_model in preferred_models:
+            preferred_models.remove(primary_model)
         
-        return selected_model
+        # Filter by token count if provided
+        if token_count is not None:
+            preferred_models = [
+                model for model in preferred_models
+                if self.model_capabilities.get_context_length(model) >= token_count
+            ]
+        
+        # Filter by required features if provided
+        if required_features:
+            for feature in required_features:
+                preferred_models = [
+                    model for model in preferred_models
+                    if self.model_capabilities.supports_feature(model, feature)
+                ]
+        
+        # Filter by performance requirements if provided
+        if performance_requirements:
+            for task, level in performance_requirements.items():
+                preferred_models = [
+                    model for model in preferred_models
+                    if self._performance_meets_requirement(
+                        self.model_capabilities.get_performance_rating(model, task),
+                        level
+                    )
+                ]
+        
+        # If no models meet all requirements, add the secondary model as a fallback
+        if not preferred_models and self.secondary_model != primary_model:
+            preferred_models.append(self.secondary_model)
+        
+        return preferred_models
 
 class ModelFailoverManager:
     """
-    Class for managing model failover and fallback.
+    Manager for model failover and availability tracking.
     
-    This class provides methods for handling model failures and falling back to
-    alternative models when necessary.
+    This class tracks model availability and failures, and provides
+    methods for selecting fallback models when a primary model fails.
     """
     
     def __init__(
@@ -422,8 +737,18 @@ class ModelFailoverManager:
         self.model_capabilities = model_capabilities
         self.model_selector = model_selector
         self.logger = logger
-        self.model_status = {}
-        self.last_failover = {}
+        
+        # Track model status
+        self.model_status: Dict[str, Dict[str, Any]] = {}
+        
+        # Track recent failovers
+        self.last_failover: Dict[str, Tuple[datetime, str]] = {}
+        
+        # Track model performance history
+        self.model_performance_history: Dict[str, List[Dict[str, Any]]] = {}
+        
+        # Maximum history entries per model
+        self.max_history_entries = 100
     
     def mark_model_failure(self, model: str, error: Exception) -> None:
         """
@@ -431,42 +756,50 @@ class ModelFailoverManager:
         
         Args:
             model: Model name
-            error: Exception that occurred
+            error: The error that occurred
         """
         now = datetime.now()
         
         if model not in self.model_status:
             self.model_status[model] = {
-                "failures": 0,
-                "last_failure": None,
+                "failures": 1,
+                "last_failure": now,
                 "last_success": None,
                 "status": "available"
             }
+        else:
+            self.model_status[model]["failures"] += 1
+            self.model_status[model]["last_failure"] = now
         
-        self.model_status[model]["failures"] += 1
-        self.model_status[model]["last_failure"] = now
-        
-        # Determine if the model should be marked as unavailable
-        if isinstance(error, (RateLimitError, ServiceUnavailableError)):
-            # Temporary issues, mark as unavailable for a short time
+        # Update model status based on error type
+        if isinstance(error, RateLimitError):
             self.model_status[model]["status"] = "rate_limited"
             if self.logger:
                 self.logger.warning(f"Model {model} is rate limited. Marking as unavailable for 60 seconds.")
-        elif isinstance(error, (ModelNotFoundError, AuthenticationError)):
-            # Permanent issues, mark as unavailable indefinitely
+        elif isinstance(error, (ServiceUnavailableError, ServerOverloadedError)):
             self.model_status[model]["status"] = "unavailable"
             if self.logger:
-                self.logger.error(f"Model {model} is unavailable due to {type(error).__name__}.")
-        elif isinstance(error, ContextLengthExceededError):
-            # Context length issues, don't mark as unavailable
+                self.logger.warning(f"Model {model} is unavailable due to service issues.")
+        elif isinstance(error, QuotaExceededError):
+            self.model_status[model]["status"] = "quota_exceeded"
             if self.logger:
-                self.logger.warning(f"Model {model} context length exceeded.")
-        elif self.model_status[model]["failures"] >= 3 and \
-             (now - self.model_status[model]["last_failure"]).total_seconds() < 300:
-            # Multiple failures in a short time, mark as unavailable
-            self.model_status[model]["status"] = "unavailable"
+                self.logger.warning(f"Model {model} quota exceeded. Marking as unavailable.")
+        elif isinstance(error, ModelNotFoundError):
+            self.model_status[model]["status"] = "not_found"
             if self.logger:
-                self.logger.error(f"Model {model} has failed {self.model_status[model]['failures']} times in the last 5 minutes. Marking as unavailable.")
+                self.logger.warning(f"Model {model} not found. Marking as unavailable.")
+        elif isinstance(error, AuthenticationError):
+            self.model_status[model]["status"] = "auth_error"
+            if self.logger:
+                self.logger.warning(f"Authentication error for model {model}. Marking as unavailable.")
+        elif self.model_status[model]["failures"] >= 3:
+            # If the model has failed 3 or more times in a row, mark it as unreliable
+            self.model_status[model]["status"] = "unreliable"
+            if self.logger:
+                self.logger.warning(f"Model {model} has failed {self.model_status[model]['failures']} times in a row. Marking as unreliable.")
+        
+        # Record failure in performance history
+        self._record_performance(model, "failure", error)
     
     def mark_model_success(self, model: str) -> None:
         """
@@ -487,14 +820,45 @@ class ModelFailoverManager:
         else:
             self.model_status[model]["last_success"] = now
             
-            # If the model was rate limited and it's been more than 60 seconds, mark as available
-            if self.model_status[model]["status"] == "rate_limited" and \
-               self.model_status[model]["last_failure"] and \
-               (now - self.model_status[model]["last_failure"]).total_seconds() > 60:
-                self.model_status[model]["status"] = "available"
-                self.model_status[model]["failures"] = 0
-                if self.logger:
-                    self.logger.info(f"Model {model} is now available again after rate limiting.")
+            # If the model was previously marked as unavailable, reset its status
+            if self.model_status[model]["status"] != "available":
+                # Don't reset status for permanent issues
+                if self.model_status[model]["status"] not in ["not_found", "auth_error", "quota_exceeded"]:
+                    self.model_status[model]["status"] = "available"
+                    self.model_status[model]["failures"] = 0
+                    if self.logger:
+                        self.logger.info(f"Model {model} is now available again.")
+        
+        # Record success in performance history
+        self._record_performance(model, "success")
+    
+    def _record_performance(self, model: str, result: str, error: Optional[Exception] = None) -> None:
+        """
+        Record model performance in history.
+        
+        Args:
+            model: Model name
+            result: "success" or "failure"
+            error: Optional error that occurred
+        """
+        if model not in self.model_performance_history:
+            self.model_performance_history[model] = []
+        
+        entry = {
+            "timestamp": datetime.now(),
+            "result": result
+        }
+        
+        if error:
+            entry["error_type"] = type(error).__name__
+            entry["error_message"] = str(error)
+        
+        # Add to history
+        self.model_performance_history[model].append(entry)
+        
+        # Limit history size
+        if len(self.model_performance_history[model]) > self.max_history_entries:
+            self.model_performance_history[model] = self.model_performance_history[model][-self.max_history_entries:]
     
     def is_model_available(self, model: str) -> bool:
         """
@@ -509,7 +873,7 @@ class ModelFailoverManager:
         if model not in self.model_status:
             return True
         
-        if self.model_status[model]["status"] == "unavailable":
+        if self.model_status[model]["status"] in ["unavailable", "not_found", "auth_error", "quota_exceeded"]:
             return False
         
         if self.model_status[model]["status"] == "rate_limited":
@@ -522,7 +886,42 @@ class ModelFailoverManager:
                 return True
             return False
         
+        if self.model_status[model]["status"] == "unreliable":
+            # Check if we should retry an unreliable model
+            now = datetime.now()
+            last_failure = self.model_status[model]["last_failure"]
+            if last_failure and (now - last_failure).total_seconds() > 300:  # 5 minutes
+                # Retry period has expired
+                self.model_status[model]["status"] = "available"
+                self.model_status[model]["failures"] = 0
+                return True
+            return False
+        
         return True
+    
+    def get_model_reliability(self, model: str) -> float:
+        """
+        Get the reliability score for a model.
+        
+        Args:
+            model: Model name
+            
+        Returns:
+            Reliability score (0.0 to 1.0)
+        """
+        if model not in self.model_performance_history:
+            return 1.0  # Assume perfect reliability if no history
+        
+        history = self.model_performance_history[model]
+        
+        if not history:
+            return 1.0
+        
+        # Calculate reliability based on recent history (last 10 entries)
+        recent_history = history[-10:]
+        successes = sum(1 for entry in recent_history if entry["result"] == "success")
+        
+        return successes / len(recent_history)
     
     def get_fallback_model(
         self,
@@ -560,28 +959,17 @@ class ModelFailoverManager:
                         self.logger.info(f"Using recent fallback model {fallback_model} for {primary_model}.")
                     return fallback_model
         
-        # Select a new fallback model
-        requirements = {}
-        
-        # Add context length requirement if token count is provided
-        if token_count is not None:
-            # Add some buffer for the response
-            requirements["min_context_length"] = token_count + 1000
-        
-        # Add feature requirements
-        if required_features:
-            for feature in required_features:
-                requirements[f"supports_{feature}"] = True
-        
-        # Add performance requirements
-        if performance_requirements:
-            requirements["performance"] = performance_requirements
-        
-        # Get suitable models
-        suitable_models = self.model_capabilities.get_suitable_models(requirements)
+        # Get fallback models from the model selector
+        fallback_models = self.model_selector.get_fallback_models(
+            primary_model,
+            task_type,
+            token_count,
+            required_features,
+            performance_requirements
+        )
         
         # Filter out unavailable models
-        available_models = [model for model in suitable_models if self.is_model_available(model)]
+        available_models = [model for model in fallback_models if self.is_model_available(model)]
         
         if not available_models:
             # No available models meet all requirements, try to find the best match
@@ -601,6 +989,8 @@ class ModelFailoverManager:
             available_models = [model for model in all_models if self.is_model_available(model)]
             
             if available_models:
+                # Sort by reliability
+                available_models.sort(key=lambda m: self.get_model_reliability(m), reverse=True)
                 fallback_model = available_models[0]
                 if self.logger:
                     self.logger.info(f"Using {fallback_model} as fallback for {primary_model}.")
@@ -612,12 +1002,47 @@ class ModelFailoverManager:
                 self.logger.error(f"No available models found. Returning primary model {primary_model} despite unavailability.")
             return primary_model
         
-        # Return the first available suitable model
+        # Sort available models by reliability
+        available_models.sort(key=lambda m: self.get_model_reliability(m), reverse=True)
+        
+        # Return the most reliable available model
         fallback_model = available_models[0]
         if self.logger:
             self.logger.info(f"Using {fallback_model} as fallback for {primary_model}.")
         self.last_failover[primary_model] = (now, fallback_model)
         return fallback_model
+    
+    def get_model_status_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of model status.
+        
+        Returns:
+            Dictionary with model status summary
+        """
+        summary = {
+            "models": {},
+            "total_models": len(self.model_status),
+            "available_models": 0,
+            "unavailable_models": 0
+        }
+        
+        for model, status in self.model_status.items():
+            model_summary = {
+                "status": status["status"],
+                "failures": status["failures"],
+                "last_failure": status["last_failure"].isoformat() if status["last_failure"] else None,
+                "last_success": status["last_success"].isoformat() if status["last_success"] else None,
+                "reliability": self.get_model_reliability(model)
+            }
+            
+            summary["models"][model] = model_summary
+            
+            if self.is_model_available(model):
+                summary["available_models"] += 1
+            else:
+                summary["unavailable_models"] += 1
+        
+        return summary
 
 async def with_model_fallback(
     llm_func: Callable[..., Awaitable[str]],
@@ -728,6 +1153,46 @@ def initialize_model_management(
     """
     global model_selector, failover_manager
     
+    # Get configuration values
+    config = llm_config.get_all()
+    
+    # Use provided values or config values
+    primary_model = primary_model or config.get("PRIMARY_MODEL", "gpt-3.5-turbo")
+    secondary_model = secondary_model or config.get("SECONDARY_MODEL", primary_model)
+    
+    # Initialize model selector and failover manager
     model_selector = ModelSelector(primary_model, secondary_model, model_capabilities, logger)
     failover_manager = ModelFailoverManager(model_capabilities, model_selector, logger)
+    
+    if logger:
+        logger.info(f"Initialized model management with primary model {primary_model} and secondary model {secondary_model}")
+        
+        # Log available models
+        available_models = model_capabilities.get_all_models()
+        logger.debug(f"Available models: {', '.join(available_models)}")
+        
+        # Log model capabilities for primary and secondary models
+        logger.debug(f"Primary model ({primary_model}) capabilities: {model_capabilities.capabilities.get(primary_model, {})}")
+        logger.debug(f"Secondary model ({secondary_model}) capabilities: {model_capabilities.capabilities.get(secondary_model, {})}")
 
+def get_model_selector() -> ModelSelector:
+    """
+    Get the model selector singleton instance.
+    
+    Returns:
+        ModelSelector instance
+    """
+    if model_selector is None:
+        raise RuntimeError("Model management not initialized. Call initialize_model_management() first.")
+    return model_selector
+
+def get_failover_manager() -> ModelFailoverManager:
+    """
+    Get the failover manager singleton instance.
+    
+    Returns:
+        ModelFailoverManager instance
+    """
+    if failover_manager is None:
+        raise RuntimeError("Model management not initialized. Call initialize_model_management() first.")
+    return failover_manager
