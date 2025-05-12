@@ -1,10 +1,12 @@
 import re
 from itertools import chain
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Set, Tuple, Union
 from bs4 import BeautifulSoup
 import asyncio
 import requests
+import time
+import logging
 from .config import (
     MIN_WORD_THRESHOLD,
     IMAGE_DESCRIPTION_MIN_WORD_THRESHOLD,
@@ -15,8 +17,8 @@ from .config import (
 )
 from bs4 import NavigableString, Comment
 from bs4 import PageElement, Tag
-from urllib.parse import urljoin
-from requests.exceptions import InvalidSchema
+from urllib.parse import urljoin, urlparse
+from requests.exceptions import InvalidSchema, RequestException, Timeout
 from .utils import (
     extract_metadata,
     normalize_url,
@@ -26,14 +28,14 @@ from .utils import (
 )
 from lxml import etree
 from lxml import html as lhtml
-from typing import List
 from .models import ScrapingResult, MediaItem, Link, Media, Links
+from .html2text import HTML2Text
 
 # Pre-compile regular expressions for Open Graph and Twitter metadata
 OG_REGEX = re.compile(r"^og:")
 TWITTER_REGEX = re.compile(r"^twitter:")
 DIMENSION_REGEX = re.compile(r"(\d+)(\D*)")
-
+URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
 
 # Function to parse srcset
 def parse_srcset(s: str) -> List[Dict]:
@@ -55,7 +57,6 @@ def parse_srcset(s: str) -> List[Dict]:
             variants.append({"url": url, "width": width})
     return variants
 
-
 # Function to parse image height/width value and units
 def parse_dimension(dimension):
     if dimension:
@@ -66,7 +67,6 @@ def parse_dimension(dimension):
             unit = match.group(2) or "px"  # Default unit is 'px' if not specified
             return number, unit
     return None, None
-
 
 # Fetch image file metadata to extract size and extension
 def fetch_image_file_size(img, base_url):
@@ -84,7 +84,6 @@ def fetch_image_file_size(img, base_url):
     finally:
         return
 
-
 class ContentScrapingStrategy(ABC):
     @abstractmethod
     def scrap(self, url: str, html: str, **kwargs) -> ScrapingResult:
@@ -93,7 +92,6 @@ class ContentScrapingStrategy(ABC):
     @abstractmethod
     async def ascrap(self, url: str, html: str, **kwargs) -> ScrapingResult:
         pass
-
 
 class WebScrapingStrategy(ContentScrapingStrategy):
     """
@@ -765,7 +763,7 @@ class WebScrapingStrategy(ContentScrapingStrategy):
         kwargs["exclude_domains"] = set(kwargs.get("exclude_domains", []))
         if kwargs.get("exclude_social_media_links", False):
             kwargs["exclude_domains"] = kwargs["exclude_domains"].union(
-                kwargs["exclude_social_media_domains"]
+                kwargs.get("exclude_social_media_domains", [])
             )
 
         result_obj = self.process_element(
@@ -836,7 +834,7 @@ class WebScrapingStrategy(ContentScrapingStrategy):
             str_body = body.encode_contents().decode("utf-8")
 
             print(
-                "[LOG] 😧 Error: After processing the crawled HTML and removing irrelevant tags, nothing was left in the page. Check the markdown for further details."
+                "[LOG] ��� Error: After processing the crawled HTML and removing irrelevant tags, nothing was left in the page. Check the markdown for further details."
             )
             self._log(
                 "error",
