@@ -108,6 +108,30 @@ async def process_selection(request: Request):
         {"request": request}
     )
 
+@router.get("/research", response_class=HTMLResponse)
+async def research_dashboard(request: Request):
+    """Serve the research dashboard page."""
+    return templates.TemplateResponse(
+        "research_dashboard.html", 
+        {"request": request}
+    )
+
+@router.get("/parallel-research", response_class=HTMLResponse)
+async def parallel_research_dashboard(request: Request):
+    """Serve the parallel research dashboard page."""
+    return templates.TemplateResponse(
+        "parallel_research_dashboard.html", 
+        {"request": request}
+    )
+
+@router.get("/task-monitor", response_class=HTMLResponse)
+async def task_monitor_dashboard(request: Request):
+    """Serve the task monitor dashboard page."""
+    return templates.TemplateResponse(
+        "task_monitor_dashboard.html", 
+        {"request": request}
+    )
+
 @router.get("/github-config", response_class=HTMLResponse)
 async def github_config(request: Request):
     """Serve the GitHub configuration dialog."""

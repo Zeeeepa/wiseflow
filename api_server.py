@@ -31,6 +31,8 @@ from core.llms.advanced.specialized_prompting import (
     TASK_EXTRACTION,
     TASK_REASONING
 )
+from core.plugins.connectors.research.parallel_manager import get_parallel_research_manager
+from core.plugins.connectors.research.configuration import Configuration, ResearchMode, SearchAPI
 
 # Set up logging
 logging.basicConfig(
@@ -99,6 +101,45 @@ class BatchContentRequest(BaseModel):
     explanation: str = Field("", description="Additional explanation or context")
     use_multi_step_reasoning: bool = Field(False, description="Whether to use multi-step reasoning")
     max_concurrency: int = Field(5, description="Maximum number of concurrent processes")
+
+class ResearchRequest(BaseModel):
+    """Request model for research operations."""
+    topic: str = Field(..., description="The topic to research")
+    search_api: str = Field("tavily", description="Search API to use (tavily, perplexity, exa, etc.)")
+    research_mode: str = Field("linear", description="Research mode (linear, graph, multi_agent)")
+    max_search_depth: int = Field(2, description="Maximum search depth")
+    number_of_queries: int = Field(2, description="Number of queries per iteration")
+    timeout: Optional[int] = Field(None, description="Optional timeout in seconds")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+class ParallelResearchRequest(BaseModel):
+    """Request model for parallel research operations."""
+    topics: List[str] = Field(..., description="List of topics to research")
+    search_api: str = Field("tavily", description="Search API to use (tavily, perplexity, exa, etc.)")
+    research_mode: str = Field("linear", description="Research mode (linear, graph, multi_agent)")
+    max_search_depth: int = Field(2, description="Maximum search depth")
+    number_of_queries: int = Field(2, description="Number of queries per iteration")
+    max_concurrent_tasks: int = Field(3, description="Maximum number of concurrent research tasks")
+    timeout: Optional[int] = Field(None, description="Optional timeout in seconds")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+class TaskStatusRequest(BaseModel):
+    """Request model for checking task status."""
+    task_id: str = Field(..., description="ID of the task to check")
+
+class TaskCancelRequest(BaseModel):
+    """Request model for cancelling a task."""
+    task_id: str = Field(..., description="ID of the task to cancel")
+
+class TaskRetryRequest(BaseModel):
+    """Request model for retrying a task."""
+    task_id: str = Field(..., description="ID of the task to retry")
+
+class TaskBatchStatusRequest(BaseModel):
+    """Request model for checking multiple task statuses."""
+    task_ids: List[str] = Field(..., description="List of task IDs to check")
+    wait: bool = Field(False, description="Whether to wait for tasks to complete")
+    timeout: Optional[int] = Field(None, description="Optional timeout in seconds for waiting")
 
 class WebhookRequest(BaseModel):
     """Request model for webhook operations."""
@@ -642,6 +683,213 @@ async def contextual_understanding(request: ContentRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error in contextual understanding: {str(e)}"
+        )
+
+@app.post("/api/v1/integration/research", dependencies=[Depends(verify_api_key)])
+async def research(request: ResearchRequest):
+    """
+    Perform research on a topic.
+    
+    This is a specialized endpoint for integration with other systems.
+    
+    Args:
+        request: Research request
+        
+    Returns:
+        Dict[str, Any]: The research result
+    """
+    parallel_research_manager = get_parallel_research_manager()
+    
+    try:
+        result = await parallel_research_manager.research(
+            topic=request.topic,
+            search_api=request.search_api,
+            research_mode=request.research_mode,
+            max_search_depth=request.max_search_depth,
+            number_of_queries=request.number_of_queries,
+            timeout=request.timeout,
+            metadata=request.metadata
+        )
+        
+        # Trigger webhook for research
+        background_tasks = BackgroundTasks()
+        background_tasks.add_task(
+            webhook_manager.trigger_webhook,
+            "integration.research",
+            {
+                "topic": request.topic,
+                "result_summary": result.get("summary", ""),
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error performing research: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error performing research: {str(e)}"
+        )
+
+@app.post("/api/v1/integration/parallel-research", dependencies=[Depends(verify_api_key)])
+async def parallel_research(request: ParallelResearchRequest):
+    """
+    Perform parallel research on multiple topics.
+    
+    This is a specialized endpoint for integration with other systems.
+    
+    Args:
+        request: Parallel research request
+        
+    Returns:
+        Dict[str, Any]: The parallel research result
+    """
+    parallel_research_manager = get_parallel_research_manager()
+    
+    try:
+        result = await parallel_research_manager.parallel_research(
+            topics=request.topics,
+            search_api=request.search_api,
+            research_mode=request.research_mode,
+            max_search_depth=request.max_search_depth,
+            number_of_queries=request.number_of_queries,
+            max_concurrent_tasks=request.max_concurrent_tasks,
+            timeout=request.timeout,
+            metadata=request.metadata
+        )
+        
+        # Trigger webhook for parallel research
+        background_tasks = BackgroundTasks()
+        background_tasks.add_task(
+            webhook_manager.trigger_webhook,
+            "integration.parallel_research",
+            {
+                "topics": request.topics,
+                "result_summary": result.get("summary", ""),
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error performing parallel research: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error performing parallel research: {str(e)}"
+        )
+
+@app.post("/api/v1/integration/task-status", dependencies=[Depends(verify_api_key)])
+async def get_task_status(request: TaskStatusRequest):
+    """
+    Get the status of a task.
+    
+    This is a specialized endpoint for integration with other systems.
+    
+    Args:
+        request: Task status request
+        
+    Returns:
+        Dict[str, Any]: The task status
+    """
+    parallel_research_manager = get_parallel_research_manager()
+    
+    try:
+        result = await parallel_research_manager.get_task_status(
+            task_id=request.task_id
+        )
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error getting task status: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting task status: {str(e)}"
+        )
+
+@app.post("/api/v1/integration/task-cancel", dependencies=[Depends(verify_api_key)])
+async def cancel_task(request: TaskCancelRequest):
+    """
+    Cancel a task.
+    
+    This is a specialized endpoint for integration with other systems.
+    
+    Args:
+        request: Task cancel request
+        
+    Returns:
+        Dict[str, Any]: The task cancellation result
+    """
+    parallel_research_manager = get_parallel_research_manager()
+    
+    try:
+        result = await parallel_research_manager.cancel_task(
+            task_id=request.task_id
+        )
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error canceling task: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error canceling task: {str(e)}"
+        )
+
+@app.post("/api/v1/integration/task-retry", dependencies=[Depends(verify_api_key)])
+async def retry_task(request: TaskRetryRequest):
+    """
+    Retry a task.
+    
+    This is a specialized endpoint for integration with other systems.
+    
+    Args:
+        request: Task retry request
+        
+    Returns:
+        Dict[str, Any]: The task retry result
+    """
+    parallel_research_manager = get_parallel_research_manager()
+    
+    try:
+        result = await parallel_research_manager.retry_task(
+            task_id=request.task_id
+        )
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error retrying task: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrying task: {str(e)}"
+        )
+
+@app.post("/api/v1/integration/task-batch-status", dependencies=[Depends(verify_api_key)])
+async def get_task_batch_status(request: TaskBatchStatusRequest):
+    """
+    Get the status of multiple tasks.
+    
+    This is a specialized endpoint for integration with other systems.
+    
+    Args:
+        request: Task batch status request
+        
+    Returns:
+        Dict[str, Any]: The task batch status
+    """
+    parallel_research_manager = get_parallel_research_manager()
+    
+    try:
+        result = await parallel_research_manager.get_task_batch_status(
+            task_ids=request.task_ids,
+            wait=request.wait,
+            timeout=request.timeout
+        )
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error getting task batch status: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting task batch status: {str(e)}"
         )
 
 if __name__ == "__main__":
