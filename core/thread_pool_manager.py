@@ -5,22 +5,18 @@ This module provides a thread pool manager for executing tasks concurrently.
 """
 
 import os
-import time
-import asyncio
 import logging
 import uuid
 import concurrent.futures
-from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
+from typing import Dict, Any, Optional, Callable, List, Set
 from datetime import datetime
-from enum import Enum, auto
 
 from core.config import config
 from core.task_manager import TaskPriority, TaskStatus
 from core.event_system import (
-    EventType, Event, publish_sync,
+    EventType, publish_sync,
     create_task_event
 )
-from core.utils.error_handling import handle_exceptions, TaskError
 
 logger = logging.getLogger(__name__)
 
@@ -333,4 +329,3 @@ class ThreadPoolManager:
 
 # Create a singleton instance
 thread_pool_manager = ThreadPoolManager()
-
