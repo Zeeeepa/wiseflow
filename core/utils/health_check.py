@@ -15,6 +15,15 @@ import threading
 from typing import Any, Dict, List, Optional, Union, Callable
 from datetime import datetime
 
+# Import resource monitor
+from core.resource_monitor import resource_monitor
+from core.thread_pool_manager import thread_pool_manager
+try:
+    from core.plugins.connectors.research.parallel_manager import parallel_research_manager
+    PARALLEL_MANAGER_AVAILABLE = True
+except ImportError:
+    PARALLEL_MANAGER_AVAILABLE = False
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -326,7 +335,7 @@ class HealthChecker:
         """
         with self.lock:
             if component_name not in self.check_functions:
-                raise KeyError(f"Component not registered: {component_name}")
+                raise KeyError(f"Component {component_name} is not registered")
             
             check_function = self.check_functions[component_name]
         
@@ -369,9 +378,11 @@ class HealthChecker:
         with self.lock:
             component_names = list(self.check_functions.keys())
         
+        # Run all health checks
         for component_name in component_names:
             self.check_now(component_name)
         
+        # Return the system health
         return self.get_health()
     
     def get_health(self) -> SystemHealth:
@@ -382,430 +393,327 @@ class HealthChecker:
             SystemHealth: System health
         """
         with self.lock:
-            # Create a copy of the system health
-            components = {
-                name: ComponentStatus(
-                    name=status.name,
-                    status=status.status,
-                    message=status.message,
-                    details=status.details.copy(),
-                    timestamp=status.timestamp,
-                )
-                for name, status in self.system_health.components.items()
-            }
-            
             return SystemHealth(
-                components=components,
+                components=self.system_health.components.copy(),
                 overall_status=self.system_health.overall_status,
                 timestamp=datetime.now(),
             )
 
 
-# Create a global health checker instance
+# Create a singleton instance
 health_checker = HealthChecker()
 
 
-def check_module_health(module_name: str) -> ComponentStatus:
+def check_resource_monitor_health() -> ComponentStatus:
     """
-    Check the health of a module.
+    Check the health of the resource monitor.
     
-    Args:
-        module_name: Module name
-        
     Returns:
         ComponentStatus: Component status
     """
     try:
-        # Try to import the module
-        module = importlib.import_module(module_name)
+        # Get resource usage
+        resource_usage = resource_monitor.get_resource_usage()
         
-        # Check if the module has a health_check function
-        if hasattr(module, "health_check") and callable(module.health_check):
-            # Call the module's health_check function
-            return module.health_check()
+        # Check if the resource monitor is running
+        if not resource_usage["is_running"]:
+            return ComponentStatus(
+                name="resource_monitor",
+                status=HealthStatus.WARNING,
+                message="Resource monitor is not running",
+                details=resource_usage,
+            )
         
-        # Module imported successfully
+        # Check CPU usage
+        cpu_percent = resource_usage["cpu"]["percent"]
+        cpu_average = resource_usage["cpu"]["average"]
+        cpu_threshold = resource_usage["cpu"]["threshold"]
+        cpu_warning = resource_usage["cpu"]["warning"]
+        
+        if cpu_average >= cpu_threshold:
+            return ComponentStatus(
+                name="resource_monitor",
+                status=HealthStatus.ERROR,
+                message=f"CPU usage is critical: {cpu_average:.1f}% (threshold: {cpu_threshold:.1f}%)",
+                details=resource_usage,
+            )
+        elif cpu_average >= cpu_warning:
+            return ComponentStatus(
+                name="resource_monitor",
+                status=HealthStatus.WARNING,
+                message=f"CPU usage is high: {cpu_average:.1f}% (warning: {cpu_warning:.1f}%)",
+                details=resource_usage,
+            )
+        
+        # Check memory usage
+        memory_percent = resource_usage["memory"]["percent"]
+        memory_average = resource_usage["memory"]["average"]
+        memory_threshold = resource_usage["memory"]["threshold"]
+        memory_warning = resource_usage["memory"]["warning"]
+        
+        if memory_average >= memory_threshold:
+            return ComponentStatus(
+                name="resource_monitor",
+                status=HealthStatus.ERROR,
+                message=f"Memory usage is critical: {memory_average:.1f}% (threshold: {memory_threshold:.1f}%)",
+                details=resource_usage,
+            )
+        elif memory_average >= memory_warning:
+            return ComponentStatus(
+                name="resource_monitor",
+                status=HealthStatus.WARNING,
+                message=f"Memory usage is high: {memory_average:.1f}% (warning: {memory_warning:.1f}%)",
+                details=resource_usage,
+            )
+        
+        # Check disk usage
+        disk_percent = resource_usage["disk"]["percent"]
+        disk_average = resource_usage["disk"]["average"]
+        disk_threshold = resource_usage["disk"]["threshold"]
+        disk_warning = resource_usage["disk"]["warning"]
+        
+        if disk_average >= disk_threshold:
+            return ComponentStatus(
+                name="resource_monitor",
+                status=HealthStatus.ERROR,
+                message=f"Disk usage is critical: {disk_average:.1f}% (threshold: {disk_threshold:.1f}%)",
+                details=resource_usage,
+            )
+        elif disk_average >= disk_warning:
+            return ComponentStatus(
+                name="resource_monitor",
+                status=HealthStatus.WARNING,
+                message=f"Disk usage is high: {disk_average:.1f}% (warning: {disk_warning:.1f}%)",
+                details=resource_usage,
+            )
+        
+        # All checks passed
         return ComponentStatus(
-            name=module_name,
+            name="resource_monitor",
             status=HealthStatus.OK,
-            message=f"Module {module_name} is available",
-        )
-    except ImportError as e:
-        # Module import failed
-        return ComponentStatus(
-            name=module_name,
-            status=HealthStatus.ERROR,
-            message=f"Module {module_name} is not available: {str(e)}",
-            details={"error": str(e)},
+            message="Resource monitor is healthy",
+            details=resource_usage,
         )
     except Exception as e:
-        # Other error
+        # Error checking resource monitor
         return ComponentStatus(
-            name=module_name,
+            name="resource_monitor",
             status=HealthStatus.ERROR,
-            message=f"Error checking module {module_name}: {str(e)}",
+            message=f"Error checking resource monitor: {str(e)}",
             details={"error": str(e)},
         )
 
 
-def check_api_health() -> ComponentStatus:
+def check_thread_pool_manager_health() -> ComponentStatus:
     """
-    Check the health of the API.
+    Check the health of the thread pool manager.
     
     Returns:
         ComponentStatus: Component status
     """
     try:
-        # Check if the API server is running
-        import requests
+        # Get metrics
+        metrics = thread_pool_manager.get_metrics()
         
-        # Get the API host and port from environment variables
-        api_host = os.environ.get("API_HOST", "localhost")
-        api_port = os.environ.get("API_PORT", "8000")
+        # Check worker count
+        current_workers = metrics["current_workers"]
+        min_workers = metrics["min_workers"]
+        max_workers = metrics["max_workers"]
         
-        # Make a request to the health check endpoint
-        response = requests.get(f"http://{api_host}:{api_port}/health")
-        
-        if response.status_code == 200:
-            # API is healthy
+        if current_workers <= min_workers:
             return ComponentStatus(
-                name="api",
-                status=HealthStatus.OK,
-                message="API is healthy",
-                details=response.json(),
-            )
-        else:
-            # API returned an error
-            return ComponentStatus(
-                name="api",
-                status=HealthStatus.ERROR,
-                message=f"API returned status code {response.status_code}",
-                details={"status_code": response.status_code, "response": response.text},
-            )
-    except requests.exceptions.ConnectionError:
-        # API is not running
-        return ComponentStatus(
-            name="api",
-            status=HealthStatus.ERROR,
-            message="API is not running",
-        )
-    except Exception as e:
-        # Other error
-        return ComponentStatus(
-            name="api",
-            status=HealthStatus.ERROR,
-            message=f"Error checking API health: {str(e)}",
-            details={"error": str(e)},
-        )
-
-
-def check_dashboard_health() -> ComponentStatus:
-    """
-    Check the health of the dashboard.
-    
-    Returns:
-        ComponentStatus: Component status
-    """
-    try:
-        # Check if the dashboard server is running
-        import requests
-        
-        # Get the dashboard host and port from environment variables
-        dashboard_host = os.environ.get("DASHBOARD_HOST", "localhost")
-        dashboard_port = os.environ.get("DASHBOARD_PORT", "8001")
-        
-        # Make a request to the root endpoint
-        response = requests.get(f"http://{dashboard_host}:{dashboard_port}/")
-        
-        if response.status_code == 200:
-            # Dashboard is healthy
-            return ComponentStatus(
-                name="dashboard",
-                status=HealthStatus.OK,
-                message="Dashboard is healthy",
-                details=response.json(),
-            )
-        else:
-            # Dashboard returned an error
-            return ComponentStatus(
-                name="dashboard",
-                status=HealthStatus.ERROR,
-                message=f"Dashboard returned status code {response.status_code}",
-                details={"status_code": response.status_code, "response": response.text},
-            )
-    except requests.exceptions.ConnectionError:
-        # Dashboard is not running
-        return ComponentStatus(
-            name="dashboard",
-            status=HealthStatus.ERROR,
-            message="Dashboard is not running",
-        )
-    except Exception as e:
-        # Other error
-        return ComponentStatus(
-            name="dashboard",
-            status=HealthStatus.ERROR,
-            message=f"Error checking dashboard health: {str(e)}",
-            details={"error": str(e)},
-        )
-
-
-def check_llm_health() -> ComponentStatus:
-    """
-    Check the health of the LLM service.
-    
-    Returns:
-        ComponentStatus: Component status
-    """
-    try:
-        # Import the LLM wrapper
-        from core.llms.litellm_wrapper import LiteLLMWrapper
-        
-        # Create an LLM wrapper instance
-        llm = LiteLLMWrapper()
-        
-        # Generate a test response
-        response = llm.generate("Hello, world!")
-        
-        if response:
-            # LLM is healthy
-            return ComponentStatus(
-                name="llm",
-                status=HealthStatus.OK,
-                message="LLM service is healthy",
-                details={"response": response},
-            )
-        else:
-            # LLM returned an empty response
-            return ComponentStatus(
-                name="llm",
+                name="thread_pool_manager",
                 status=HealthStatus.WARNING,
-                message="LLM service returned an empty response",
+                message=f"Thread pool is at minimum capacity: {current_workers} workers",
+                details=metrics,
             )
-    except Exception as e:
-        # Error connecting to the LLM service
-        return ComponentStatus(
-            name="llm",
-            status=HealthStatus.ERROR,
-            message=f"Error connecting to LLM service: {str(e)}",
-            details={"error": str(e)},
-        )
-
-
-def check_event_system_health() -> ComponentStatus:
-    """
-    Check the health of the event system.
-    
-    Returns:
-        ComponentStatus: Component status
-    """
-    try:
-        # Import the event system
-        from core.event_system import is_enabled, enable, disable, event_bus
-        
-        # Check if the event system is enabled
-        if is_enabled():
-            # Event system is enabled
+        elif current_workers >= max_workers:
             return ComponentStatus(
-                name="event_system",
-                status=HealthStatus.OK,
-                message="Event system is enabled",
-                details={"subscribers": len(event_bus._subscribers)},
-            )
-        else:
-            # Event system is disabled
-            return ComponentStatus(
-                name="event_system",
+                name="thread_pool_manager",
                 status=HealthStatus.WARNING,
-                message="Event system is disabled",
+                message=f"Thread pool is at maximum capacity: {current_workers} workers",
+                details=metrics,
             )
-    except Exception as e:
-        # Error checking event system
+        
+        # Check task metrics
+        total_tasks = metrics["total_tasks"]
+        completed_tasks = metrics["completed_tasks"]
+        failed_tasks = metrics["failed_tasks"]
+        cancelled_tasks = metrics["cancelled_tasks"]
+        
+        if failed_tasks > 0:
+            failure_rate = failed_tasks / total_tasks if total_tasks > 0 else 0
+            
+            if failure_rate > 0.5:
+                return ComponentStatus(
+                    name="thread_pool_manager",
+                    status=HealthStatus.ERROR,
+                    message=f"High task failure rate: {failure_rate:.1%} ({failed_tasks}/{total_tasks})",
+                    details=metrics,
+                )
+            elif failure_rate > 0.2:
+                return ComponentStatus(
+                    name="thread_pool_manager",
+                    status=HealthStatus.WARNING,
+                    message=f"Elevated task failure rate: {failure_rate:.1%} ({failed_tasks}/{total_tasks})",
+                    details=metrics,
+                )
+        
+        # All checks passed
         return ComponentStatus(
-            name="event_system",
+            name="thread_pool_manager",
+            status=HealthStatus.OK,
+            message=f"Thread pool manager is healthy with {current_workers} workers",
+            details=metrics,
+        )
+    except Exception as e:
+        # Error checking thread pool manager
+        return ComponentStatus(
+            name="thread_pool_manager",
             status=HealthStatus.ERROR,
-            message=f"Error checking event system: {str(e)}",
+            message=f"Error checking thread pool manager: {str(e)}",
             details={"error": str(e)},
         )
 
 
-def check_plugin_system_health() -> ComponentStatus:
+def check_parallel_research_manager_health() -> ComponentStatus:
     """
-    Check the health of the plugin system.
+    Check the health of the parallel research manager.
     
     Returns:
         ComponentStatus: Component status
     """
-    try:
-        # Import the plugin loader
-        from core.plugins.loader import PluginLoader
-        
-        # Create a plugin loader instance
-        loader = PluginLoader()
-        
-        # Discover plugins
-        plugins = loader.discover_plugins()
-        
-        # Check if any plugins were discovered
-        if plugins:
-            # Plugins were discovered
-            return ComponentStatus(
-                name="plugin_system",
-                status=HealthStatus.OK,
-                message=f"Plugin system is healthy, {len(plugins)} plugins discovered",
-                details={"plugins": [plugin.__class__.__name__ for plugin in plugins]},
-            )
-        else:
-            # No plugins were discovered
-            return ComponentStatus(
-                name="plugin_system",
-                status=HealthStatus.WARNING,
-                message="Plugin system is healthy, but no plugins were discovered",
-            )
-    except Exception as e:
-        # Error checking plugin system
+    if not PARALLEL_MANAGER_AVAILABLE:
         return ComponentStatus(
-            name="plugin_system",
-            status=HealthStatus.ERROR,
-            message=f"Error checking plugin system: {str(e)}",
-            details={"error": str(e)},
-        )
-
-
-def check_system_resources() -> ComponentStatus:
-    """
-    Check system resources.
-    
-    Returns:
-        ComponentStatus: Component status
-    """
-    try:
-        # Import psutil
-        import psutil
-        
-        # Get CPU usage
-        cpu_percent = psutil.cpu_percent(interval=1)
-        
-        # Get memory usage
-        memory = psutil.virtual_memory()
-        
-        # Get disk usage
-        disk = psutil.disk_usage("/")
-        
-        # Determine status based on resource usage
-        status = HealthStatus.OK
-        message = "System resources are healthy"
-        
-        if cpu_percent > 90 or memory.percent > 90 or disk.percent > 90:
-            status = HealthStatus.ERROR
-            message = "System resources are critically low"
-        elif cpu_percent > 75 or memory.percent > 75 or disk.percent > 75:
-            status = HealthStatus.WARNING
-            message = "System resources are running low"
-        
-        return ComponentStatus(
-            name="system_resources",
-            status=status,
-            message=message,
-            details={
-                "cpu_percent": cpu_percent,
-                "memory_percent": memory.percent,
-                "memory_available": memory.available,
-                "memory_total": memory.total,
-                "disk_percent": disk.percent,
-                "disk_free": disk.free,
-                "disk_total": disk.total,
-            },
-        )
-    except ImportError:
-        # psutil not installed
-        return ComponentStatus(
-            name="system_resources",
+            name="parallel_research_manager",
             status=HealthStatus.WARNING,
-            message="psutil not installed, skipping system resource checks",
+            message="Parallel research manager is not available",
+            details={"available": False},
+        )
+    
+    try:
+        # Get status
+        status = parallel_research_manager.get_status()
+        
+        # Check resource quota
+        resource_quota = status["resource_quota"]
+        current_tasks = resource_quota["current_tasks"]
+        max_concurrent_tasks = resource_quota["max_concurrent_tasks"]
+        
+        if current_tasks >= max_concurrent_tasks:
+            return ComponentStatus(
+                name="parallel_research_manager",
+                status=HealthStatus.WARNING,
+                message=f"Resource quota is at maximum capacity: {current_tasks}/{max_concurrent_tasks} tasks",
+                details=status,
+            )
+        
+        # Check metrics
+        metrics = status["metrics"]
+        total_searches = metrics["total_searches"]
+        failed_searches = metrics["failed_searches"]
+        rate_limited_searches = metrics["rate_limited_searches"]
+        resource_limited_searches = metrics["resource_limited_searches"]
+        
+        if failed_searches > 0:
+            failure_rate = failed_searches / total_searches if total_searches > 0 else 0
+            
+            if failure_rate > 0.5:
+                return ComponentStatus(
+                    name="parallel_research_manager",
+                    status=HealthStatus.ERROR,
+                    message=f"High search failure rate: {failure_rate:.1%} ({failed_searches}/{total_searches})",
+                    details=status,
+                )
+            elif failure_rate > 0.2:
+                return ComponentStatus(
+                    name="parallel_research_manager",
+                    status=HealthStatus.WARNING,
+                    message=f"Elevated search failure rate: {failure_rate:.1%} ({failed_searches}/{total_searches})",
+                    details=status,
+                )
+        
+        if rate_limited_searches > 0:
+            rate_limited_rate = rate_limited_searches / total_searches if total_searches > 0 else 0
+            
+            if rate_limited_rate > 0.5:
+                return ComponentStatus(
+                    name="parallel_research_manager",
+                    status=HealthStatus.WARNING,
+                    message=f"High rate limiting: {rate_limited_rate:.1%} ({rate_limited_searches}/{total_searches})",
+                    details=status,
+                )
+        
+        if resource_limited_searches > 0:
+            resource_limited_rate = resource_limited_searches / total_searches if total_searches > 0 else 0
+            
+            if resource_limited_rate > 0.5:
+                return ComponentStatus(
+                    name="parallel_research_manager",
+                    status=HealthStatus.WARNING,
+                    message=f"High resource limiting: {resource_limited_rate:.1%} ({resource_limited_searches}/{total_searches})",
+                    details=status,
+                )
+        
+        # All checks passed
+        return ComponentStatus(
+            name="parallel_research_manager",
+            status=HealthStatus.OK,
+            message="Parallel research manager is healthy",
+            details=status,
         )
     except Exception as e:
-        # Error checking system resources
+        # Error checking parallel research manager
         return ComponentStatus(
-            name="system_resources",
+            name="parallel_research_manager",
             status=HealthStatus.ERROR,
-            message=f"Error checking system resources: {str(e)}",
+            message=f"Error checking parallel research manager: {str(e)}",
             details={"error": str(e)},
         )
 
 
-def register_default_checks() -> None:
-    """Register default health checks."""
-    # Register module health checks
+def register_resource_checks() -> None:
+    """Register resource health checks."""
+    # Register resource monitor health check
     health_checker.register_check(
-        "core.config",
-        lambda: check_module_health("core.config"),
-        check_interval=300,  # 5 minutes
-    )
-    
-    health_checker.register_check(
-        "core.initialize",
-        lambda: check_module_health("core.initialize"),
-        check_interval=300,  # 5 minutes
-    )
-    
-    health_checker.register_check(
-        "core.event_system",
-        check_event_system_health,
+        "resource_monitor",
+        check_resource_monitor_health,
         check_interval=60,  # 1 minute
     )
     
+    # Register thread pool manager health check
     health_checker.register_check(
-        "core.llms",
-        check_llm_health,
-        check_interval=300,  # 5 minutes
-    )
-    
-    health_checker.register_check(
-        "core.plugins",
-        check_plugin_system_health,
-        check_interval=300,  # 5 minutes
-    )
-    
-    # Register API health check
-    health_checker.register_check(
-        "api",
-        check_api_health,
+        "thread_pool_manager",
+        check_thread_pool_manager_health,
         check_interval=60,  # 1 minute
     )
     
-    # Register dashboard health check
-    health_checker.register_check(
-        "dashboard",
-        check_dashboard_health,
-        check_interval=60,  # 1 minute
-    )
-    
-    # Register system resources health check
-    health_checker.register_check(
-        "system_resources",
-        check_system_resources,
-        check_interval=60,  # 1 minute
-    )
+    # Register parallel research manager health check if available
+    if PARALLEL_MANAGER_AVAILABLE:
+        health_checker.register_check(
+            "parallel_research_manager",
+            check_parallel_research_manager_health,
+            check_interval=60,  # 1 minute
+        )
 
 
-def start_health_checking() -> None:
-    """Start health checking."""
-    # Register default health checks
-    register_default_checks()
+def start_resource_health_checking() -> None:
+    """Start resource health checking."""
+    # Register resource health checks
+    register_resource_checks()
     
     # Start health checking
     health_checker.start()
 
 
-def stop_health_checking() -> None:
-    """Stop health checking."""
+def stop_resource_health_checking() -> None:
+    """Stop resource health checking."""
     health_checker.stop()
 
 
-def get_system_health() -> SystemHealth:
+def get_resource_health() -> SystemHealth:
     """
-    Get the current system health.
+    Get the current resource health.
     
     Returns:
         SystemHealth: System health
@@ -813,9 +721,9 @@ def get_system_health() -> SystemHealth:
     return health_checker.get_health()
 
 
-def check_all_health_now() -> SystemHealth:
+def check_all_resource_health_now() -> SystemHealth:
     """
-    Run all health checks immediately.
+    Run all resource health checks immediately.
     
     Returns:
         SystemHealth: System health
@@ -823,15 +731,15 @@ def check_all_health_now() -> SystemHealth:
     return health_checker.check_all_now()
 
 
-def get_health_report() -> Dict[str, Any]:
+def get_resource_health_report() -> Dict[str, Any]:
     """
-    Get a health report.
+    Get a resource health report.
     
     Returns:
         Dict[str, Any]: Health report
     """
     # Get the current system health
-    system_health = get_system_health()
+    system_health = get_resource_health()
     
     # Create a health report
     report = {
@@ -849,4 +757,3 @@ def get_health_report() -> Dict[str, Any]:
         }
     
     return report
-
