@@ -18,6 +18,7 @@ from core.di_container import DIContainer, get_container
 from core.infrastructure.di.service_registration import register_services
 from core.infrastructure.config.configuration_service import ConfigurationService
 from core.api.controllers.information_controller import router as information_router
+from core.api.controllers.parallel_research_controller import router as parallel_research_router
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     
     # Add routes
     app.include_router(information_router)
+    app.include_router(parallel_research_router)
     
     # Add health check endpoint
     @app.get("/health")
@@ -130,4 +132,3 @@ def run_app():
 
 if __name__ == "__main__":
     run_app()
-
