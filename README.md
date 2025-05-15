@@ -16,6 +16,7 @@ WiseFlow is a powerful information extraction and analysis system that leverages
 - **Plugin System**: Extend functionality with custom plugins for connectors, processors, and analyzers
 - **API Integration**: Integrate with other systems through a RESTful API
 - **Dashboard**: Visualize insights and manage focus points through a web dashboard
+- **Parallel Research**: Run multiple research tasks simultaneously for improved throughput and efficiency
 
 ## System Architecture
 
@@ -26,7 +27,7 @@ WiseFlow is organized into several core components:
 - **Imports Module** (`core/imports.py`): Centralizes imports to avoid circular dependencies
 - **Configuration Module** (`core/config.py`): Manages configuration settings
 - **Initialization Module** (`core/initialize.py`): Handles system initialization and shutdown
-- **Task Management** (`core/task_manager.py`, `core/thread_pool_manager.py`): Manages concurrent task execution
+- **Task Management** (`core/task_management/`): Manages concurrent task execution with different execution strategies
 - **Resource Monitoring** (`core/resource_monitor.py`): Monitors system resources
 - **LLM Integration** (`core/llms/`): Integrates with language models
 - **Plugin System** (`core/plugins/`): Provides extensibility through plugins
@@ -35,6 +36,7 @@ WiseFlow is organized into several core components:
 - **Knowledge Graph** (`core/knowledge/`): Builds and maintains knowledge graphs
 - **References** (`core/references/`): Manages reference materials
 - **Export** (`core/export/`): Exports data in various formats
+- **Parallel Research** (`core/plugins/connectors/research/`): Manages parallel research tasks
 
 ### API Server
 
@@ -44,6 +46,7 @@ The API server (`api_server.py`) provides a RESTful API for integrating with oth
 - Batch processing
 - Webhook management
 - Integration with other systems
+- Parallel research management
 
 ### Dashboard
 
@@ -53,6 +56,7 @@ The dashboard (`dashboard/`) provides a web interface for:
 - Visualizing insights
 - Configuring data sources
 - Monitoring system status
+- Creating and monitoring parallel research tasks
 
 ## Code Organization
 
@@ -75,20 +79,36 @@ wiseflow/
 │   ├── knowledge/               # Knowledge graph functionality
 │   ├── llms/                    # LLM integration
 │   ├── plugins/                 # Plugin system
+│   │   ├── connectors/          # Connector plugins
+│   │   │   ├── research/        # Research connectors
+│   │   │   │   ├── parallel_manager.py  # Parallel research manager
+│   │   │   │   ├── configuration.py     # Research configuration
+│   │   │   │   ├── graph_workflow.py    # Standard research workflow
+│   │   │   │   └── multi_agent.py       # Multi-agent research workflow
 │   ├── references/              # Reference management
 │   ├── resource_monitor.py      # Resource monitoring
 │   ├── run_task.py              # Task execution
 │   ├── scrapers/                # Web scraping functionality
-│   ├── task/                    # Task management
-│   ├── task_manager.py          # Task manager
-│   ├── thread_pool_manager.py   # Thread pool management
+│   ├── task_management/         # Unified task management system
+│   │   ├── task.py              # Task representation
+│   │   ├── task_manager.py      # Task manager
+│   │   ├── executor.py          # Task executors
+│   │   └── exceptions.py        # Task-related exceptions
 │   └── utils/                   # Utility functions
 ├── dashboard/                   # Web dashboard
 │   ├── backend.py               # Dashboard backend
 │   ├── main.py                  # Dashboard main entry point
 │   ├── plugins/                 # Dashboard plugins
+│   ├── research_api.py          # Research API endpoints
 │   ├── routes.py                # Dashboard routes
 │   └── visualization/           # Visualization components
+├── docs/                        # Documentation
+│   ├── api_reference.md         # API reference
+│   ├── parallel_research/       # Parallel research documentation
+│   │   ├── user_guide.md        # User guide for parallel research
+│   │   ├── developer_guide.md   # Developer guide for parallel research
+│   │   └── system_guide.md      # System guide for parallel research
+│   └── troubleshooting.md       # Troubleshooting guide
 ├── examples/                    # Example usage
 └── tests/                       # Tests
 ```
@@ -167,6 +187,7 @@ python scripts/dependency_check.py --all
    - `PROJECT_DIR`: Directory for storing project files
    - `VERBOSE`: Enable verbose logging
    - `MAX_CONCURRENT_TASKS`: Maximum number of concurrent tasks
+   - `MAX_CONCURRENT_RESEARCH`: Maximum number of concurrent research tasks
    - `AUTO_SHUTDOWN_ENABLED`: Enable automatic shutdown when idle
    - `AUTO_SHUTDOWN_IDLE_TIME`: Idle time before automatic shutdown (seconds)
    - `ENABLE_MULTIMODAL`: Enable multimodal analysis
@@ -209,6 +230,7 @@ WiseFlow can be configured through environment variables or a configuration file
 - `PROJECT_DIR`: Directory for storing project files
 - `VERBOSE`: Enable verbose logging
 - `MAX_CONCURRENT_TASKS`: Maximum number of concurrent tasks
+- `MAX_CONCURRENT_RESEARCH`: Maximum number of concurrent research tasks
 - `AUTO_SHUTDOWN_ENABLED`: Enable automatic shutdown when idle
 - `AUTO_SHUTDOWN_IDLE_TIME`: Idle time before automatic shutdown (seconds)
 
@@ -218,6 +240,27 @@ WiseFlow can be configured through environment variables or a configuration file
 - `ENABLE_INSIGHTS`: Enable insight generation
 - `ENABLE_REFERENCES`: Enable reference support
 - `ENABLE_EVENT_SYSTEM`: Enable event system
+- `ENABLE_PARALLEL_RESEARCH`: Enable parallel research capabilities
+
+## Parallel Research
+
+WiseFlow supports parallel research capabilities, allowing multiple research tasks to be executed concurrently. This significantly improves throughput and efficiency, especially for large-scale research projects.
+
+### Key Features
+
+- **Concurrent Execution**: Run multiple research tasks simultaneously
+- **Resource Management**: Automatically manage system resources to prevent overload
+- **Multi-Agent Approach**: Use multiple specialized agents for complex research tasks
+- **Visualization**: Visualize research results with knowledge graphs and trend visualizations
+- **API Integration**: Create and monitor research tasks through the API
+
+### Documentation
+
+For detailed information about the parallel research capabilities, see:
+
+- [User Guide](docs/parallel_research/user_guide.md): How to use the parallel research capabilities
+- [Developer Guide](docs/parallel_research/developer_guide.md): How to extend and customize the parallel research system
+- [System Guide](docs/parallel_research/system_guide.md): System requirements, deployment, and maintenance
 
 ## API Usage
 
@@ -363,4 +406,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
