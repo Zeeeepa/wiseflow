@@ -13,7 +13,7 @@ from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -31,6 +31,8 @@ from core.llms.advanced.specialized_prompting import (
     TASK_EXTRACTION,
     TASK_REASONING
 )
+from core.plugins.connectors.research.parallel_manager import ParallelResearchManager
+from core.plugins.connectors.research.configuration import Configuration, ResearchMode, SearchAPI
 
 # Set up logging
 logging.basicConfig(
@@ -122,116 +124,29 @@ class WebhookTriggerRequest(BaseModel):
     data: Dict[str, Any] = Field(..., description="Data to send")
     async_mode: bool = Field(True, description="Whether to trigger webhooks asynchronously")
 
-class ContentProcessorManager:
-    """Manager for content processor instances."""
-    
-    _instance = None
-    
-    @classmethod
-    def get_instance(cls):
-        """Get the singleton instance."""
-        if cls._instance is None:
-            cls._instance = ContentProcessorManager()
-        return cls._instance
-    
-    def __init__(self):
-        """Initialize the content processor manager."""
-        self.prompt_processor = SpecializedPromptProcessor(
-            default_model=os.environ.get("PRIMARY_MODEL", "gpt-3.5-turbo"),
-            default_temperature=0.7,
-            default_max_tokens=1000,
-        )
-    
-    async def process_content(
-        self,
-        content: str,
-        focus_point: str,
-        explanation: str = "",
-        content_type: str = CONTENT_TYPE_TEXT,
-        use_multi_step_reasoning: bool = False,
-        references: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Process content using specialized prompting strategies.
-        
-        Args:
-            content: The content to process
-            focus_point: The focus point for extraction
-            explanation: Additional explanation or context
-            content_type: The type of content
-            use_multi_step_reasoning: Whether to use multi-step reasoning
-            references: Optional reference materials for contextual understanding
-            metadata: Additional metadata
-            
-        Returns:
-            Dict[str, Any]: The processing result
-        """
-        metadata = metadata or {}
-        
-        # Determine the appropriate processing method based on the parameters
-        if references:
-            logger.info(f"Processing content with contextual understanding: {content_type}")
-            return await self.prompt_processor.contextual_understanding(
-                content=content,
-                focus_point=focus_point,
-                references=references,
-                explanation=explanation,
-                content_type=content_type,
-                metadata=metadata
-            )
-        elif use_multi_step_reasoning:
-            logger.info(f"Processing content with multi-step reasoning: {content_type}")
-            return await self.prompt_processor.multi_step_reasoning(
-                content=content,
-                focus_point=focus_point,
-                explanation=explanation,
-                content_type=content_type,
-                metadata=metadata
-            )
-        else:
-            logger.info(f"Processing content with basic extraction: {content_type}")
-            return await self.prompt_processor.process(
-                content=content,
-                focus_point=focus_point,
-                explanation=explanation,
-                content_type=content_type,
-                task=TASK_EXTRACTION,
-                metadata=metadata
-            )
-    
-    async def batch_process(
-        self,
-        items: List[Dict[str, Any]],
-        focus_point: str,
-        explanation: str = "",
-        use_multi_step_reasoning: bool = False,
-        max_concurrency: int = 5
-    ) -> List[Dict[str, Any]]:
-        """
-        Process multiple items concurrently.
-        
-        Args:
-            items: List of items to process
-            focus_point: The focus point for extraction
-            explanation: Additional explanation or context
-            use_multi_step_reasoning: Whether to use multi-step reasoning
-            max_concurrency: Maximum number of concurrent processes
-            
-        Returns:
-            List[Dict[str, Any]]: The processing results
-        """
-        task = TASK_REASONING if use_multi_step_reasoning else TASK_EXTRACTION
-        
-        logger.info(f"Batch processing {len(items)} items with task: {task}")
-        
-        return await self.prompt_processor.batch_process(
-            items=items,
-            focus_point=focus_point,
-            explanation=explanation,
-            task=task,
-            max_concurrency=max_concurrency
-        )
+class ResearchConfigRequest(BaseModel):
+    """Request model for research configuration."""
+    search_api: str = Field("tavily", description="Search API to use")
+    research_mode: str = Field("linear", description="Research mode to use")
+    max_search_depth: int = Field(2, description="Maximum search depth")
+    number_of_queries: int = Field(2, description="Number of queries per iteration")
+    report_structure: Optional[str] = Field(None, description="Custom report structure")
+    visualization_enabled: bool = Field(False, description="Whether to enable visualization")
+
+class ParallelResearchRequest(BaseModel):
+    """Request model for starting parallel research flows."""
+    topics: List[str] = Field(..., description="List of research topics")
+    config: Optional[ResearchConfigRequest] = Field(None, description="Research configuration")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+class ContinuousResearchRequest(BaseModel):
+    """Request model for continuous research based on previous results."""
+    previous_flow_id: str = Field(..., description="ID of the previous research flow")
+    new_topic: str = Field(..., description="New topic or follow-up question")
+    config: Optional[ResearchConfigRequest] = Field(None, description="Research configuration")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+# Pydantic models for parallel research
 
 # API routes
 @app.get("/")
@@ -642,6 +557,276 @@ async def contextual_understanding(request: ContentRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error in contextual understanding: {str(e)}"
+        )
+
+# Parallel research endpoints
+@app.post("/api/v1/research/parallel", dependencies=[Depends(verify_api_key)])
+async def start_parallel_research(
+    request: ParallelResearchRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Start multiple parallel research flows.
+    
+    Args:
+        request: Parallel research request
+        background_tasks: Background tasks
+        
+    Returns:
+        Dict[str, Any]: Parallel research response
+    """
+    logger.info(f"Starting {len(request.topics)} parallel research flows")
+    
+    try:
+        # Get parallel research manager
+        manager = ParallelResearchManager.get_instance()
+        
+        # Create a configuration from the request
+        config = None
+        if request.config:
+            config = Configuration(
+                search_api=SearchAPI(request.config.search_api),
+                research_mode=ResearchMode(request.config.research_mode),
+                max_search_depth=request.config.max_search_depth,
+                number_of_queries=request.config.number_of_queries,
+                report_structure=request.config.report_structure or None,
+                visualization_enabled=request.config.visualization_enabled
+            )
+        
+        # Create flows for each topic
+        flow_ids = []
+        for topic in request.topics:
+            try:
+                flow_id = manager.create_flow(
+                    topic=topic,
+                    config=config,
+                    metadata=request.metadata
+                )
+                flow_ids.append(flow_id)
+            except ValueError as e:
+                # If we hit the maximum number of concurrent flows, stop creating more
+                logger.warning(f"Could not create flow for topic '{topic}': {e}")
+                break
+        
+        if not flow_ids:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Maximum number of concurrent flows reached"
+            )
+        
+        # Start the flows in the background
+        background_tasks.add_task(manager.start_all_pending_flows)
+        
+        # Create response
+        return {
+            "flow_ids": flow_ids,
+            "status": "success",
+            "message": f"Started {len(flow_ids)} parallel research flows",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error starting parallel research flows: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error starting parallel research flows: {str(e)}"
+        )
+
+@app.post("/api/v1/research/parallel/continuous", dependencies=[Depends(verify_api_key)])
+async def start_continuous_research(
+    request: ContinuousResearchRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Start a continuous research flow based on previous results.
+    
+    Args:
+        request: Continuous research request
+        background_tasks: Background tasks
+        
+    Returns:
+        Dict[str, Any]: Parallel research response
+    """
+    logger.info(f"Starting continuous research flow based on {request.previous_flow_id}")
+    
+    try:
+        # Get parallel research manager
+        manager = ParallelResearchManager.get_instance()
+        
+        # Get the previous flow
+        previous_flow = manager.get_flow(request.previous_flow_id)
+        if not previous_flow:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Previous flow not found: {request.previous_flow_id}"
+            )
+        
+        # Check if the previous flow is completed
+        if previous_flow.status != "completed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Previous flow is not completed: {request.previous_flow_id}"
+            )
+        
+        # Create a configuration from the request
+        config = None
+        if request.config:
+            config = Configuration(
+                search_api=SearchAPI(request.config.search_api),
+                research_mode=ResearchMode(request.config.research_mode),
+                max_search_depth=request.config.max_search_depth,
+                number_of_queries=request.config.number_of_queries,
+                report_structure=request.config.report_structure or None,
+                visualization_enabled=request.config.visualization_enabled
+            )
+        else:
+            # Use the configuration from the previous flow
+            config = previous_flow.config
+        
+        # Create a new flow
+        flow_id = manager.create_flow(
+            topic=request.new_topic,
+            config=config,
+            previous_results=previous_flow.result,
+            metadata=request.metadata
+        )
+        
+        # Start the flow in the background
+        background_tasks.add_task(manager.start_flow, flow_id)
+        
+        # Create response
+        return {
+            "flow_ids": [flow_id],
+            "status": "success",
+            "message": "Continuous research flow started",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting continuous research flow: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error starting continuous research flow: {str(e)}"
+        )
+
+@app.get("/api/v1/research/parallel/status", dependencies=[Depends(verify_api_key)])
+async def get_all_research_flows(
+    status: Optional[List[str]] = Query(None, description="Filter by status")
+):
+    """
+    Get the status of all research flows.
+    
+    Args:
+        status: Optional status filter
+        
+    Returns:
+        Dict[str, Any]: Research flow list response
+    """
+    logger.info("Getting status of all research flows")
+    
+    try:
+        # Get parallel research manager
+        manager = ParallelResearchManager.get_instance()
+        
+        # Get all flows
+        flows = manager.list_flows(status=status)
+        
+        # Create response
+        return {
+            "flows": flows,
+            "count": len(flows),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting status of research flows: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting status of research flows: {str(e)}"
+        )
+
+@app.get("/api/v1/research/parallel/{flow_id}", dependencies=[Depends(verify_api_key)])
+async def get_research_flow(flow_id: str):
+    """
+    Get the status of a specific research flow.
+    
+    Args:
+        flow_id: Flow ID
+        
+    Returns:
+        Dict[str, Any]: Research flow status response
+    """
+    logger.info(f"Getting status of research flow: {flow_id}")
+    
+    try:
+        # Get parallel research manager
+        manager = ParallelResearchManager.get_instance()
+        
+        # Get the flow
+        flow = manager.get_flow(flow_id)
+        if not flow:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Flow not found: {flow_id}"
+            )
+        
+        # Create response
+        return {
+            "flow": flow.to_dict(),
+            "result": flow.result if flow.status == "completed" else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting status of research flow: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting status of research flow: {str(e)}"
+        )
+
+@app.post("/api/v1/research/parallel/{flow_id}/cancel", dependencies=[Depends(verify_api_key)])
+async def cancel_research_flow(flow_id: str):
+    """
+    Cancel a specific research flow.
+    
+    Args:
+        flow_id: Flow ID
+        
+    Returns:
+        Dict[str, Any]: Research flow cancel response
+    """
+    logger.info(f"Cancelling research flow: {flow_id}")
+    
+    try:
+        # Get parallel research manager
+        manager = ParallelResearchManager.get_instance()
+        
+        # Cancel the flow
+        success = manager.cancel_flow(flow_id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Flow not found or cannot be cancelled: {flow_id}"
+            )
+        
+        # Create response
+        return {
+            "flow_id": flow_id,
+            "status": "success",
+            "message": "Research flow cancelled",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling research flow: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error cancelling research flow: {str(e)}"
         )
 
 if __name__ == "__main__":
