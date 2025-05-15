@@ -33,6 +33,48 @@ from core.llms.advanced.specialized_prompting import (
 )
 from core.plugins.connectors.research.parallel_manager import ParallelResearchManager
 from core.plugins.connectors.research.configuration import Configuration, ResearchMode, SearchAPI
+from core.content_types import (
+    CONTENT_TYPE_TEXT,
+    CONTENT_TYPE_HTML,
+    CONTENT_TYPE_MARKDOWN,
+    CONTENT_TYPE_CODE,
+    CONTENT_TYPE_ACADEMIC,
+    CONTENT_TYPE_VIDEO,
+    CONTENT_TYPE_SOCIAL,
+    TASK_EXTRACTION,
+    TASK_REASONING
+)
+from core.middleware import (
+    ErrorHandlingMiddleware,
+    add_error_handling_middleware,
+    CircuitBreaker,
+    circuit_breaker,
+    RetryWithBackoff,
+    retry_with_backoff,
+    with_error_handling,
+    ErrorSeverity,
+    ErrorCategory
+)
+from core.utils.error_handling import (
+    WiseflowError,
+    ConnectionError,
+    DataProcessingError,
+    ValidationError,
+    AuthenticationError,
+    AuthorizationError,
+    NotFoundError
+)
+from core.utils.recovery_strategies import (
+    RetryStrategy,
+    FallbackStrategy,
+    with_retry,
+    with_fallback
+)
+from core.utils.error_logging import (
+    ErrorReport,
+    report_error,
+    get_error_statistics
+)
 
 # Set up logging
 logging.basicConfig(
@@ -46,6 +88,7 @@ app = FastAPI(
     title="WiseFlow API",
     description="API for WiseFlow - LLM-based information extraction and analysis",
     version="0.1.0",
+    openapi_url="/openapi.json",
 )
 
 # Add CORS middleware
@@ -57,12 +100,21 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+# Add error handling middleware
+add_error_handling_middleware(
+    app,
+    log_errors=True,
+    include_traceback=os.environ.get("ENVIRONMENT", "development") == "development",
+    save_to_file=True
+)
+
 # Initialize webhook manager
 webhook_manager = get_webhook_manager()
 
 # API key authentication
 API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
 
+# Dependency for API key verification
 def verify_api_key(x_api_key: str = Header(None)):
     """
     Verify the API key.
@@ -71,16 +123,13 @@ def verify_api_key(x_api_key: str = Header(None)):
         x_api_key: API key from header
         
     Returns:
-        bool: True if valid
+        bool: True if API key is valid
         
     Raises:
         HTTPException: If API key is invalid
     """
     if not x_api_key or x_api_key != API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
+        raise AuthenticationError("Invalid API key")
     return True
 
 # Pydantic models for request/response validation
@@ -104,7 +153,7 @@ class BatchContentRequest(BaseModel):
 
 class WebhookRequest(BaseModel):
     """Request model for webhook operations."""
-    endpoint: str = Field(..., description="Webhook endpoint URL")
+    url: str = Field(..., description="Webhook endpoint URL")
     events: List[str] = Field(..., description="List of events to trigger the webhook")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers to include in webhook requests")
     secret: Optional[str] = Field(None, description="Optional secret for signing webhook payloads")
@@ -112,7 +161,7 @@ class WebhookRequest(BaseModel):
 
 class WebhookUpdateRequest(BaseModel):
     """Request model for webhook update operations."""
-    endpoint: Optional[str] = Field(None, description="New endpoint URL")
+    url: Optional[str] = Field(None, description="New endpoint URL")
     events: Optional[List[str]] = Field(None, description="New list of events")
     headers: Optional[Dict[str, str]] = Field(None, description="New headers")
     secret: Optional[str] = Field(None, description="New secret")
@@ -121,7 +170,7 @@ class WebhookUpdateRequest(BaseModel):
 class WebhookTriggerRequest(BaseModel):
     """Request model for webhook trigger operations."""
     event: str = Field(..., description="Event name")
-    data: Dict[str, Any] = Field(..., description="Data to send")
+    payload: Any = Field(..., description="Payload to send")
     async_mode: bool = Field(True, description="Whether to trigger webhooks asynchronously")
 
 class ResearchConfigRequest(BaseModel):
@@ -148,32 +197,58 @@ class ContinuousResearchRequest(BaseModel):
 
 # Pydantic models for parallel research
 
+# URL extraction request model
+class URLExtractionRequest(BaseModel):
+    """Request model for URL extraction."""
+    url: str = Field(..., description="URL to extract content from")
+    extraction_type: str = Field(..., description="Type of extraction")
+    max_length: int = Field(1000, description="Maximum length of extracted content")
+    process_content: bool = Field(False, description="Whether to process the extracted content")
+
+# Pydantic models for research tasks
+class ResearchRequest(BaseModel):
+    """Request model for creating a research task."""
+    topic: str = Field(..., description="Research topic")
+    config: Optional[ResearchConfigRequest] = Field(None, description="Research configuration")
+    use_multi_agent: bool = Field(False, description="Whether to use multi-agent research")
+    priority: int = Field(0, description="Priority of the research task")
+    tags: List[str] = Field([], description="Tags for the research task")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
 # API routes
 @app.get("/")
 async def root():
     """Root endpoint."""
     return {"message": "Welcome to WiseFlow API", "version": "0.1.0"}
 
+# Health check endpoint
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
+# Error reporting endpoints
+@app.get("/api/v1/errors/statistics", dependencies=[Depends(verify_api_key)])
+async def get_error_stats():
+    """Get error statistics."""
+    return get_error_statistics()
+
 # Content processing endpoints
 @app.post("/api/v1/process", dependencies=[Depends(verify_api_key)])
 async def process_content(request: ContentRequest):
     """
-    Process content using specialized prompting strategies.
+    Process content with specialized prompting.
     
     Args:
         request: Content processing request
         
     Returns:
-        Dict[str, Any]: The processing result
+        Processing result
     """
-    processor = ContentProcessorManager.get_instance()
-    
     try:
+        processor = ContentProcessorManager.get_instance()
+        
+        # Process the content
         result = await processor.process_content(
             content=request.content,
             focus_point=request.focus_point,
@@ -184,7 +259,7 @@ async def process_content(request: ContentRequest):
             metadata=request.metadata
         )
         
-        # Trigger webhook for content processing
+        # Trigger webhook for content processed event
         background_tasks = BackgroundTasks()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
@@ -192,60 +267,93 @@ async def process_content(request: ContentRequest):
             {
                 "focus_point": request.focus_point,
                 "content_type": request.content_type,
-                "result_summary": result.get("summary", ""),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "metadata": request.metadata
             }
         )
         
         return result
     except Exception as e:
-        logger.error(f"Error processing content: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing content: {str(e)}"
+        # Log the error with context
+        error_context = {
+            "focus_point": request.focus_point,
+            "content_type": request.content_type,
+            "use_multi_step_reasoning": request.use_multi_step_reasoning,
+            "has_references": request.references is not None
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.APPLICATION,
+            context=error_context,
+            save_to_file=True
         )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise DataProcessingError("Error processing content", details=error_context, cause=e)
+        raise
 
 @app.post("/api/v1/batch-process", dependencies=[Depends(verify_api_key)])
 async def batch_process_content(request: BatchContentRequest):
     """
-    Process multiple items concurrently.
+    Process multiple content items in parallel.
     
     Args:
         request: Batch content processing request
         
     Returns:
-        List[Dict[str, Any]]: The processing results
+        List of processing results
     """
-    processor = ContentProcessorManager.get_instance()
-    
     try:
+        processor = ContentProcessorManager.get_instance()
+        
+        # Process the content items
         results = await processor.batch_process(
             items=request.items,
             focus_point=request.focus_point,
             explanation=request.explanation,
             use_multi_step_reasoning=request.use_multi_step_reasoning,
-            max_concurrency=request.max_concurrency
+            max_concurrency=request.max_concurrency,
+            metadata=request.metadata
         )
         
-        # Trigger webhook for batch processing
+        # Trigger webhook for batch processed event
         background_tasks = BackgroundTasks()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
-            "content.batch_processed",
+            "batch.completed",
             {
                 "focus_point": request.focus_point,
                 "item_count": len(request.items),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "metadata": request.metadata
             }
         )
         
         return results
     except Exception as e:
-        logger.error(f"Error batch processing content: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error batch processing content: {str(e)}"
+        # Log the error with context
+        error_context = {
+            "focus_point": request.focus_point,
+            "item_count": len(request.items),
+            "use_multi_step_reasoning": request.use_multi_step_reasoning,
+            "max_concurrency": request.max_concurrency
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.APPLICATION,
+            context=error_context,
+            save_to_file=True
         )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise DataProcessingError("Error batch processing content", details=error_context, cause=e)
+        raise
 
 # Webhook management endpoints
 @app.get("/api/v1/webhooks", dependencies=[Depends(verify_api_key)])
@@ -256,7 +364,20 @@ async def list_webhooks():
     Returns:
         List[Dict[str, Any]]: List of webhook configurations
     """
-    return webhook_manager.list_webhooks()
+    try:
+        return webhook_manager.list_webhooks()
+    except Exception as e:
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.RESOURCE,
+            context={"operation": "list_webhooks"},
+            save_to_file=True
+        )
+        
+        if not isinstance(e, WiseflowError):
+            raise ResourceError("Error listing webhooks", cause=e)
+        raise
 
 @app.post("/api/v1/webhooks", dependencies=[Depends(verify_api_key)])
 async def register_webhook(request: WebhookRequest):
@@ -267,21 +388,37 @@ async def register_webhook(request: WebhookRequest):
         request: Webhook registration request
         
     Returns:
-        Dict[str, Any]: Webhook registration result
+        Dict[str, Any]: The registered webhook configuration
     """
-    webhook_id = webhook_manager.register_webhook(
-        endpoint=request.endpoint,
-        events=request.events,
-        headers=request.headers,
-        secret=request.secret,
-        description=request.description
-    )
-    
-    return {
-        "webhook_id": webhook_id,
-        "message": "Webhook registered successfully",
-        "timestamp": datetime.now().isoformat()
-    }
+    try:
+        return webhook_manager.register_webhook(
+            url=request.url,
+            events=request.events,
+            secret=request.secret,
+            description=request.description,
+            metadata=request.metadata
+        )
+    except Exception as e:
+        # Log the error with context
+        error_context = {
+            "url": request.url,
+            "events": request.events,
+            "has_secret": request.secret is not None,
+            "description": request.description
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.RESOURCE,
+            context=error_context,
+            save_to_file=True
+        )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise ResourceError("Error registering webhook", details=error_context, cause=e)
+        raise
 
 @app.get("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
 async def get_webhook(webhook_id: str):
@@ -293,58 +430,73 @@ async def get_webhook(webhook_id: str):
         
     Returns:
         Dict[str, Any]: Webhook configuration
-        
-    Raises:
-        HTTPException: If webhook not found
     """
-    webhook = webhook_manager.get_webhook(webhook_id)
-    
-    if not webhook:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Webhook not found: {webhook_id}"
+    try:
+        webhook = webhook_manager.get_webhook(webhook_id)
+        if webhook is None:
+            raise NotFoundError(f"Webhook with ID {webhook_id} not found")
+        return webhook
+    except Exception as e:
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.RESOURCE,
+            context={"webhook_id": webhook_id, "operation": "get_webhook"},
+            save_to_file=True
         )
-    
-    return {
-        "webhook_id": webhook_id,
-        "webhook": webhook
-    }
+        
+        if not isinstance(e, WiseflowError):
+            raise ResourceError(f"Error retrieving webhook {webhook_id}", cause=e)
+        raise
 
 @app.put("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
 async def update_webhook(webhook_id: str, request: WebhookUpdateRequest):
     """
-    Update an existing webhook.
+    Update a webhook.
     
     Args:
-        webhook_id: ID of the webhook to update
+        webhook_id: Webhook ID
         request: Webhook update request
         
     Returns:
-        Dict[str, Any]: Webhook update result
-        
-    Raises:
-        HTTPException: If webhook not found or update failed
+        Dict[str, Any]: Updated webhook configuration
     """
-    success = webhook_manager.update_webhook(
-        webhook_id=webhook_id,
-        endpoint=request.endpoint,
-        events=request.events,
-        headers=request.headers,
-        secret=request.secret,
-        description=request.description
-    )
-    
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Webhook not found or update failed: {webhook_id}"
+    try:
+        webhook = webhook_manager.update_webhook(
+            webhook_id=webhook_id,
+            url=request.url,
+            events=request.events,
+            headers=request.headers,
+            secret=request.secret,
+            description=request.description,
+            metadata=request.metadata
         )
-    
-    return {
-        "webhook_id": webhook_id,
-        "message": "Webhook updated successfully",
-        "timestamp": datetime.now().isoformat()
-    }
+        
+        if webhook is None:
+            raise NotFoundError(f"Webhook with ID {webhook_id} not found")
+            
+        return webhook
+    except Exception as e:
+        # Log the error with context
+        error_context = {
+            "webhook_id": webhook_id,
+            "has_url_update": request.url is not None,
+            "has_events_update": request.events is not None,
+            "has_secret_update": request.secret is not None
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.RESOURCE,
+            context=error_context,
+            save_to_file=True
+        )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise ResourceError(f"Error updating webhook {webhook_id}", details=error_context, cause=e)
+        raise
 
 @app.delete("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
 async def delete_webhook(webhook_id: str):
@@ -352,108 +504,159 @@ async def delete_webhook(webhook_id: str):
     Delete a webhook.
     
     Args:
-        webhook_id: ID of the webhook to delete
+        webhook_id: Webhook ID
         
     Returns:
-        Dict[str, Any]: Webhook deletion result
-        
-    Raises:
-        HTTPException: If webhook not found or deletion failed
+        Dict[str, Any]: Deletion result
     """
-    success = webhook_manager.delete_webhook(webhook_id)
-    
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Webhook not found or deletion failed: {webhook_id}"
+    try:
+        success = webhook_manager.delete_webhook(webhook_id)
+        
+        if not success:
+            raise NotFoundError(f"Webhook with ID {webhook_id} not found")
+            
+        return {
+            "webhook_id": webhook_id,
+            "message": "Webhook deleted successfully",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.RESOURCE,
+            context={"webhook_id": webhook_id, "operation": "delete_webhook"},
+            save_to_file=True
         )
-    
-    return {
-        "webhook_id": webhook_id,
-        "message": "Webhook deleted successfully",
-        "timestamp": datetime.now().isoformat()
-    }
+        
+        if not isinstance(e, WiseflowError):
+            raise ResourceError(f"Error deleting webhook {webhook_id}", cause=e)
+        raise
 
 @app.post("/api/v1/webhooks/trigger", dependencies=[Depends(verify_api_key)])
 async def trigger_webhook(request: WebhookTriggerRequest):
     """
-    Trigger webhooks for a specific event.
+    Manually trigger a webhook event.
     
     Args:
         request: Webhook trigger request
         
     Returns:
-        Dict[str, Any]: Webhook trigger result
+        Dict[str, Any]: Trigger result
     """
-    responses = webhook_manager.trigger_webhook(
-        event=request.event,
-        data=request.data,
-        async_mode=request.async_mode
-    )
-    
-    return {
-        "event": request.event,
-        "message": "Webhooks triggered successfully",
-        "responses": responses if not request.async_mode else [],
-        "timestamp": datetime.now().isoformat()
-    }
-
-# Integration endpoints
-@app.post("/api/v1/integration/extract", dependencies=[Depends(verify_api_key)])
-async def extract_information(request: ContentRequest):
-    """
-    Extract information from content.
-    
-    This is a specialized endpoint for integration with other systems.
-    
-    Args:
-        request: Content processing request
-        
-    Returns:
-        Dict[str, Any]: The extraction result
-    """
-    processor = ContentProcessorManager.get_instance()
-    
     try:
-        result = await processor.process_content(
-            content=request.content,
-            focus_point=request.focus_point,
-            explanation=request.explanation,
-            content_type=request.content_type,
-            use_multi_step_reasoning=False,
-            references=request.references,
-            metadata=request.metadata
-        )
-        
-        # Trigger webhook for information extraction
-        background_tasks = BackgroundTasks()
-        background_tasks.add_task(
-            webhook_manager.trigger_webhook,
-            "integration.extract",
-            {
-                "focus_point": request.focus_point,
-                "content_type": request.content_type,
-                "result_summary": result.get("summary", ""),
-                "timestamp": datetime.now().isoformat()
-            }
+        results = await webhook_manager.trigger_webhook(
+            event=request.event,
+            payload=request.payload
         )
         
         return {
-            "extracted_information": result.get("summary", ""),
-            "metadata": result.get("metadata", {}),
+            "event": request.event,
+            "triggered_count": len(results),
+            "results": results,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logger.error(f"Error extracting information: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error extracting information: {str(e)}"
+        # Log the error with context
+        error_context = {
+            "event": request.event,
+            "payload_size": len(str(request.payload)) if request.payload else 0
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.RESOURCE,
+            context=error_context,
+            save_to_file=True
         )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise ResourceError("Error triggering webhook", details=error_context, cause=e)
+        raise
+
+# Integration endpoints
+@app.post("/api/v1/integration/extract", dependencies=[Depends(verify_api_key)])
+async def extract_from_url(request: URLExtractionRequest):
+    """
+    Extract content from a URL.
+    
+    Args:
+        request: URL extraction request
+        
+    Returns:
+        Dict[str, Any]: Extraction result
+    """
+    try:
+        # Import here to avoid circular imports
+        from core.integrations.url_extractor import extract_content_from_url
+        
+        # Extract content from URL
+        content, metadata = await extract_content_from_url(
+            url=request.url,
+            extraction_type=request.extraction_type,
+            max_length=request.max_length
+        )
+        
+        # Process the extracted content if requested
+        if request.process_content:
+            processor = ContentProcessorManager.get_instance()
+            
+            result = await processor.process_content(
+                content=content,
+                focus_point=request.focus_point or "Extract key information",
+                explanation=request.explanation,
+                content_type=metadata.get("content_type", CONTENT_TYPE_TEXT),
+                use_multi_step_reasoning=request.use_multi_step_reasoning,
+                metadata={
+                    "source_url": request.url,
+                    "extraction_type": request.extraction_type,
+                    **metadata
+                }
+            )
+            
+            return {
+                "url": request.url,
+                "extraction_type": request.extraction_type,
+                "content": content[:1000] + "..." if len(content) > 1000 else content,
+                "metadata": metadata,
+                "processed_result": result,
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        return {
+            "url": request.url,
+            "extraction_type": request.extraction_type,
+            "content": content,
+            "metadata": metadata,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        # Log the error with context
+        error_context = {
+            "url": request.url,
+            "extraction_type": request.extraction_type,
+            "process_content": request.process_content
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.INTEGRATION,
+            context=error_context,
+            save_to_file=True
+        )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise IntegrationError("Error extracting content from URL", details=error_context, cause=e)
+        raise
 
 @app.post("/api/v1/integration/analyze", dependencies=[Depends(verify_api_key)])
 async def analyze_content(request: ContentRequest):
     """
-    Analyze content using multi-step reasoning.
+    Analyze content with specialized prompting.
     
     This is a specialized endpoint for integration with other systems.
     
@@ -463,9 +666,10 @@ async def analyze_content(request: ContentRequest):
     Returns:
         Dict[str, Any]: The analysis result
     """
-    processor = ContentProcessorManager.get_instance()
-    
     try:
+        processor = ContentProcessorManager.get_instance()
+        
+        # Process the content
         result = await processor.process_content(
             content=request.content,
             focus_point=request.focus_point,
@@ -484,23 +688,32 @@ async def analyze_content(request: ContentRequest):
             {
                 "focus_point": request.focus_point,
                 "content_type": request.content_type,
-                "result_summary": result.get("summary", ""),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "metadata": request.metadata
             }
         )
         
-        return {
-            "analysis": result.get("summary", ""),
-            "reasoning_steps": result.get("reasoning_steps", []),
-            "metadata": result.get("metadata", {}),
-            "timestamp": datetime.now().isoformat()
-        }
+        return result
     except Exception as e:
-        logger.error(f"Error analyzing content: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error analyzing content: {str(e)}"
+        # Log the error with context
+        error_context = {
+            "focus_point": request.focus_point,
+            "content_type": request.content_type,
+            "content_length": len(request.content)
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.INTEGRATION,
+            context=error_context,
+            save_to_file=True
         )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise IntegrationError("Error analyzing content", details=error_context, cause=e)
+        raise
 
 @app.post("/api/v1/integration/contextual", dependencies=[Depends(verify_api_key)])
 async def contextual_understanding(request: ContentRequest):
@@ -515,23 +728,21 @@ async def contextual_understanding(request: ContentRequest):
     Returns:
         Dict[str, Any]: The contextual understanding result
     """
-    if not request.references:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="References are required for contextual understanding"
-        )
-    
-    processor = ContentProcessorManager.get_instance()
-    
     try:
+        processor = ContentProcessorManager.get_instance()
+        
+        # Process the content with contextual understanding
         result = await processor.process_content(
             content=request.content,
             focus_point=request.focus_point,
             explanation=request.explanation,
             content_type=request.content_type,
-            use_multi_step_reasoning=False,
+            use_multi_step_reasoning=True,
             references=request.references,
-            metadata=request.metadata
+            metadata={
+                "task_type": TASK_REASONING,
+                **(request.metadata or {})
+            }
         )
         
         # Trigger webhook for contextual understanding
@@ -542,95 +753,102 @@ async def contextual_understanding(request: ContentRequest):
             {
                 "focus_point": request.focus_point,
                 "content_type": request.content_type,
-                "result_summary": result.get("summary", ""),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "metadata": request.metadata
             }
         )
         
-        return {
-            "contextual_understanding": result.get("summary", ""),
-            "metadata": result.get("metadata", {}),
-            "timestamp": datetime.now().isoformat()
-        }
+        return result
     except Exception as e:
-        logger.error(f"Error in contextual understanding: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error in contextual understanding: {str(e)}"
+        # Log the error with context
+        error_context = {
+            "focus_point": request.focus_point,
+            "content_type": request.content_type,
+            "content_length": len(request.content)
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.INTEGRATION,
+            context=error_context,
+            save_to_file=True
         )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise IntegrationError("Error processing contextual understanding", details=error_context, cause=e)
+        raise
 
 # Parallel research endpoints
 @app.post("/api/v1/research/parallel", dependencies=[Depends(verify_api_key)])
-async def start_parallel_research(
-    request: ParallelResearchRequest,
-    background_tasks: BackgroundTasks
-):
+async def create_parallel_research(request: ResearchRequest):
     """
-    Start multiple parallel research flows.
+    Create a parallel research task.
     
     Args:
-        request: Parallel research request
-        background_tasks: Background tasks
+        request: Research request
         
     Returns:
-        Dict[str, Any]: Parallel research response
+        Dict[str, Any]: Research task creation result
     """
-    logger.info(f"Starting {len(request.topics)} parallel research flows")
-    
     try:
-        # Get parallel research manager
+        # Get the parallel research manager
         manager = ParallelResearchManager.get_instance()
         
-        # Create a configuration from the request
-        config = None
-        if request.config:
-            config = Configuration(
-                search_api=SearchAPI(request.config.search_api),
-                research_mode=ResearchMode(request.config.research_mode),
-                max_search_depth=request.config.max_search_depth,
-                number_of_queries=request.config.number_of_queries,
-                report_structure=request.config.report_structure or None,
-                visualization_enabled=request.config.visualization_enabled
-            )
+        # Create the research configuration
+        config = Configuration(
+            mode=request.config.mode if request.config else ResearchMode.COMPREHENSIVE,
+            search_api=request.config.search_api if request.config else SearchAPI.SERPAPI,
+            max_iterations=request.config.max_iterations if request.config else 5,
+            max_search_results_per_query=request.config.max_search_results_per_query if request.config else 5,
+            max_documents=request.config.max_documents if request.config else 10,
+            max_tokens_per_document=request.config.max_tokens_per_document if request.config else 2000,
+            max_tokens_total=request.config.max_tokens_total if request.config else 20000,
+            include_images=request.config.include_images if request.config else False,
+            include_videos=request.config.include_videos if request.config else False,
+            include_news=request.config.include_news if request.config else True,
+            include_scholarly=request.config.include_scholarly if request.config else True,
+            max_depth=request.config.max_depth if request.config else 2,
+            follow_links=request.config.follow_links if request.config else True,
+            custom_params=request.config.custom_params if request.config else {}
+        )
         
-        # Create flows for each topic
-        flow_ids = []
-        for topic in request.topics:
-            try:
-                flow_id = manager.create_flow(
-                    topic=topic,
-                    config=config,
-                    metadata=request.metadata
-                )
-                flow_ids.append(flow_id)
-            except ValueError as e:
-                # If we hit the maximum number of concurrent flows, stop creating more
-                logger.warning(f"Could not create flow for topic '{topic}': {e}")
-                break
+        # Create the research task
+        task_id = await manager.create_research_task(
+            topic=request.topic,
+            config=config,
+            use_multi_agent=request.use_multi_agent,
+            priority=request.priority,
+            tags=request.tags,
+            metadata=request.metadata
+        )
         
-        if not flow_ids:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Maximum number of concurrent flows reached"
-            )
-        
-        # Start the flows in the background
-        background_tasks.add_task(manager.start_all_pending_flows)
-        
-        # Create response
         return {
-            "flow_ids": flow_ids,
-            "status": "success",
-            "message": f"Started {len(flow_ids)} parallel research flows",
+            "task_id": task_id,
+            "message": "Research task created successfully",
             "timestamp": datetime.now().isoformat()
         }
-        
     except Exception as e:
-        logger.error(f"Error starting parallel research flows: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error starting parallel research flows: {str(e)}"
+        # Log the error with context
+        error_context = {
+            "topic": request.topic,
+            "use_multi_agent": request.use_multi_agent,
+            "priority": request.priority
+        }
+        
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.TASK,
+            context=error_context,
+            save_to_file=True
         )
+        
+        # Re-raise as a WiseflowError if it's not already one
+        if not isinstance(e, WiseflowError):
+            raise TaskError("Error creating research task", details=error_context, cause=e)
+        raise
 
 @app.post("/api/v1/research/parallel/continuous", dependencies=[Depends(verify_api_key)])
 async def start_continuous_research(
@@ -788,7 +1006,7 @@ async def get_research_flow(flow_id: str):
         )
 
 @app.post("/api/v1/research/parallel/{flow_id}/cancel", dependencies=[Depends(verify_api_key)])
-async def cancel_research_flow(flow_id: str):
+async def cancel_research(flow_id: str):
     """
     Cancel a specific research flow.
     
@@ -828,6 +1046,215 @@ async def cancel_research_flow(flow_id: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error cancelling research flow: {str(e)}"
         )
+
+@app.get("/api/v1/research/parallel/{research_id}", dependencies=[Depends(verify_api_key)])
+async def get_research_status(research_id: str):
+    """
+    Get the status of a research task.
+    
+    Args:
+        research_id: Research ID
+        
+    Returns:
+        Dict[str, Any]: Research status
+    """
+    try:
+        # Get the parallel research manager
+        manager = ParallelResearchManager.get_instance()
+        
+        # Get the research status
+        status = manager.get_research_status(research_id)
+        
+        if status is None:
+            raise NotFoundError(f"Research task with ID {research_id} not found")
+            
+        return status
+    except Exception as e:
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.TASK,
+            context={"research_id": research_id, "operation": "get_status"},
+            save_to_file=True
+        )
+        
+        if not isinstance(e, WiseflowError):
+            raise TaskError(f"Error getting research status for {research_id}", cause=e)
+        raise
+
+@app.get("/api/v1/research/parallel/{research_id}/result", dependencies=[Depends(verify_api_key)])
+async def get_research_result(research_id: str):
+    """
+    Get the result of a research task.
+    
+    Args:
+        research_id: Research ID
+        
+    Returns:
+        Dict[str, Any]: Research result
+    """
+    try:
+        # Get the parallel research manager
+        manager = ParallelResearchManager.get_instance()
+        
+        # Get the research result
+        result = manager.get_research_result(research_id)
+        
+        if result is None:
+            raise NotFoundError(f"Research result for ID {research_id} not found or not completed")
+            
+        return result
+    except Exception as e:
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.TASK,
+            context={"research_id": research_id, "operation": "get_result"},
+            save_to_file=True
+        )
+        
+        if not isinstance(e, WiseflowError):
+            raise TaskError(f"Error getting research result for {research_id}", cause=e)
+        raise
+
+@app.delete("/api/v1/research/parallel/{research_id}/cancel", dependencies=[Depends(verify_api_key)])
+async def cancel_research_task(research_id: str):
+    """
+    Cancel a research task.
+    
+    Args:
+        research_id: Research ID
+        
+    Returns:
+        Dict[str, Any]: Cancellation result
+    """
+    try:
+        # Get the parallel research manager
+        manager = ParallelResearchManager.get_instance()
+        
+        # Cancel the research task
+        success = await manager.cancel_research(research_id)
+        
+        if not success:
+            raise NotFoundError(f"Research task with ID {research_id} not found or already completed")
+            
+        return {
+            "research_id": research_id,
+            "message": "Research task cancelled successfully",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        report_error(
+            e,
+            severity=ErrorSeverity.ERROR,
+            category=ErrorCategory.TASK,
+            context={"research_id": research_id, "operation": "cancel"},
+            save_to_file=True
+        )
+        
+        if not isinstance(e, WiseflowError):
+            raise TaskError(f"Error cancelling research task {research_id}", cause=e)
+        raise
+
+class ContentProcessorManager:
+    """Manager for content processors."""
+    
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        """Get the singleton instance."""
+        if cls._instance is None:
+            cls._instance = ContentProcessorManager()
+        return cls._instance
+    
+    def __init__(self):
+        """Initialize the content processor manager."""
+        self.processor = SpecializedPromptProcessor(
+            default_max_tokens=1000,
+        )
+    
+    @with_error_handling(
+        error_types=[Exception],
+        severity=ErrorSeverity.ERROR,
+        category=ErrorCategory.APPLICATION
+    )
+    @with_retry(
+        max_retries=3,
+        initial_backoff=1.0,
+        backoff_multiplier=2.0,
+        max_backoff=30.0,
+        jitter=True,
+        retryable_exceptions=[ConnectionError, TimeoutError, asyncio.TimeoutError]
+    )
+    async def process_content(
+        self,
+        content: str,
+        focus_point: str,
+        explanation: Optional[str] = None,
+        content_type: str = CONTENT_TYPE_TEXT,
+        use_multi_step_reasoning: bool = False,
+        references: Optional[Union[str, List[str]]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Process content using specialized prompting strategies."""
+        try:
+            result = await self.processor.process(
+                content=content,
+                focus_point=focus_point,
+                explanation=explanation,
+                content_type=content_type,
+                use_multi_step_reasoning=use_multi_step_reasoning,
+                references=references,
+                metadata=metadata
+            )
+            return result
+        except Exception as e:
+            logger.error(f"Error processing content: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing content: {str(e)}"
+            )
+
+    @with_error_handling(
+        error_types=[Exception],
+        severity=ErrorSeverity.ERROR,
+        category=ErrorCategory.APPLICATION
+    )
+    @with_retry(
+        max_retries=3,
+        initial_backoff=1.0,
+        backoff_multiplier=2.0,
+        max_backoff=30.0,
+        jitter=True,
+        retryable_exceptions=[ConnectionError, TimeoutError, asyncio.TimeoutError]
+    )
+    async def batch_process(
+        self,
+        items: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None,
+        use_multi_step_reasoning: bool = False,
+        max_concurrency: int = 5,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Process multiple items concurrently."""
+        try:
+            results = await self.processor.batch_process(
+                items=items,
+                focus_point=focus_point,
+                explanation=explanation,
+                use_multi_step_reasoning=use_multi_step_reasoning,
+                max_concurrency=max_concurrency,
+                metadata=metadata
+            )
+            return results
+        except Exception as e:
+            logger.error(f"Error batch processing content: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error batch processing content: {str(e)}"
+            )
 
 if __name__ == "__main__":
     # Run the FastAPI app with uvicorn
