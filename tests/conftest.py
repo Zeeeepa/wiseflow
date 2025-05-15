@@ -1,186 +1,114 @@
 """
-Pytest configuration file with common fixtures.
+Common fixtures for WiseFlow tests.
 """
 
-import os
-import sys
-import asyncio
 import pytest
-from unittest.mock import MagicMock, patch
-from fastapi.testclient import TestClient
+import asyncio
+from unittest.mock import MagicMock, patch, AsyncMock
 
-# Add the parent directory to the path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Import application components
-from api_server import app as api_app
-from dashboard.main import app as dashboard_app
-from core.event_system import (
-    EventType, Event, subscribe, unsubscribe, unsubscribe_by_source,
-    publish, publish_sync, get_history, clear_history, enable, disable,
-    is_enabled, set_propagate_exceptions, event_bus
-)
-from core.llms.litellm_wrapper import LiteLLMWrapper
-from core.llms.openai_wrapper import OpenAIWrapper
-from core.plugins.loader import PluginLoader
-from core.knowledge.graph import KnowledgeGraph
+from core.plugins.connectors.research.parallel_manager import ParallelResearchManager
+from core.task_management.task_manager import TaskManager
 
 
 @pytest.fixture
-def api_client():
-    """
-    Create a FastAPI TestClient for the API server.
-    """
-    return TestClient(api_app)
-
-
-@pytest.fixture
-def dashboard_client():
-    """
-    Create a FastAPI TestClient for the dashboard.
-    """
-    return TestClient(dashboard_app)
-
-
-@pytest.fixture
-def mock_llm():
-    """
-    Create a mock LLM wrapper.
-    """
-    mock = MagicMock()
-    mock.generate.return_value = "Mock LLM response"
-    mock.generate_async.return_value = "Mock async LLM response"
-    return mock
-
-
-@pytest.fixture
-def mock_openai_wrapper():
-    """
-    Create a mock OpenAI wrapper.
-    """
-    with patch("core.llms.openai_wrapper.OpenAIWrapper") as mock:
-        instance = mock.return_value
-        instance.generate.return_value = "Mock OpenAI response"
-        instance.generate_async.return_value = "Mock async OpenAI response"
-        yield instance
-
-
-@pytest.fixture
-def mock_litellm_wrapper():
-    """
-    Create a mock LiteLLM wrapper.
-    """
-    with patch("core.llms.litellm_wrapper.LiteLLMWrapper") as mock:
-        instance = mock.return_value
-        instance.generate.return_value = "Mock LiteLLM response"
-        instance.generate_async.return_value = "Mock async LiteLLM response"
-        yield instance
-
-
-@pytest.fixture
-def event_system():
-    """
-    Set up and tear down the event system for testing.
-    """
-    # Enable the event bus
-    enable()
+def reset_singletons():
+    """Reset singleton instances for testing."""
+    # Reset ParallelResearchManager singleton
+    ParallelResearchManager._instance = None
+    ParallelResearchManager._initialized = False
     
-    # Clear event history
-    clear_history()
-    
-    # Reset propagate exceptions
-    set_propagate_exceptions(False)
-    
-    # Clear subscribers
-    with event_bus._lock:
-        event_bus._subscribers = {}
-        event_bus._register_built_in_subscribers()
-    
-    yield event_bus
-    
-    # Clean up
-    disable()
-    clear_history()
-
-
-@pytest.fixture
-def sample_event():
-    """
-    Create a sample event for testing.
-    """
-    return Event(EventType.SYSTEM_STARTUP, {"version": "1.0.0"}, "test")
-
-
-@pytest.fixture
-def knowledge_graph():
-    """
-    Create a sample knowledge graph for testing.
-    """
-    return KnowledgeGraph()
-
-
-@pytest.fixture
-def plugin_loader():
-    """
-    Create a plugin loader for testing.
-    """
-    return PluginLoader()
-
-
-@pytest.fixture
-def mock_webhook_manager():
-    """
-    Create a mock webhook manager.
-    """
-    with patch("core.export.webhook.WebhookManager") as mock:
-        instance = mock.return_value
-        instance.register_webhook.return_value = "mock-webhook-id"
-        instance.trigger_webhook.return_value = {"status": "success"}
-        yield instance
-
-
-@pytest.fixture
-def test_env_vars():
-    """
-    Set up test environment variables.
-    """
-    original_env = os.environ.copy()
-    
-    # Set test environment variables
-    os.environ["WISEFLOW_API_KEY"] = "test-api-key"
-    os.environ["PRIMARY_MODEL"] = "test-model"
-    os.environ["API_HOST"] = "localhost"
-    os.environ["API_PORT"] = "8000"
-    os.environ["API_RELOAD"] = "false"
+    # Reset TaskManager singleton
+    TaskManager._instance = None
+    TaskManager._initialized = False
     
     yield
     
-    # Restore original environment variables
-    os.environ.clear()
-    os.environ.update(original_env)
+    # Reset again after the test
+    ParallelResearchManager._instance = None
+    ParallelResearchManager._initialized = False
+    TaskManager._instance = None
+    TaskManager._initialized = False
 
 
 @pytest.fixture
-def mock_async_response():
-    """
-    Create a mock async response.
-    """
-    class MockResponse:
-        def __init__(self, data, status=200):
-            self.data = data
-            self.status = status
-        
-        async def json(self):
-            return self.data
-        
-        async def text(self):
-            return str(self.data)
-        
-        async def __aenter__(self):
-            return self
-        
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            pass
-    
-    return MockResponse
+def mock_task_manager():
+    """Create a mock task manager."""
+    mock_manager = MagicMock()
+    mock_manager.register_task.return_value = "task_id_1"
+    mock_manager.execute_task = AsyncMock(return_value={"result": "success"})
+    mock_manager.get_task_progress.return_value = (0.5, "Halfway done")
+    return mock_manager
+
+
+@pytest.fixture
+def mock_parallel_manager():
+    """Create a mock parallel research manager."""
+    mock_manager = MagicMock()
+    mock_manager.create_research_task = AsyncMock(return_value="task_id_1")
+    mock_manager.get_research_status.return_value = {
+        "research_id": "research_123",
+        "task_id": "task_id_1",
+        "topic": "Test Research",
+        "status": "pending",
+        "use_multi_agent": False,
+        "created_at": "2023-01-01T00:00:00",
+        "progress": 0.0,
+        "progress_message": ""
+    }
+    mock_manager.get_all_research.return_value = [
+        {
+            "research_id": "research_123",
+            "task_id": "task_id_1",
+            "topic": "Test Research",
+            "status": "pending",
+            "use_multi_agent": False,
+            "created_at": "2023-01-01T00:00:00",
+            "progress": 0.0,
+            "progress_message": ""
+        }
+    ]
+    mock_manager.get_active_research.return_value = [
+        {
+            "research_id": "research_123",
+            "task_id": "task_id_1",
+            "topic": "Test Research",
+            "status": "pending",
+            "use_multi_agent": False,
+            "created_at": "2023-01-01T00:00:00",
+            "progress": 0.0,
+            "progress_message": ""
+        }
+    ]
+    mock_manager.get_metrics.return_value = {
+        "max_concurrent_research": 3,
+        "active_slots": 3,
+        "total_research": 1,
+        "pending_research": 1,
+        "running_research": 0,
+        "completed_research": 0,
+        "failed_research": 0,
+        "cancelled_research": 0
+    }
+    mock_manager.get_research_result.return_value = {
+        "sections": MagicMock(sections=[{"title": "Section 1", "content": "Content 1"}]),
+        "metadata": {"key": "value"}
+    }
+    mock_manager.cancel_research = AsyncMock(return_value=True)
+    mock_manager.task_manager = MagicMock()
+    return mock_manager
+
+
+@pytest.fixture
+def mock_event_system():
+    """Mock the event system."""
+    with patch("core.event_system.publish_sync") as mock_publish:
+        yield mock_publish
+
+
+@pytest.fixture
+def event_loop():
+    """Create an event loop for testing."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
