@@ -137,10 +137,8 @@ from core.references import (
 )
 
 # Task management
-from core.task_manager import (
-    TaskManager,
-    TaskDependencyError
-)
+from core.task_management.task_manager import TaskManager
+from core.task_management.exceptions import TaskDependencyError
 from core.thread_pool_manager import (
     ThreadPoolManager,
     TaskPriority,

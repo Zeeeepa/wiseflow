@@ -24,7 +24,8 @@ from datetime import datetime
 
 from core.utils.general_utils import get_logger
 from core.utils.pb_api import PbTalker
-from core.task import AsyncTaskManager, Task, create_task_id
+from core.task_management.task_manager import TaskManager
+from core.task_management.task import Task, create_task_id
 from core.plugins import PluginManager
 from core.plugins.connectors import ConnectorBase, DataItem
 from core.plugins.processors import ProcessorBase, ProcessedData
@@ -39,7 +40,7 @@ pb = PbTalker(wiseflow_logger)
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
 
 # Initialize the task manager
-task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
+task_manager = TaskManager(max_workers=MAX_CONCURRENT_TASKS)
 
 # Initialize the plugin manager
 plugin_manager = PluginManager(plugins_dir="core")

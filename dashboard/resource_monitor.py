@@ -15,7 +15,8 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for
 # Add the parent directory to the path so we can import the core modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.task import TaskManager, AsyncTaskManager
+from core.task_management.task_manager import TaskManager
+from core.task_management.task import Task, create_task_id
 from core.task.monitor import ResourceMonitor, monitor_resources, check_task_status, detect_idle_tasks, shutdown_task, configure_shutdown_settings
 from core.utils.pb_api import PbTalker
 
@@ -213,7 +214,7 @@ def run_dashboard(host='0.0.0.0', port=5000, debug=False):
 
 if __name__ == '__main__':
     # This is for standalone testing
-    from core.task import TaskManager
+    from core.task_management.task_manager import TaskManager
     
     # Create a dummy task manager
     test_task_manager = TaskManager(max_workers=4)

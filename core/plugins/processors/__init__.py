@@ -3,7 +3,7 @@ Processor plugins for Wiseflow.
 """
 
 from core.plugins.base import ProcessorPlugin, plugin_manager
-from core.plugins.processors.text_processor import TextProcessor
+from core.plugins.processors.text import TextProcessor
 
 # Register processors
 plugin_manager.register_processor('text', TextProcessor)

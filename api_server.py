@@ -1,36 +1,27 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-API Server for WiseFlow.
+API server for Wiseflow.
 
-This module provides a FastAPI server for WiseFlow, enabling integration with other systems.
+This module provides a FastAPI server for interacting with Wiseflow.
 """
 
 import os
+import sys
 import json
 import logging
 import asyncio
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
+from pathlib import Path
 
-import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Depends
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from core.export.webhook import WebhookManager, get_webhook_manager
-from core.llms.advanced.specialized_prompting import (
-    SpecializedPromptProcessor,
-    CONTENT_TYPE_TEXT,
-    CONTENT_TYPE_HTML,
-    CONTENT_TYPE_MARKDOWN,
-    CONTENT_TYPE_CODE,
-    CONTENT_TYPE_ACADEMIC,
-    CONTENT_TYPE_VIDEO,
-    CONTENT_TYPE_SOCIAL,
-    TASK_EXTRACTION,
-    TASK_REASONING
-)
+# Add the current directory to the path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Set up logging
 logging.basicConfig(
@@ -41,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="WiseFlow API",
-    description="API for WiseFlow - LLM-based information extraction and analysis",
+    title="Wiseflow API",
+    description="API for Wiseflow - LLM-based information extraction and analysis",
     version="0.1.0",
 )
 
@@ -54,9 +45,6 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
-
-# Initialize webhook manager
-webhook_manager = get_webhook_manager()
 
 # API key authentication
 API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
@@ -237,7 +225,7 @@ class ContentProcessorManager:
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {"message": "Welcome to WiseFlow API", "version": "0.1.0"}
+    return {"message": "Welcome to Wiseflow API", "version": "0.1.0"}
 
 @app.get("/health")
 async def health_check():

@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 # Add the current directory to the path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from core.task import TaskManager, Task, create_task_id
+from core.task_management.task_manager import TaskManager
+from core.task_management.task import Task, create_task_id
 from core.task.monitor import initialize_resource_monitor, monitor_resources
 
 def sample_task(duration=10, result="Task completed"):

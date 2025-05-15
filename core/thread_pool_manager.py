@@ -9,13 +9,13 @@ import time
 import asyncio
 import logging
 import uuid
-import concurrent.futures
 from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, Future
 from enum import Enum, auto
 
 from core.config import config
-from core.task_manager import TaskPriority, TaskStatus
+from core.task_management.task import TaskPriority, TaskStatus
 from core.event_system import (
     EventType, Event, publish_sync,
     create_task_event
@@ -46,9 +46,9 @@ class ThreadPoolManager:
             return
             
         self.max_workers = config.get("MAX_THREAD_WORKERS", os.cpu_count() or 4)
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self.tasks: Dict[str, Dict[str, Any]] = {}
-        self.futures: Dict[str, concurrent.futures.Future] = {}
+        self.futures: Dict[str, Future] = {}
         
         self._initialized = True
         
@@ -123,7 +123,7 @@ class ThreadPoolManager:
         logger.info(f"Task submitted to thread pool: {task_id} ({name})")
         return task_id
     
-    def _handle_completion(self, task_id: str, future: concurrent.futures.Future):
+    def _handle_completion(self, task_id: str, future: Future):
         """
         Handle task completion.
         
@@ -333,4 +333,3 @@ class ThreadPoolManager:
 
 # Create a singleton instance
 thread_pool_manager = ThreadPoolManager()
-
