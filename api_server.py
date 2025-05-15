@@ -9,14 +9,17 @@ import os
 import json
 import logging
 import asyncio
-from typing import Dict, List, Any, Optional, Union
-from datetime import datetime
+import time
+from typing import Dict, List, Any, Optional, Union, Callable
+from datetime import datetime, timedelta
+from functools import wraps
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from core.export.webhook import WebhookManager, get_webhook_manager
 from core.llms.advanced.specialized_prompting import (
@@ -46,20 +49,94 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Add CORS middleware
+# Define allowed origins for CORS
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+
+# Add CORS middleware with restricted origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
 # Initialize webhook manager
 webhook_manager = get_webhook_manager()
 
 # API key authentication
-API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
+API_KEY = os.environ.get("WISEFLOW_API_KEY")
+if not API_KEY:
+    logger.warning("No API key set in environment variables. Using a random key for development.")
+    import secrets
+    API_KEY = secrets.token_hex(16)
+
+# Rate limiting configuration
+RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() == "true"
+RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "100"))
+RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "3600"))  # 1 hour in seconds
+
+# In-memory rate limiting store (for demonstration)
+# In production, use Redis or another distributed cache
+rate_limit_store = {}
+
+# Rate limiting middleware
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if not RATE_LIMIT_ENABLED:
+            return await call_next(request)
+        
+        # Get client identifier (API key or IP address)
+        api_key = request.headers.get("X-API-Key")
+        client_id = api_key if api_key else request.client.host
+        
+        # Check if client has exceeded rate limit
+        current_time = time.time()
+        client_requests = rate_limit_store.get(client_id, [])
+        
+        # Remove expired timestamps
+        client_requests = [ts for ts in client_requests if ts > current_time - RATE_LIMIT_WINDOW]
+        
+        # Check if rate limit exceeded
+        if len(client_requests) >= RATE_LIMIT_REQUESTS:
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={
+                    "status": "error",
+                    "message": "Rate limit exceeded",
+                    "code": 429,
+                    "retry_after": int(min(client_requests) + RATE_LIMIT_WINDOW - current_time)
+                }
+            )
+        
+        # Add current request timestamp
+        client_requests.append(current_time)
+        rate_limit_store[client_id] = client_requests
+        
+        # Add rate limit headers to response
+        response = await call_next(request)
+        response.headers["X-Rate-Limit-Limit"] = str(RATE_LIMIT_REQUESTS)
+        response.headers["X-Rate-Limit-Remaining"] = str(RATE_LIMIT_REQUESTS - len(client_requests))
+        response.headers["X-Rate-Limit-Reset"] = str(int(current_time + RATE_LIMIT_WINDOW))
+        
+        return response
+
+# Add rate limiting middleware
+if RATE_LIMIT_ENABLED:
+    app.add_middleware(RateLimitMiddleware)
+
+# Standardized error response model
+class ErrorResponse(BaseModel):
+    status: str = "error"
+    message: str
+    code: int
+    details: Optional[Dict[str, Any]] = None
+
+# Standardized success response model
+class SuccessResponse(BaseModel):
+    status: str = "success"
+    data: Any
+    message: Optional[str] = None
 
 def verify_api_key(x_api_key: str = Header(None)):
     """
@@ -81,6 +158,36 @@ def verify_api_key(x_api_key: str = Header(None)):
         )
     return True
 
+# Error handler decorator
+def handle_errors(func: Callable):
+    """
+    Decorator to handle errors and return standardized error responses.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except HTTPException as e:
+            return JSONResponse(
+                status_code=e.status_code,
+                content=ErrorResponse(
+                    message=str(e.detail),
+                    code=e.status_code,
+                    details=getattr(e, "details", None)
+                ).dict()
+            )
+        except Exception as e:
+            logger.exception(f"Unexpected error: {str(e)}")
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content=ErrorResponse(
+                    message="An unexpected error occurred",
+                    code=500,
+                    details={"error": str(e)} if os.environ.get("DEBUG", "false").lower() == "true" else None
+                ).dict()
+            )
+    return wrapper
+
 # Pydantic models for request/response validation
 class ContentRequest(BaseModel):
     """Request model for content processing."""
@@ -91,6 +198,17 @@ class ContentRequest(BaseModel):
     use_multi_step_reasoning: bool = Field(False, description="Whether to use multi-step reasoning")
     references: Optional[str] = Field(None, description="Optional reference materials for contextual understanding")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    
+    @validator('content_type')
+    def validate_content_type(cls, v):
+        valid_types = [
+            CONTENT_TYPE_TEXT, CONTENT_TYPE_HTML, CONTENT_TYPE_MARKDOWN,
+            CONTENT_TYPE_CODE, CONTENT_TYPE_ACADEMIC, CONTENT_TYPE_VIDEO,
+            CONTENT_TYPE_SOCIAL
+        ]
+        if v not in valid_types:
+            raise ValueError(f"content_type must be one of {valid_types}")
+        return v
 
 class BatchContentRequest(BaseModel):
     """Request model for batch content processing."""
@@ -99,6 +217,20 @@ class BatchContentRequest(BaseModel):
     explanation: str = Field("", description="Additional explanation or context")
     use_multi_step_reasoning: bool = Field(False, description="Whether to use multi-step reasoning")
     max_concurrency: int = Field(5, description="Maximum number of concurrent processes")
+    
+    @validator('max_concurrency')
+    def validate_max_concurrency(cls, v):
+        if v < 1 or v > 20:
+            raise ValueError("max_concurrency must be between 1 and 20")
+        return v
+    
+    @validator('items')
+    def validate_items(cls, v):
+        if not v:
+            raise ValueError("items cannot be empty")
+        if len(v) > 100:
+            raise ValueError("Maximum of 100 items allowed per batch")
+        return v
 
 class WebhookRequest(BaseModel):
     """Request model for webhook operations."""
@@ -107,6 +239,18 @@ class WebhookRequest(BaseModel):
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers to include in webhook requests")
     secret: Optional[str] = Field(None, description="Optional secret for signing webhook payloads")
     description: Optional[str] = Field(None, description="Optional description of the webhook")
+    
+    @validator('endpoint')
+    def validate_endpoint(cls, v):
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError("endpoint must be a valid HTTP or HTTPS URL")
+        return v
+    
+    @validator('events')
+    def validate_events(cls, v):
+        if not v:
+            raise ValueError("events cannot be empty")
+        return v
 
 class WebhookUpdateRequest(BaseModel):
     """Request model for webhook update operations."""
@@ -115,6 +259,12 @@ class WebhookUpdateRequest(BaseModel):
     headers: Optional[Dict[str, str]] = Field(None, description="New headers")
     secret: Optional[str] = Field(None, description="New secret")
     description: Optional[str] = Field(None, description="New description")
+    
+    @validator('endpoint')
+    def validate_endpoint(cls, v):
+        if v is not None and not v.startswith(('http://', 'https://')):
+            raise ValueError("endpoint must be a valid HTTP or HTTPS URL")
+        return v
 
 class WebhookTriggerRequest(BaseModel):
     """Request model for webhook trigger operations."""
@@ -235,18 +385,27 @@ class ContentProcessorManager:
 
 # API routes
 @app.get("/")
+@handle_errors
 async def root():
     """Root endpoint."""
-    return {"message": "Welcome to WiseFlow API", "version": "0.1.0"}
+    return SuccessResponse(
+        data={"version": "0.1.0"},
+        message="Welcome to WiseFlow API"
+    ).dict()
 
 @app.get("/health")
+@handle_errors
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return SuccessResponse(
+        data={"timestamp": datetime.now().isoformat()},
+        message="healthy"
+    ).dict()
 
 # Content processing endpoints
 @app.post("/api/v1/process", dependencies=[Depends(verify_api_key)])
-async def process_content(request: ContentRequest):
+@handle_errors
+async def process_content(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Process content using specialized prompting strategies.
     
@@ -270,7 +429,6 @@ async def process_content(request: ContentRequest):
         )
         
         # Trigger webhook for content processing
-        background_tasks = BackgroundTasks()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "content.processed",
@@ -282,7 +440,10 @@ async def process_content(request: ContentRequest):
             }
         )
         
-        return result
+        return SuccessResponse(
+            data=result,
+            message="Content processed successfully"
+        ).dict()
     except Exception as e:
         logger.error(f"Error processing content: {str(e)}")
         raise HTTPException(
@@ -291,6 +452,7 @@ async def process_content(request: ContentRequest):
         )
 
 @app.post("/api/v1/batch-process", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def batch_process_content(request: BatchContentRequest):
     """
     Process multiple items concurrently.
@@ -324,7 +486,10 @@ async def batch_process_content(request: BatchContentRequest):
             }
         )
         
-        return results
+        return SuccessResponse(
+            data=results,
+            message="Batch content processed successfully"
+        ).dict()
     except Exception as e:
         logger.error(f"Error batch processing content: {str(e)}")
         raise HTTPException(
@@ -334,6 +499,7 @@ async def batch_process_content(request: BatchContentRequest):
 
 # Webhook management endpoints
 @app.get("/api/v1/webhooks", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def list_webhooks():
     """
     List all registered webhooks.
@@ -344,6 +510,7 @@ async def list_webhooks():
     return webhook_manager.list_webhooks()
 
 @app.post("/api/v1/webhooks", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def register_webhook(request: WebhookRequest):
     """
     Register a new webhook.
@@ -369,6 +536,7 @@ async def register_webhook(request: WebhookRequest):
     }
 
 @app.get("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def get_webhook(webhook_id: str):
     """
     Get a webhook by ID.
@@ -396,6 +564,7 @@ async def get_webhook(webhook_id: str):
     }
 
 @app.put("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def update_webhook(webhook_id: str, request: WebhookUpdateRequest):
     """
     Update an existing webhook.
@@ -432,6 +601,7 @@ async def update_webhook(webhook_id: str, request: WebhookUpdateRequest):
     }
 
 @app.delete("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def delete_webhook(webhook_id: str):
     """
     Delete a webhook.
@@ -460,6 +630,7 @@ async def delete_webhook(webhook_id: str):
     }
 
 @app.post("/api/v1/webhooks/trigger", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def trigger_webhook(request: WebhookTriggerRequest):
     """
     Trigger webhooks for a specific event.
@@ -485,6 +656,7 @@ async def trigger_webhook(request: WebhookTriggerRequest):
 
 # Integration endpoints
 @app.post("/api/v1/integration/extract", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def extract_information(request: ContentRequest):
     """
     Extract information from content.
@@ -536,6 +708,7 @@ async def extract_information(request: ContentRequest):
         )
 
 @app.post("/api/v1/integration/analyze", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def analyze_content(request: ContentRequest):
     """
     Analyze content using multi-step reasoning.
@@ -588,6 +761,7 @@ async def analyze_content(request: ContentRequest):
         )
 
 @app.post("/api/v1/integration/contextual", dependencies=[Depends(verify_api_key)])
+@handle_errors
 async def contextual_understanding(request: ContentRequest):
     """
     Process content with contextual understanding.
