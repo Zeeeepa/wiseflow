@@ -4,6 +4,7 @@
 Enhanced task runner for Wiseflow.
 
 This module provides an enhanced task runner with concurrency and plugin support.
+This version uses the unified task management system.
 """
 
 from pathlib import Path
@@ -29,6 +30,14 @@ from core.plugins import PluginManager
 from core.plugins.connectors import ConnectorBase, DataItem
 from core.plugins.processors import ProcessorBase, ProcessedData
 
+# Import the unified task management system
+from core.task_management import (
+    Task as UnifiedTask,
+    TaskManager as UnifiedTaskManager,
+    TaskPriority,
+    TaskStatus
+)
+
 # Configure logging
 wiseflow_logger = get_logger('wiseflow')
 
@@ -38,8 +47,14 @@ pb = PbTalker(wiseflow_logger)
 # Configure the maximum number of concurrent tasks
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
 
-# Initialize the task manager
-task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
+# Initialize the legacy task manager for backward compatibility
+legacy_task_manager = AsyncTaskManager(max_workers=MAX_CONCURRENT_TASKS)
+
+# Initialize the unified task manager
+unified_task_manager = UnifiedTaskManager(
+    max_concurrent_tasks=MAX_CONCURRENT_TASKS,
+    default_executor_type="async"
+)
 
 # Initialize the plugin manager
 plugin_manager = PluginManager(plugins_dir="core")
@@ -231,6 +246,9 @@ async def schedule_task():
     # Load plugins
     await load_plugins()
     
+    # Start the unified task manager
+    await unified_task_manager.start()
+    
     while True:
         wiseflow_logger.info("Checking for active focus points...")
         
@@ -239,45 +257,91 @@ async def schedule_task():
         sites_record = pb.read('sites')
         
         for focus in focus_points:
-            # Check if there's already a task running for this focus point
-            existing_tasks = task_manager.get_tasks_by_focus(focus["id"])
-            active_tasks = [t for t in existing_tasks if t.status in ["pending", "running"]]
-            
-            if active_tasks:
-                wiseflow_logger.info(f"Focus point {focus.get('focuspoint', '')} already has active tasks")
-                continue
+            focus_id = focus["id"]
             
             # Get sites for this focus point
             sites = [_record for _record in sites_record if _record['id'] in focus.get('sites', [])]
             
-            # Create a new task
-            task_id = create_task_id()
+            if not sites:
+                wiseflow_logger.warning(f"No sites found for focus point: {focus.get('focuspoint', '')}")
+                continue
+            
+            # Create a task ID
+            task_id = str(uuid.uuid4())
             auto_shutdown = focus.get("auto_shutdown", False)
             
-            task = Task(
-                task_id=task_id,
-                focus_id=focus["id"],
-                function=process_focus_point,
-                args=(focus, sites),
-                auto_shutdown=auto_shutdown
-            )
-            
-            # Submit the task
-            wiseflow_logger.info(f"Submitting task {task_id} for focus point: {focus.get('focuspoint', '')}")
-            await task_manager.submit_task(task)
-            
-            # Save task to database
-            task_record = {
-                "task_id": task_id,
-                "focus_id": focus["id"],
-                "status": "pending",
-                "auto_shutdown": auto_shutdown,
-                "metadata": json.dumps({
-                    "focus_point": focus.get("focuspoint", ""),
-                    "sites_count": len(sites)
-                })
-            }
-            pb.add(collection_name='tasks', body=task_record)
+            try:
+                # Register with the unified task manager
+                wiseflow_logger.info(f"Registering task for focus point: {focus.get('focuspoint', '')}")
+                
+                unified_task_id = unified_task_manager.register_task(
+                    name=f"Focus: {focus.get('focuspoint', '')}",
+                    func=process_focus_point,
+                    focus,
+                    sites,
+                    task_id=task_id,
+                    priority=TaskPriority.HIGH,
+                    max_retries=2,
+                    retry_delay=60.0,
+                    description=f"Process focus point: {focus.get('focuspoint', '')}",
+                    tags=["focus_point", focus_id],
+                    metadata={
+                        "focus_id": focus_id,
+                        "auto_shutdown": auto_shutdown,
+                        "sites_count": len(sites)
+                    }
+                )
+                
+                # Save task to database
+                task_record = {
+                    "task_id": unified_task_id,
+                    "focus_id": focus_id,
+                    "status": "pending",
+                    "auto_shutdown": auto_shutdown,
+                    "metadata": json.dumps({
+                        "focus_point": focus.get("focuspoint", ""),
+                        "sites_count": len(sites),
+                        "task_manager": "unified"
+                    })
+                }
+                pb.add(collection_name='tasks', body=task_record)
+                
+                # Execute the task
+                asyncio.create_task(unified_task_manager.execute_task(unified_task_id, wait=False))
+                wiseflow_logger.info(f"Executing task {unified_task_id} for focus point: {focus.get('focuspoint', '')}")
+                
+            except Exception as e:
+                wiseflow_logger.error(f"Error registering task with unified task manager: {e}")
+                
+                # Fall back to legacy task manager
+                wiseflow_logger.info(f"Falling back to legacy task manager for focus point: {focus.get('focuspoint', '')}")
+                
+                # Create a legacy task
+                legacy_task = Task(
+                    task_id=task_id,
+                    focus_id=focus_id,
+                    function=process_focus_point,
+                    args=(focus, sites),
+                    auto_shutdown=auto_shutdown
+                )
+                
+                # Submit the task
+                wiseflow_logger.info(f"Submitting task {task_id} for focus point: {focus.get('focuspoint', '')}")
+                await legacy_task_manager.submit_task(legacy_task)
+                
+                # Save task to database
+                task_record = {
+                    "task_id": task_id,
+                    "focus_id": focus_id,
+                    "status": "pending",
+                    "auto_shutdown": auto_shutdown,
+                    "metadata": json.dumps({
+                        "focus_point": focus.get("focuspoint", ""),
+                        "sites_count": len(sites),
+                        "task_manager": "legacy"
+                    })
+                }
+                pb.add(collection_name='tasks', body=task_record)
         
         # Wait before checking again
         wiseflow_logger.info("Waiting for 60 seconds before checking for new tasks...")
@@ -286,14 +350,16 @@ async def schedule_task():
 async def main():
     """Main entry point."""
     try:
-        wiseflow_logger.info("Starting Wiseflow with concurrent task management...")
+        wiseflow_logger.info("Starting Wiseflow with unified task management system...")
         await schedule_task()
     except KeyboardInterrupt:
         wiseflow_logger.info("Shutting down...")
-        await task_manager.shutdown()
+        await legacy_task_manager.shutdown()
+        await unified_task_manager.stop()
     except Exception as e:
         wiseflow_logger.error(f"Error in main loop: {e}")
-        await task_manager.shutdown()
+        await legacy_task_manager.shutdown()
+        await unified_task_manager.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())

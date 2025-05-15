@@ -2,6 +2,7 @@
 Thread pool manager for WiseFlow.
 
 This module provides a thread pool manager for executing tasks concurrently.
+This is a compatibility layer that delegates to the unified task management system.
 """
 
 import os
@@ -22,6 +23,14 @@ from core.event_system import (
 )
 from core.utils.error_handling import handle_exceptions, TaskError
 
+# Import the unified task management system
+from core.task_management import (
+    Task as UnifiedTask,
+    TaskManager as UnifiedTaskManager,
+    TaskPriority as UnifiedTaskPriority,
+    TaskStatus as UnifiedTaskStatus
+)
+
 logger = logging.getLogger(__name__)
 
 class ThreadPoolManager:
@@ -29,6 +38,7 @@ class ThreadPoolManager:
     Thread pool manager for WiseFlow.
     
     This class provides a thread pool for executing CPU-bound tasks concurrently.
+    This is a compatibility class that delegates to the unified task management system.
     """
     
     _instance = None
@@ -46,9 +56,14 @@ class ThreadPoolManager:
             return
             
         self.max_workers = config.get("MAX_THREAD_WORKERS", os.cpu_count() or 4)
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
         self.tasks: Dict[str, Dict[str, Any]] = {}
         self.futures: Dict[str, concurrent.futures.Future] = {}
+        
+        # Initialize the unified task manager
+        self.unified_manager = UnifiedTaskManager(
+            max_concurrent_tasks=self.max_workers,
+            default_executor_type="thread_pool"
+        )
         
         self._initialized = True
         
@@ -79,7 +94,28 @@ class ThreadPoolManager:
         """
         task_id = task_id or str(uuid.uuid4())
         
-        # Create task
+        # Map priority to unified priority
+        unified_priority = UnifiedTaskPriority.NORMAL
+        if priority == TaskPriority.LOW:
+            unified_priority = UnifiedTaskPriority.LOW
+        elif priority == TaskPriority.HIGH:
+            unified_priority = UnifiedTaskPriority.HIGH
+        elif priority == TaskPriority.CRITICAL:
+            unified_priority = UnifiedTaskPriority.CRITICAL
+        
+        # Register with unified task manager
+        unified_task_id = self.unified_manager.register_task(
+            name=name,
+            func=func,
+            *args,
+            task_id=task_id,
+            kwargs=kwargs,
+            priority=unified_priority,
+            executor_type="thread_pool",
+            metadata={"legacy_task": True}
+        )
+        
+        # Create task record for compatibility
         task = {
             "task_id": task_id,
             "name": name,
@@ -98,16 +134,8 @@ class ThreadPoolManager:
         # Add task to manager
         self.tasks[task_id] = task
         
-        # Submit task to executor
-        future = self.executor.submit(func, *args, **kwargs)
-        self.futures[task_id] = future
-        
-        # Update task status
-        task["status"] = TaskStatus.RUNNING
-        task["started_at"] = datetime.now()
-        
-        # Add callback to handle completion
-        future.add_done_callback(lambda f: self._handle_completion(task_id, f))
+        # Execute the task
+        asyncio.create_task(self._execute_task_async(task_id))
         
         # Publish event
         try:
@@ -123,22 +151,25 @@ class ThreadPoolManager:
         logger.info(f"Task submitted to thread pool: {task_id} ({name})")
         return task_id
     
-    def _handle_completion(self, task_id: str, future: concurrent.futures.Future):
+    async def _execute_task_async(self, task_id: str):
         """
-        Handle task completion.
+        Execute a task asynchronously.
         
         Args:
-            task_id: ID of the task
-            future: Future object for the task
+            task_id: ID of the task to execute
         """
         task = self.tasks.get(task_id)
         if not task:
-            logger.warning(f"Task {task_id} not found")
+            logger.warning(f"Task {task_id} not found for execution")
             return
         
+        # Update task status
+        task["status"] = TaskStatus.RUNNING
+        task["started_at"] = datetime.now()
+        
         try:
-            # Get result
-            result = future.result()
+            # Execute the task
+            result = await self.unified_manager.execute_task(task_id, wait=True)
             
             # Update task
             task["status"] = TaskStatus.COMPLETED
@@ -157,6 +188,7 @@ class ThreadPoolManager:
                 logger.warning(f"Failed to publish task completed event: {e}")
             
             logger.info(f"Task completed: {task_id} ({task['name']})")
+            
         except Exception as e:
             # Update task
             task["status"] = TaskStatus.FAILED
@@ -186,33 +218,32 @@ class ThreadPoolManager:
         Returns:
             True if the task was cancelled, False otherwise
         """
-        future = self.futures.get(task_id)
-        if not future:
+        task = self.tasks.get(task_id)
+        if not task:
             logger.warning(f"Task {task_id} not found")
             return False
         
-        # Cancel future
-        result = future.cancel()
+        # Delegate to unified task manager
+        asyncio.create_task(self._cancel_task_async(task_id))
+        return True
+    
+    async def _cancel_task_async(self, task_id: str) -> bool:
+        """
+        Cancel a task asynchronously.
+        
+        Args:
+            task_id: ID of the task to cancel
+            
+        Returns:
+            True if the task was cancelled, False otherwise
+        """
+        result = await self.unified_manager.cancel_task(task_id)
         
         if result:
-            # Update task
             task = self.tasks.get(task_id)
             if task:
                 task["status"] = TaskStatus.CANCELLED
                 task["completed_at"] = datetime.now()
-            
-            # Publish event
-            try:
-                event = create_task_event(
-                    EventType.TASK_FAILED,
-                    task_id,
-                    {"name": task["name"] if task else "Unknown", "reason": "cancelled"}
-                )
-                publish_sync(event)
-            except Exception as e:
-                logger.warning(f"Failed to publish task cancelled event: {e}")
-            
-            logger.info(f"Task cancelled: {task_id}")
         
         return result
     
@@ -328,9 +359,29 @@ class ThreadPoolManager:
         Args:
             wait: Whether to wait for pending tasks to complete
         """
-        self.executor.shutdown(wait=wait)
+        # Delegate to unified task manager
+        asyncio.create_task(self.unified_manager.stop())
         logger.info(f"Thread pool manager shutdown (wait={wait})")
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get metrics for the thread pool.
+        
+        Returns:
+            Dictionary of metrics
+        """
+        return {
+            "worker_count": self.max_workers,
+            "active_workers": len(self.get_running_tasks()),
+            "queue_size": len(self.get_pending_tasks()),
+            "completed_tasks": len(self.get_completed_tasks()),
+            "failed_tasks": len(self.get_failed_tasks()),
+            "cancelled_tasks": len(self.get_cancelled_tasks())
+        }
+    
+    def stop(self):
+        """Stop the thread pool manager."""
+        self.shutdown(wait=False)
 
 # Create a singleton instance
 thread_pool_manager = ThreadPoolManager()
-

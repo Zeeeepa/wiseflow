@@ -9,6 +9,8 @@ import signal
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Callable, Awaitable
+import uuid
+import psutil
 
 # Import from centralized imports module
 from core.imports import (
@@ -41,6 +43,15 @@ from core.initialize import (
 # Import process functions
 from core.general_process import main_process, generate_insights_for_focus
 
+# Import the unified task management system
+from core.task_management import (
+    Task as UnifiedTask,
+    TaskManager as UnifiedTaskManager,
+    TaskPriority as UnifiedTaskPriority,
+    TaskStatus as UnifiedTaskStatus,
+    TaskDependencyError as UnifiedTaskDependencyError
+)
+
 # Configure the maximum number of concurrent tasks
 MAX_CONCURRENT_TASKS = config.get("MAX_CONCURRENT_TASKS", 4)
 
@@ -57,10 +68,16 @@ resource_monitor = ResourceMonitor(
 )
 
 # Initialize thread pool manager
-thread_pool = ThreadPoolManager(max_workers=MAX_CONCURRENT_TASKS)
+thread_pool = ThreadPoolManager()
 
-# Initialize task manager
-task_manager = TaskManager()
+# Initialize legacy task manager
+legacy_task_manager = TaskManager()
+
+# Initialize the unified task manager
+unified_task_manager = UnifiedTaskManager(
+    max_concurrent_tasks=MAX_CONCURRENT_TASKS,
+    default_executor_type="async"
+)
 
 # Initialize PocketBase client
 pb = PbTalker(wiseflow_logger)
@@ -156,24 +173,8 @@ async def generate_insights(focus):
             wiseflow_logger.warning(f"No information found for focus point: {focus.get('focuspoint', '')}")
             return
         
-        # Prepare content for processing
-        content = ""
-        for info in infos:
-            content += f"Source: {info.get('url', 'Unknown')}\n"
-            content += f"Title: {info.get('url_title', 'Unknown')}\n"
-            content += f"Content: {info.get('content', '')}\n\n"
-        
-        # Process with advanced LLM
-        result = await advanced_llm_processor.multi_step_reasoning(
-            content=content,
-            focus_point=focus.get("focuspoint", ""),
-            explanation=focus.get("explanation", ""),
-            content_type="text/plain",
-            metadata={
-                "focus_id": focus["id"],
-                "source_count": len(infos)
-            }
-        )
+        # Process with the unified task management system
+        result = await generate_insights_for_focus(focus, infos)
         
         # Save the insights
         insights_record = {
@@ -219,22 +220,20 @@ async def check_auto_shutdown():
     while True:
         await asyncio.sleep(AUTO_SHUTDOWN_CHECK_INTERVAL)
         
-        active_tasks = [task for task in legacy_task_manager.get_all_tasks() if task.status in ["pending", "running"]]
+        # Check for active tasks in both legacy and unified task managers
+        legacy_active_tasks = len(legacy_task_manager.get_running_tasks())
+        unified_metrics = unified_task_manager.get_metrics()
+        unified_active_tasks = unified_metrics['running_tasks']
         
-        # Also check the new task manager
-        task_metrics = task_manager.thread_pool.get_metrics()
-        active_new_tasks = task_metrics['pending_tasks'] + task_metrics['running_tasks']
-        
-        if not active_tasks and active_new_tasks == 0:
-            
+        if legacy_active_tasks == 0 and unified_active_tasks == 0:
             # Check if the system has been idle for too long
             idle_time = (datetime.now() - last_activity_time).total_seconds()
             
             if idle_time > AUTO_SHUTDOWN_IDLE_TIME:
                 wiseflow_logger.info(f"System has been idle for {idle_time} seconds. Auto-shutting down...")
                 
-                await legacy_task_manager.shutdown()
-                task_manager.stop()
+                await legacy_task_manager.stop()
+                await unified_task_manager.stop()
                 thread_pool.stop()
                 resource_monitor.stop()
                 
@@ -257,70 +256,71 @@ async def monitor_resource_usage():
             # Get CPU usage
             cpu_percent = process.cpu_percent(interval=1)
             
+            # Get task metrics
             thread_metrics = thread_pool.get_metrics()
+            unified_metrics = unified_task_manager.get_metrics()
+            
             wiseflow_logger.info(
                 f"Resource usage - Memory: {memory_usage_mb:.2f} MB, CPU: {cpu_percent:.2f}%, "
-                f"Workers: {thread_metrics['worker_count']}/{thread_pool.max_workers}, "
+                f"Workers: {thread_metrics['worker_count']}, "
                 f"Active: {thread_metrics['active_workers']}, "
-                f"Queue: {thread_metrics['queue_size']}"
+                f"Queue: {thread_metrics['queue_size']}, "
+                f"Unified Tasks: {unified_metrics['total_tasks']}, "
+                f"Unified Running: {unified_metrics['running_tasks']}"
             )
             
             # Check if memory usage is too high
             if memory_usage_mb > 1000:  # More than 1GB
                 wiseflow_logger.warning(f"Memory usage is very high: {memory_usage_mb:.2f} MB")
-                
-                # Reduce thread pool size
-                if thread_pool.get_metrics()['worker_count'] > thread_pool.min_workers:
-                    wiseflow_logger.info("Reducing thread pool size due to high memory usage")
-                    # The thread pool will automatically adjust based on resource monitor alerts
-            
         except Exception as e:
             wiseflow_logger.error(f"Error monitoring resource usage: {e}")
 
 async def schedule_task():
-    """Schedule and manage data mining tasks."""
+    """Schedule and manage tasks."""
     counter = 0
+    
     while True:
         try:
-            wiseflow_logger.info('Task execute loop started')
+            wiseflow_logger.info(f"Task scheduling loop iteration {counter}")
             
             # Get active focus points
             focus_points = pb.read('focus_points', filter='activated=True')
             sites_record = pb.read('sites')
             
             for focus in focus_points:
-                # Check if there's already a task running for this focus point
-                existing_tasks = legacy_task_manager.get_tasks_by_focus(focus["id"])
-                active_tasks = [t for t in existing_tasks if t.status in ["pending", "running"]]
-                
-                # Also check the new task manager
-                new_active_tasks = task_manager.get_tasks_by_tag(focus["id"])
-                
-                if active_tasks or new_active_tasks:
-                    wiseflow_logger.info(f"Focus point {focus.get('focuspoint', '')} already has active tasks")
-                    continue
+                focus_id = focus.get('id')
+                auto_shutdown = focus.get("auto_shutdown", False)
                 
                 # Get sites for this focus point
                 sites = [_record for _record in sites_record if _record['id'] in focus.get('sites', [])]
                 
-                # Create a new task
-                task_id = create_task_id()
-                focus_id = focus["id"]
-                auto_shutdown = focus.get("auto_shutdown", False)
+                if not sites:
+                    wiseflow_logger.warning(f"No sites found for focus point: {focus.get('focuspoint', '')}")
+                    continue
                 
-                # Register the task with the new task manager
+                # Create a task ID
+                task_id = str(uuid.uuid4())
+                
+                # Use the unified task management system
                 try:
-                    # Register the main data collection task
-                    main_task_id = task_manager.register_task(
-                        name=f"Focus: {focus.get('focuspoint', '')}",
+                    wiseflow_logger.info(f"Registering task for focus point: {focus.get('focuspoint', '')}")
+                    
+                    # Register the main task
+                    main_task_id = unified_task_manager.register_task(
+                        name=f"Data Collection: {focus.get('focuspoint', '')}",
                         func=process_focus_task_wrapper,
                         focus,
                         sites,
-                        priority=TaskPriority.HIGH,
+                        priority=UnifiedTaskPriority.HIGH,
                         max_retries=2,
                         retry_delay=60.0,
                         description=f"Data collection for focus point: {focus.get('focuspoint', '')}",
-                        tags=["data_collection", focus_id]
+                        tags=["data_collection", focus_id],
+                        metadata={
+                            "focus_id": focus_id,
+                            "auto_shutdown": auto_shutdown,
+                            "sites_count": len(sites)
+                        }
                     )
                     
                     # Save task to database
@@ -332,7 +332,7 @@ async def schedule_task():
                         "metadata": {
                             "focus_point": focus.get("focuspoint", ""),
                             "sites_count": len(sites),
-                            "task_manager": "new"
+                            "task_manager": "unified"
                         }
                     }
                     
@@ -341,22 +341,27 @@ async def schedule_task():
                     wiseflow_logger.info(f"Registered task {main_task_id} for focus point: {focus.get('focuspoint', '')}")
                     
                     # Execute the task
-                    execution_id = task_manager.execute_task(main_task_id, wait=False)
-                    wiseflow_logger.info(f"Executing task {main_task_id} with execution ID {execution_id}")
+                    asyncio.create_task(unified_task_manager.execute_task(main_task_id, wait=False))
+                    wiseflow_logger.info(f"Executing task {main_task_id}")
                     
                     # Register insight generation if enabled
                     if focus.get("generate_insights", False):
                         # Register the insight task with a dependency on the main task
-                        insight_task_id = task_manager.register_task(
+                        insight_task_id = unified_task_manager.register_task(
                             name=f"Insights: {focus.get('focuspoint', '')}",
                             func=generate_insights_wrapper,
                             focus,
                             dependencies=[main_task_id],
-                            priority=TaskPriority.NORMAL,
+                            priority=UnifiedTaskPriority.NORMAL,
                             max_retries=1,
                             retry_delay=120.0,
                             description=f"Insight generation for focus point: {focus.get('focuspoint', '')}",
-                            tags=["insight_generation", focus_id]
+                            tags=["insight_generation", focus_id],
+                            metadata={
+                                "focus_id": focus_id,
+                                "auto_shutdown": auto_shutdown,
+                                "parent_task_id": main_task_id
+                            }
                         )
                         
                         # Save insight task to database
@@ -369,19 +374,15 @@ async def schedule_task():
                             "metadata": {
                                 "focus_point": focus.get("focuspoint", ""),
                                 "parent_task_id": main_task_id,
-                                "task_manager": "new",
+                                "task_manager": "unified",
                                 "depends_on": main_task_id
                             }
                         }
                         pb.add(collection_name='tasks', body=insight_task_record)
                         
                         wiseflow_logger.info(f"Registered insight task {insight_task_id} for focus point: {focus.get('focuspoint', '')}")
-                        
-                        # Execute the insight task (dependencies will be respected)
-                        execution_id = task_manager.execute_task(insight_task_id, wait=False)
-                        wiseflow_logger.info(f"Scheduled insight task {insight_task_id} with execution ID {execution_id}")
                     
-                except TaskDependencyError as e:
+                except UnifiedTaskDependencyError as e:
                     wiseflow_logger.error(f"Task dependency error for focus point {focus.get('focuspoint', '')}: {e}")
                 except Exception as e:
                     wiseflow_logger.error(f"Error registering task for focus point {focus.get('focuspoint', '')}: {e}")
@@ -416,7 +417,7 @@ async def schedule_task():
                     
                     # Schedule insight generation if enabled
                     if focus.get("generate_insights", False):
-                        insight_task_id = create_task_id()
+                        insight_task_id = str(uuid.uuid4())
                         insight_task = Task(
                             task_id=insight_task_id,
                             focus_id=focus_id,
@@ -470,11 +471,11 @@ def handle_shutdown_signal(signum, frame):
     """Handle shutdown signals gracefully."""
     wiseflow_logger.info(f"Received signal {signum}. Shutting down gracefully...")
     
-    # Create a task to shut down the task manager
+    # Create a task to shut down the task managers
     loop = asyncio.get_event_loop()
     async def shutdown_all():
-        await legacy_task_manager.shutdown()
-        task_manager.stop()
+        await legacy_task_manager.stop()
+        await unified_task_manager.stop()
         thread_pool.stop()
         resource_monitor.stop()
     
@@ -489,10 +490,16 @@ async def main():
         signal.signal(signal.SIGINT, handle_shutdown_signal)
         signal.signal(signal.SIGTERM, handle_shutdown_signal)
         
-        wiseflow_logger.info("Starting Wiseflow with robust concurrency management system...")
+        wiseflow_logger.info("Starting Wiseflow with unified task management system...")
         wiseflow_logger.info(f"Resource monitor started with CPU threshold: {resource_monitor.thresholds['cpu']}%, Memory threshold: {resource_monitor.thresholds['memory']}%")
-        wiseflow_logger.info(f"Thread pool started with {thread_pool.min_workers}-{thread_pool.max_workers} workers")
-        wiseflow_logger.info(f"Task manager started with dependency and scheduling support")
+        wiseflow_logger.info(f"Thread pool started with {thread_pool.get_metrics()['worker_count']} workers")
+        wiseflow_logger.info(f"Unified task manager started with {MAX_CONCURRENT_TASKS} max concurrent tasks")
+        
+        # Start the unified task manager
+        await unified_task_manager.start()
+        
+        # Start the legacy task manager (for backward compatibility)
+        await legacy_task_manager.start()
                 
         # Start the auto-shutdown checker if enabled
         if AUTO_SHUTDOWN_ENABLED:
@@ -506,14 +513,14 @@ async def main():
         await schedule_task()
     except KeyboardInterrupt:
         wiseflow_logger.info("Shutting down...")
-        await legacy_task_manager.shutdown()
-        task_manager.stop()
+        await legacy_task_manager.stop()
+        await unified_task_manager.stop()
         thread_pool.stop()
         resource_monitor.stop()
     except Exception as e:
         wiseflow_logger.error(f"Error in main loop: {e}")
-        await legacy_task_manager.shutdown()
-        task_manager.stop()
+        await legacy_task_manager.stop()
+        await unified_task_manager.stop()
         thread_pool.stop()
         resource_monitor.stop()
         

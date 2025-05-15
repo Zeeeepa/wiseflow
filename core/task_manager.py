@@ -2,6 +2,7 @@
 Task management module for WiseFlow.
 
 This module provides functionality to manage and execute tasks asynchronously.
+This is a compatibility layer that delegates to the unified task management system.
 """
 
 import os
@@ -19,6 +20,15 @@ from core.event_system import (
     create_task_event
 )
 from core.utils.error_handling import handle_exceptions, TaskError
+
+# Import the unified task management system
+from core.task_management import (
+    Task as UnifiedTask,
+    TaskManager as UnifiedTaskManager,
+    TaskPriority as UnifiedTaskPriority,
+    TaskStatus as UnifiedTaskStatus,
+    TaskDependencyError as UnifiedTaskDependencyError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +61,7 @@ class Task:
     Task class for the task manager.
     
     This class represents a task that can be executed asynchronously.
+    This is a compatibility class that wraps the unified Task class.
     """
     
     def __init__(
@@ -127,6 +138,7 @@ class TaskManager:
     Task manager for WiseFlow.
     
     This class provides functionality to manage and execute tasks asynchronously.
+    This is a compatibility class that delegates to the unified task management system.
     """
     
     _instance = None
@@ -154,6 +166,12 @@ class TaskManager:
         self.task_lock = asyncio.Lock()
         self.is_running = False
         self.scheduler_task = None
+        
+        # Initialize the unified task manager
+        self.unified_manager = UnifiedTaskManager(
+            max_concurrent_tasks=self.max_concurrent_tasks,
+            default_executor_type="async"
+        )
         
         self._initialized = True
         
@@ -192,65 +210,54 @@ class TaskManager:
         """
         task_id = task_id or create_task_id()
         
-        # Check if dependencies exist
-        if dependencies:
-            for dep_id in dependencies:
-                if dep_id not in self.tasks:
-                    raise TaskDependencyError(f"Dependency {dep_id} does not exist")
+        # Map priority to unified priority
+        unified_priority = UnifiedTaskPriority.NORMAL
+        if priority == TaskPriority.LOW:
+            unified_priority = UnifiedTaskPriority.LOW
+        elif priority == TaskPriority.HIGH:
+            unified_priority = UnifiedTaskPriority.HIGH
+        elif priority == TaskPriority.CRITICAL:
+            unified_priority = UnifiedTaskPriority.CRITICAL
         
-        # Create task
-        task = Task(
-            task_id=task_id,
-            name=name,
-            func=func,
-            args=args,
-            kwargs=kwargs or {},
-            priority=priority,
-            dependencies=dependencies or [],
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-            timeout=timeout
-        )
-        
-        # Add task to manager
-        self.tasks[task_id] = task
-        
-def cancel_task(self, task_id: str) -> bool:
-    task = self.get_task(task_id)
-    if not task:
-        logger.warning(f"Task {task_id} not found")
-        return False
-        
-    try:
-        # Cleanup any allocated resources
-        self._cleanup_task_resources(task)
-        
-        # Cancel the task
-        if task.status == TaskStatus.RUNNING:
-            task.task_object.cancel()
-            self.running_tasks.discard(task_id)
-        elif task.status == TaskStatus.PENDING:
-            self.pending_tasks.discard(task_id)
-        elif task.status == TaskStatus.WAITING:
-            self.waiting_tasks.discard(task_id)
+        try:
+            # Register with unified task manager
+            unified_task_id = self.unified_manager.register_task(
+                name=name,
+                func=func,
+                *args,
+                task_id=task_id,
+                kwargs=kwargs,
+                priority=unified_priority,
+                dependencies=dependencies,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                timeout=timeout,
+                metadata={"legacy_task": True}
+            )
             
-        task.status = TaskStatus.CANCELLED
-        task.completed_at = datetime.now()
-        self.cancelled_tasks.add(task_id)
-        
-        # Publish event
-        event = create_task_event(
-            EventType.TASK_CANCELLED,
-            task_id,
-            {"name": task.name, "reason": "cancelled by user"}
-        )
-        publish_sync(event)
-        
-        return True
-    except Exception as e:
-        logger.error(f"Error cancelling task {task_id}: {e}")
-        return False
-        return task_id
+            # Create legacy task object for compatibility
+            task = Task(
+                task_id=task_id,
+                name=name,
+                func=func,
+                args=args,
+                kwargs=kwargs,
+                priority=priority,
+                dependencies=dependencies,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                timeout=timeout
+            )
+            
+            # Add task to manager
+            self.tasks[task_id] = task
+            
+            logger.info(f"Task registered: {task_id} ({name})")
+            return task_id
+            
+        except UnifiedTaskDependencyError as e:
+            # Convert to legacy exception
+            raise TaskDependencyError(str(e))
     
     def cancel_task(self, task_id: str) -> bool:
         """
@@ -267,36 +274,33 @@ def cancel_task(self, task_id: str) -> bool:
             logger.warning(f"Task {task_id} not found")
             return False
         
-        if task.status == TaskStatus.RUNNING:
-            if task.task_object and not task.task_object.done():
-                task.task_object.cancel()
-            
-            self.running_tasks.discard(task_id)
-            self.cancelled_tasks.add(task_id)
-        elif task.status == TaskStatus.PENDING:
-            self.cancelled_tasks.add(task_id)
-        elif task.status == TaskStatus.WAITING:
-            self.waiting_tasks.discard(task_id)
-            self.cancelled_tasks.add(task_id)
-        else:
-            logger.warning(f"Cannot cancel task {task_id} with status {task.status}")
-            return False
-        
-        task.status = TaskStatus.CANCELLED
-        
-        # Publish event
-        try:
-            event = create_task_event(
-                EventType.TASK_FAILED,
-                task_id,
-                {"name": task.name, "reason": "cancelled"}
-            )
-            publish_sync(event)
-        except Exception as e:
-            logger.warning(f"Failed to publish task cancelled event: {e}")
-        
-        logger.info(f"Task cancelled: {task_id} ({task.name})")
+        # Delegate to unified task manager
+        asyncio.create_task(self._cancel_task_async(task_id))
         return True
+    
+    async def _cancel_task_async(self, task_id: str) -> bool:
+        """
+        Cancel a task asynchronously.
+        
+        Args:
+            task_id: ID of the task to cancel
+            
+        Returns:
+            True if the task was cancelled, False otherwise
+        """
+        result = await self.unified_manager.cancel_task(task_id)
+        
+        if result:
+            task = self.tasks.get(task_id)
+            if task:
+                task.status = TaskStatus.CANCELLED
+                task.completed_at = datetime.now()
+                
+                # Update task sets
+                self.running_tasks.discard(task_id)
+                self.cancelled_tasks.add(task_id)
+        
+        return result
     
     def get_task(self, task_id: str) -> Optional[Task]:
         """
@@ -320,8 +324,21 @@ def cancel_task(self, task_id: str) -> bool:
         Returns:
             Task status or None if task not found
         """
-        task = self.tasks.get(task_id)
-        return task.status if task else None
+        unified_status = self.unified_manager.get_task_status(task_id)
+        if unified_status is None:
+            return None
+        
+        # Map unified status to legacy status
+        status_map = {
+            UnifiedTaskStatus.PENDING: TaskStatus.PENDING,
+            UnifiedTaskStatus.RUNNING: TaskStatus.RUNNING,
+            UnifiedTaskStatus.COMPLETED: TaskStatus.COMPLETED,
+            UnifiedTaskStatus.FAILED: TaskStatus.FAILED,
+            UnifiedTaskStatus.CANCELLED: TaskStatus.CANCELLED,
+            UnifiedTaskStatus.WAITING: TaskStatus.WAITING
+        }
+        
+        return status_map.get(unified_status, TaskStatus.PENDING)
     
     def get_task_result(self, task_id: str) -> Any:
         """
@@ -333,8 +350,7 @@ def cancel_task(self, task_id: str) -> bool:
         Returns:
             Task result or None if task not found or not completed
         """
-        task = self.tasks.get(task_id)
-        return task.result if task and task.status == TaskStatus.COMPLETED else None
+        return self.unified_manager.get_task_result(task_id)
     
     def get_task_error(self, task_id: str) -> Optional[Exception]:
         """
@@ -346,8 +362,7 @@ def cancel_task(self, task_id: str) -> bool:
         Returns:
             Task error or None if task not found or not failed
         """
-        task = self.tasks.get(task_id)
-        return task.error if task and task.status == TaskStatus.FAILED else None
+        return self.unified_manager.get_task_error(task_id)
     
     def get_all_tasks(self) -> Dict[str, Task]:
         """
@@ -419,7 +434,10 @@ def cancel_task(self, task_id: str) -> bool:
             return
         
         self.is_running = True
-        self.scheduler_task = asyncio.create_task(self._scheduler())
+        
+        # Start the unified task manager
+        await self.unified_manager.start()
+        
         logger.info("Task manager started")
     
     async def stop(self):
@@ -429,212 +447,24 @@ def cancel_task(self, task_id: str) -> bool:
             return
         
         self.is_running = False
-        if self.scheduler_task:
-            self.scheduler_task.cancel()
-            try:
-                await self.scheduler_task
-            except asyncio.CancelledError:
-                pass
         
-        # Cancel all running tasks
-        for task_id in list(self.running_tasks):
-            self.cancel_task(task_id)
+        # Stop the unified task manager
+        await self.unified_manager.stop()
         
         logger.info("Task manager stopped")
     
-    async def _scheduler(self):
-        """Scheduler loop for the task manager."""
-        try:
-            while self.is_running:
-                await self._schedule_tasks()
-                await asyncio.sleep(0.1)  # Small delay to prevent CPU hogging
-        except asyncio.CancelledError:
-            logger.info("Task scheduler cancelled")
-        except Exception as e:
-            logger.error(f"Error in task scheduler: {e}")
-    
-    async def _schedule_tasks(self):
-        """Schedule tasks for execution."""
-        async with self.task_lock:
-            # Check if we can run more tasks
-            if len(self.running_tasks) >= self.max_concurrent_tasks:
-                return
-            
-            # Check for waiting tasks that can now run
-            for task_id in list(self.waiting_tasks):
-                task = self.tasks.get(task_id)
-                if not task:
-                    self.waiting_tasks.discard(task_id)
-                    continue
-                
-                # Check if all dependencies are completed
-                can_run = True
-                for dep_id in task.dependencies:
-                    dep_task = self.tasks.get(dep_id)
-                    if not dep_task or dep_task.status != TaskStatus.COMPLETED:
-                        can_run = False
-                        break
-                
-                if can_run:
-                    task.status = TaskStatus.PENDING
-                    self.waiting_tasks.discard(task_id)
-            
-            # Get pending tasks sorted by priority
-            pending_tasks = sorted(
-                [(task_id, task) for task_id, task in self.tasks.items() if task.status == TaskStatus.PENDING],
-                key=lambda x: x[1].priority.value,
-                reverse=True  # Higher priority first
-            )
-            
-            # Schedule tasks up to max_concurrent_tasks
-            for task_id, task in pending_tasks:
-                if len(self.running_tasks) >= self.max_concurrent_tasks:
-                    break
-                
-                # Start task
-                task.status = TaskStatus.RUNNING
-                task.started_at = datetime.now()
-                self.running_tasks.add(task_id)
-                
-                # Create task
-                task.task_object = asyncio.create_task(self._execute_task(task))
-                
-                # Publish event
-                try:
-                    event = create_task_event(
-                        EventType.TASK_STARTED,
-                        task_id,
-                        {"name": task.name}
-                    )
-                    publish_sync(event)
-                except Exception as e:
-                    logger.warning(f"Failed to publish task started event: {e}")
-                
-                logger.info(f"Task started: {task_id} ({task.name})")
-    
-    @handle_exceptions(default_message="Error executing task", log_error=True)
-    async def _execute_task(self, task: Task):
+    async def execute_task(self, task_id: str, wait: bool = True) -> Any:
         """
         Execute a task.
         
         Args:
-            task: Task to execute
-        """
-        try:
-            # Execute task with timeout if specified
-            if task.timeout:
-                task.result = await asyncio.wait_for(self._call_task_func(task), task.timeout)
-            else:
-                task.result = await self._call_task_func(task)
-            
-            # Mark task as completed
-            task.status = TaskStatus.COMPLETED
-            task.completed_at = datetime.now()
-            self.running_tasks.discard(task.task_id)
-            self.completed_tasks.add(task.task_id)
-            
-            # Publish event
-            try:
-                event = create_task_event(
-                    EventType.TASK_COMPLETED,
-                    task.task_id,
-                    {"name": task.name}
-                )
-                publish_sync(event)
-            except Exception as e:
-                logger.warning(f"Failed to publish task completed event: {e}")
-            
-            logger.info(f"Task completed: {task.task_id} ({task.name})")
-            
-            # Check for waiting tasks that depend on this task
-            for waiting_task_id in list(self.waiting_tasks):
-                waiting_task = self.tasks.get(waiting_task_id)
-                if not waiting_task:
-                    self.waiting_tasks.discard(waiting_task_id)
-                    continue
-                
-                if task.task_id in waiting_task.dependencies:
-                    # Check if all dependencies are completed
-                    can_run = True
-                    for dep_id in waiting_task.dependencies:
-                        dep_task = self.tasks.get(dep_id)
-                        if not dep_task or dep_task.status != TaskStatus.COMPLETED:
-                            can_run = False
-                            break
-                    
-                    if can_run:
-                        waiting_task.status = TaskStatus.PENDING
-                        self.waiting_tasks.discard(waiting_task_id)
-        except asyncio.TimeoutError:
-            # Handle timeout
-            task.error = asyncio.TimeoutError(f"Task timed out after {task.timeout} seconds")
-            await self._handle_task_error(task)
-        except asyncio.CancelledError:
-            # Handle cancellation
-            task.error = asyncio.CancelledError("Task was cancelled")
-            task.status = TaskStatus.CANCELLED
-            task.completed_at = datetime.now()
-            self.running_tasks.discard(task.task_id)
-            self.cancelled_tasks.add(task.task_id)
-            
-            logger.info(f"Task cancelled: {task.task_id} ({task.name})")
-        except Exception as e:
-            # Handle other errors
-            task.error = e
-            await self._handle_task_error(task)
-    
-    async def _call_task_func(self, task: Task) -> Any:
-        """
-        Call the task function.
-        
-        Args:
-            task: Task to execute
+            task_id: ID of the task to execute
+            wait: Whether to wait for the task to complete
             
         Returns:
-            Result of the task function
+            Task result if wait is True, otherwise None
         """
-        if asyncio.iscoroutinefunction(task.func):
-            return await task.func(*task.args, **task.kwargs)
-        else:
-            return task.func(*task.args, **task.kwargs)
-    
-    async def _handle_task_error(self, task: Task):
-        """
-        Handle a task error.
-        
-        Args:
-            task: Task that failed
-        """
-        # Check if we should retry
-        if task.retry_count < task.max_retries:
-            task.retry_count += 1
-            task.status = TaskStatus.PENDING
-            self.running_tasks.discard(task.task_id)
-            
-            logger.warning(f"Task {task.task_id} ({task.name}) failed, retrying ({task.retry_count}/{task.max_retries}): {task.error}")
-            
-            # Wait before retrying
-            await asyncio.sleep(task.retry_delay * (2 ** (task.retry_count - 1)))  # Exponential backoff
-        else:
-            # Mark task as failed
-            task.status = TaskStatus.FAILED
-            task.completed_at = datetime.now()
-            self.running_tasks.discard(task.task_id)
-            self.failed_tasks.add(task.task_id)
-            
-            # Publish event
-            try:
-                event = create_task_event(
-                    EventType.TASK_FAILED,
-                    task.task_id,
-                    {"name": task.name, "error": str(task.error)}
-                )
-                publish_sync(event)
-            except Exception as e:
-                logger.warning(f"Failed to publish task failed event: {e}")
-            
-            logger.error(f"Task failed: {task.task_id} ({task.name}): {task.error}")
+        return await self.unified_manager.execute_task(task_id, wait)
 
 # Create a singleton instance
 task_manager = TaskManager()
-
