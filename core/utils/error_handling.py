@@ -83,56 +83,233 @@ class WiseflowError(Exception):
         if log_level in ["error", "critical"]:
             with_context(**error_dict).debug(f"Traceback:\n{traceback.format_exc()}")
 
+# System Errors
 
-class ConnectionError(WiseflowError):
-    """Error raised when a connection fails."""
+class SystemError(WiseflowError):
+    """Base class for system-level errors."""
     pass
 
-
-class DataProcessingError(WiseflowError):
-    """Error raised when data processing fails."""
-    pass
-
-
-class ConfigurationError(WiseflowError):
+class ConfigurationError(SystemError):
     """Error raised when there is a configuration error."""
     pass
 
+class StartupError(SystemError):
+    """Error raised during system startup."""
+    pass
 
-class ResourceError(WiseflowError):
+class ShutdownError(SystemError):
+    """Error raised during system shutdown."""
+    pass
+
+class ResourceError(SystemError):
     """Error raised when there is a resource error."""
     pass
 
+class MemoryError(ResourceError):
+    """Error raised when there is insufficient memory."""
+    pass
+
+class DiskSpaceError(ResourceError):
+    """Error raised when there is insufficient disk space."""
+    pass
+
+class CPUError(ResourceError):
+    """Error raised when there is a CPU-related error."""
+    pass
+
+# Network Errors
+
+class NetworkError(WiseflowError):
+    """Base class for network-related errors."""
+    pass
+
+class ConnectionError(NetworkError):
+    """Error raised when a connection fails."""
+    pass
+
+class TimeoutError(NetworkError):
+    """Error raised when a network operation times out."""
+    pass
+
+class APIError(NetworkError):
+    """Error raised when an API call fails."""
+    pass
+
+class DNSError(NetworkError):
+    """Error raised when DNS resolution fails."""
+    pass
+
+# Data Errors
+
+class DataError(WiseflowError):
+    """Base class for data-related errors."""
+    pass
+
+class DataProcessingError(DataError):
+    """Error raised when data processing fails."""
+    pass
+
+class DataValidationError(DataError):
+    """Error raised when data validation fails."""
+    pass
+
+class DataCorruptionError(DataError):
+    """Error raised when data is corrupted."""
+    pass
+
+class DataNotFoundError(DataError):
+    """Error raised when data is not found."""
+    pass
+
+class DataConversionError(DataError):
+    """Error raised when data conversion fails."""
+    pass
+
+# Task Errors
 
 class TaskError(WiseflowError):
-    """Error raised when there is a task error."""
+    """Base class for task-related errors."""
     pass
 
+class TaskExecutionError(TaskError):
+    """Error raised when task execution fails."""
+    pass
+
+class TaskTimeoutError(TaskError):
+    """Error raised when a task times out."""
+    pass
+
+class TaskCancellationError(TaskError):
+    """Error raised when a task is cancelled."""
+    pass
+
+class TaskDependencyError(TaskError):
+    """Error raised when a task dependency fails."""
+    pass
+
+class TaskNotFoundError(TaskError):
+    """Error raised when a task is not found."""
+    pass
+
+# Plugin Errors
 
 class PluginError(WiseflowError):
-    """Error raised when there is a plugin error."""
+    """Base class for plugin-related errors."""
     pass
 
-
-class ValidationError(WiseflowError):
-    """Error raised when validation fails."""
+class PluginLoadError(PluginError):
+    """Error raised when a plugin fails to load."""
     pass
 
+class PluginExecutionError(PluginError):
+    """Error raised when a plugin execution fails."""
+    pass
 
-class AuthenticationError(WiseflowError):
+class PluginNotFoundError(PluginError):
+    """Error raised when a plugin is not found."""
+    pass
+
+class PluginConfigurationError(PluginError):
+    """Error raised when a plugin configuration is invalid."""
+    pass
+
+# Authentication and Authorization Errors
+
+class SecurityError(WiseflowError):
+    """Base class for security-related errors."""
+    pass
+
+class AuthenticationError(SecurityError):
     """Error raised when authentication fails."""
     pass
 
-
-class AuthorizationError(WiseflowError):
+class AuthorizationError(SecurityError):
     """Error raised when authorization fails."""
     pass
 
+class TokenError(SecurityError):
+    """Error raised when there is a token-related error."""
+    pass
+
+class PermissionError(SecurityError):
+    """Error raised when a permission check fails."""
+    pass
+
+# Resource Errors
 
 class NotFoundError(WiseflowError):
     """Error raised when a resource is not found."""
     pass
 
+class AlreadyExistsError(WiseflowError):
+    """Error raised when a resource already exists."""
+    pass
+
+class ValidationError(WiseflowError):
+    """Error raised when validation fails."""
+    pass
+
+# Parallel Processing Errors
+
+class ParallelError(WiseflowError):
+    """Base class for parallel processing errors."""
+    pass
+
+class ParallelExecutionError(ParallelError):
+    """Error raised when parallel execution fails."""
+    pass
+
+class ParallelTimeoutError(ParallelError):
+    """Error raised when parallel execution times out."""
+    pass
+
+class ParallelResourceError(ParallelError):
+    """Error raised when parallel execution runs out of resources."""
+    pass
+
+class ParallelCancellationError(ParallelError):
+    """Error raised when parallel execution is cancelled."""
+    pass
+
+# Recovery-related errors
+
+class RecoveryError(WiseflowError):
+    """Base class for recovery-related errors."""
+    pass
+
+class RecoveryTimeoutError(RecoveryError):
+    """Error raised when recovery times out."""
+    pass
+
+class RecoveryFailedError(RecoveryError):
+    """Error raised when recovery fails."""
+    pass
+
+class MaxRetriesExceededError(RecoveryError):
+    """Error raised when maximum retries are exceeded."""
+    pass
+
+# External Service Errors
+
+class ExternalServiceError(WiseflowError):
+    """Base class for external service errors."""
+    pass
+
+class DatabaseError(ExternalServiceError):
+    """Error raised when a database operation fails."""
+    pass
+
+class CacheError(ExternalServiceError):
+    """Error raised when a cache operation fails."""
+    pass
+
+class QueueError(ExternalServiceError):
+    """Error raised when a queue operation fails."""
+    pass
+
+class StorageError(ExternalServiceError):
+    """Error raised when a storage operation fails."""
+    pass
 
 def handle_exceptions(
     error_types: Optional[List[Type[Exception]]] = None,
