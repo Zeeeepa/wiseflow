@@ -1,143 +1,160 @@
 # Unified Task Management System
 
-This module provides a consolidated task management system for WiseFlow that supports different execution strategies and provides a consistent API for task creation, monitoring, and cancellation.
+This directory contains the unified task management system for WiseFlow, which consolidates multiple task management implementations into a single, consistent API.
 
 ## Overview
 
-The task management system consists of the following components:
+The unified task management system provides a flexible and robust way to manage and execute tasks with different execution strategies, dependencies, and error handling. It replaces the following legacy implementations:
 
-- **Task**: Represents a task that can be executed by the task manager.
-- **TaskManager**: Manages and executes tasks using different execution strategies.
-- **Executor**: Abstract base class for task executors.
-  - **SequentialExecutor**: Executes tasks sequentially in the current thread.
-  - **ThreadPoolExecutor**: Executes tasks concurrently using a thread pool.
-  - **AsyncExecutor**: Executes tasks concurrently using asyncio tasks.
-- **Exceptions**: Custom exceptions for the task management system.
+- `TaskManager` in `core/task_manager.py`
+- `ThreadPoolManager` in `core/thread_pool_manager.py`
+- Task handling in `core/run_task.py` and `core/run_task_new.py`
+- `AsyncTaskManager` in `core/task/`
+
+## Components
+
+The unified task management system consists of the following components:
+
+### Task
+
+The `Task` class represents a task that can be executed by the task manager. It includes:
+
+- Task metadata (ID, name, description, tags)
+- Execution parameters (function, arguments, priority, dependencies)
+- Retry configuration (max retries, retry delay)
+- Status tracking (status, result, error, progress)
+
+### TaskManager
+
+The `TaskManager` class manages and executes tasks. It provides:
+
+- Task registration and execution
+- Dependency management
+- Concurrency control
+- Progress tracking
+- Error handling and retries
+
+### Executors
+
+The system supports different execution strategies through executor classes:
+
+- `SequentialExecutor`: Executes tasks sequentially in the current thread
+- `ThreadPoolExecutor`: Executes tasks concurrently using a thread pool
+- `AsyncExecutor`: Executes tasks concurrently using asyncio tasks
+
+### Exceptions
+
+The system defines specific exception types for different error scenarios:
+
+- `TaskError`: Base class for all task-related errors
+- `TaskDependencyError`: Error when a task dependency cannot be satisfied
+- `TaskCancellationError`: Error when a task is cancelled
+- `TaskTimeoutError`: Error when a task times out
+- `TaskExecutionError`: Error when a task execution fails
 
 ## Usage
 
-### Creating and Executing Tasks
+Here's a basic example of how to use the unified task management system:
 
 ```python
 from core.task_management import TaskManager, TaskPriority
 
-# Get the task manager instance
-task_manager = TaskManager()
+# Create a task manager
+task_manager = TaskManager(max_concurrent_tasks=4)
 
 # Register a task
 task_id = task_manager.register_task(
     name="My Task",
     func=my_function,
     arg1, arg2,
-    kwargs={"param1": value1, "param2": value2},
+    kwargs={"param": "value"},
     priority=TaskPriority.HIGH,
-    dependencies=[other_task_id],
     max_retries=3,
     retry_delay=1.0,
     timeout=60.0,
     description="This is my task",
-    tags=["tag1", "tag2"],
-    metadata={"key1": "value1", "key2": "value2"},
-    executor_type="async"  # or "sequential" or "thread_pool"
+    tags=["tag1", "tag2"]
 )
 
 # Execute the task
-await task_manager.execute_task(task_id, wait=True)  # Wait for the task to complete
-# or
-await task_manager.execute_task(task_id, wait=False)  # Execute the task asynchronously
+result = await task_manager.execute_task(task_id)
 
-# Get the task result
-result = task_manager.get_task_result(task_id)
-
-# Get the task status
+# Get task status
 status = task_manager.get_task_status(task_id)
 
-# Cancel the task
-await task_manager.cancel_task(task_id)
+# Get task result
+result = task_manager.get_task_result(task_id)
+
+# Cancel a task
+cancelled = await task_manager.cancel_task(task_id)
 ```
 
-### Task Dependencies
+## Compatibility Layer
 
-Tasks can depend on other tasks. A task will only be executed when all its dependencies have completed successfully.
+For backward compatibility, the system includes compatibility layers for the legacy task management implementations:
+
+- `core/task_manager.py`: Provides a compatibility layer for the legacy `TaskManager`
+- `core/thread_pool_manager.py`: Provides a compatibility layer for the legacy `ThreadPoolManager`
+- `core/task/async_task_manager.py`: Provides a compatibility layer for the legacy `AsyncTaskManager`
+
+These compatibility layers delegate to the unified task management system while maintaining the legacy APIs.
+
+## Migration
+
+To migrate from the legacy task management implementations to the unified system:
+
+1. Import from the unified system instead of the legacy implementations:
 
 ```python
-# Register a task with dependencies
-task_id = task_manager.register_task(
-    name="Dependent Task",
-    func=my_function,
-    dependencies=[task_id1, task_id2]
-)
+# Legacy imports
+from core.task_manager import TaskManager, Task, TaskPriority, TaskStatus
+
+# New imports
+from core.task_management import TaskManager, Task, TaskPriority, TaskStatus
 ```
 
-### Task Progress
-
-Tasks can report their progress, which can be used to provide feedback to users.
+2. Update task registration and execution code to use the unified API:
 
 ```python
-# Update task progress
-task_manager.update_task_progress(task_id, progress=0.5, message="Halfway done")
-
-# Get task progress
-progress, message = task_manager.get_task_progress(task_id)
-```
-
-### Task Metrics
-
-The task manager provides metrics about the tasks it manages.
-
-```python
-# Get task manager metrics
-metrics = task_manager.get_metrics()
-```
-
-## Integration with Event System
-
-The task management system integrates with the event system to publish events when tasks are created, started, completed, failed, or cancelled.
-
-```python
-from core.event_system import subscribe
-
-# Subscribe to task events
-subscribe(EventType.TASK_CREATED, my_handler)
-subscribe(EventType.TASK_STARTED, my_handler)
-subscribe(EventType.TASK_COMPLETED, my_handler)
-subscribe(EventType.TASK_FAILED, my_handler)
-subscribe(EventType.TASK_CANCELLED, my_handler)
-subscribe(EventType.TASK_PROGRESS, my_handler)
-```
-
-## Error Handling
-
-The task management system provides comprehensive error handling, including retries for failed tasks and detailed error information.
-
-```python
-# Get task error
-error = task_manager.get_task_error(task_id)
-```
-
-## Concurrency Control
-
-The task manager limits the number of concurrent tasks to prevent overloading the system.
-
-```python
-# Create a task manager with a specific concurrency limit
-task_manager = TaskManager(max_concurrent_tasks=10)
-```
-
-## Executor Types
-
-The task management system supports different executor types:
-
-- **sequential**: Executes tasks sequentially in the current thread.
-- **thread_pool**: Executes tasks concurrently using a thread pool.
-- **async**: Executes tasks concurrently using asyncio tasks.
-
-```python
-# Register a task with a specific executor type
+# Legacy code
 task_id = task_manager.register_task(
     name="My Task",
     func=my_function,
-    executor_type="async"  # or "sequential" or "thread_pool"
+    args=(arg1, arg2),
+    kwargs={"param": "value"},
+    priority=TaskPriority.HIGH
+)
+
+# New code
+task_id = task_manager.register_task(
+    name="My Task",
+    func=my_function,
+    arg1, arg2,
+    kwargs={"param": "value"},
+    priority=TaskPriority.HIGH,
+    description="This is my task",
+    tags=["tag1", "tag2"]
 )
 ```
+
+3. Use the unified task manager's execute_task method:
+
+```python
+# Legacy code
+task_manager.start()
+
+# New code
+await task_manager.start()
+result = await task_manager.execute_task(task_id)
+```
+
+## Benefits
+
+The unified task management system provides several benefits over the legacy implementations:
+
+- **Consistency**: A single, consistent API for all task management needs
+- **Flexibility**: Support for different execution strategies (sequential, thread pool, async)
+- **Robustness**: Comprehensive error handling and retry mechanisms
+- **Scalability**: Better concurrency control and resource management
+- **Maintainability**: Cleaner code organization and separation of concerns
 
