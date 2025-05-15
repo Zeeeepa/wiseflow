@@ -21,6 +21,8 @@ from core.plugins.connectors.research.state import ReportState
 from core.plugins.connectors.research.graph_workflow import graph as research_graph
 from core.plugins.connectors.research.multi_agent import graph as multi_agent_graph
 from core.event_system import EventType, Event, publish_sync, create_task_event
+from core.resource_management import resource_manager, TaskPriority as ResourcePriority
+from core.cache_manager import cache_manager
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +57,17 @@ class ParallelResearchManager:
         self.active_research: Dict[str, Dict[str, Any]] = {}
         self.research_semaphore = asyncio.Semaphore(max_concurrent_research)
         
+        # Initialize resource manager if not already running
+        asyncio.create_task(self._ensure_resource_manager())
+        
         self._initialized = True
         
         logger.info(f"Parallel research manager initialized with {max_concurrent_research} max concurrent research tasks")
+    
+    async def _ensure_resource_manager(self):
+        """Ensure resource manager is running."""
+        if not resource_manager.is_running:
+            await resource_manager.start()
     
     async def create_research_task(
         self,
@@ -117,6 +127,16 @@ class ParallelResearchManager:
             "status": "pending"
         }
         
+        # Set resource priority based on task priority
+        if priority == TaskPriority.HIGH:
+            resource_manager.set_task_priority(task_id, ResourcePriority.HIGH)
+        elif priority == TaskPriority.CRITICAL:
+            resource_manager.set_task_priority(task_id, ResourcePriority.CRITICAL)
+        elif priority == TaskPriority.LOW:
+            resource_manager.set_task_priority(task_id, ResourcePriority.LOW)
+        else:
+            resource_manager.set_task_priority(task_id, ResourcePriority.NORMAL)
+        
         # Publish event
         try:
             event = create_task_event(
@@ -152,78 +172,123 @@ class ParallelResearchManager:
         Returns:
             Research results
         """
-        async with self.research_semaphore:
-            try:
-                # Update research status
-                self.active_research[research_id]["status"] = "running"
-                
-                # Publish event
-                try:
-                    event = create_task_event(
-                        EventType.RESEARCH_STARTED,
-                        self.active_research[research_id]["task_id"],
-                        {
-                            "research_id": research_id,
-                            "topic": state.topic,
-                            "use_multi_agent": use_multi_agent
-                        }
-                    )
-                    publish_sync(event)
-                except Exception as e:
-                    logger.warning(f"Failed to publish research started event: {e}")
-                
-                logger.info(f"Research task started: {research_id} ({state.topic})")
-                
-                # Select the appropriate graph
-                graph = multi_agent_graph if use_multi_agent else research_graph
-                
-                # Execute the research
-                result = await graph.ainvoke(state)
+        # Get task ID
+        task_id = self.active_research[research_id]["task_id"]
+        
+        # Try to acquire resources
+        if not await resource_manager.acquire_resources("research", task_id):
+            raise TaskError(f"Failed to acquire resources for research task: {research_id}")
+        
+        try:
+            # Check if we have cached results for this topic and configuration
+            cache_key = f"{state.topic}:{hash(state.config.to_json())}"
+            cached_result = await cache_manager.get("research_results", cache_key)
+            
+            if cached_result:
+                logger.info(f"Using cached results for research task: {research_id} ({state.topic})")
                 
                 # Update research status
                 self.active_research[research_id]["status"] = "completed"
-                self.active_research[research_id]["result"] = result
+                self.active_research[research_id]["result"] = cached_result
                 
                 # Publish event
                 try:
                     event = create_task_event(
                         EventType.RESEARCH_COMPLETED,
-                        self.active_research[research_id]["task_id"],
+                        task_id,
                         {
                             "research_id": research_id,
                             "topic": state.topic,
-                            "use_multi_agent": use_multi_agent
+                            "use_multi_agent": use_multi_agent,
+                            "cached": True
                         }
                     )
                     publish_sync(event)
                 except Exception as e:
                     logger.warning(f"Failed to publish research completed event: {e}")
                 
-                logger.info(f"Research task completed: {research_id} ({state.topic})")
-                return result
-            except Exception as e:
-                # Update research status
-                self.active_research[research_id]["status"] = "failed"
-                self.active_research[research_id]["error"] = str(e)
-                
-                # Publish event
+                logger.info(f"Research task completed (cached): {research_id} ({state.topic})")
+                return cached_result
+            
+            # Acquire semaphore for parallel execution control
+            async with self.research_semaphore:
                 try:
-                    event = create_task_event(
-                        EventType.RESEARCH_FAILED,
-                        self.active_research[research_id]["task_id"],
-                        {
-                            "research_id": research_id,
-                            "topic": state.topic,
-                            "use_multi_agent": use_multi_agent,
-                            "error": str(e)
-                        }
-                    )
-                    publish_sync(event)
+                    # Update research status
+                    self.active_research[research_id]["status"] = "running"
+                    
+                    # Publish event
+                    try:
+                        event = create_task_event(
+                            EventType.RESEARCH_STARTED,
+                            task_id,
+                            {
+                                "research_id": research_id,
+                                "topic": state.topic,
+                                "use_multi_agent": use_multi_agent
+                            }
+                        )
+                        publish_sync(event)
+                    except Exception as e:
+                        logger.warning(f"Failed to publish research started event: {e}")
+                    
+                    logger.info(f"Research task started: {research_id} ({state.topic})")
+                    
+                    # Select the appropriate graph
+                    graph = multi_agent_graph if use_multi_agent else research_graph
+                    
+                    # Execute the research
+                    result = await graph.ainvoke(state)
+                    
+                    # Cache the result
+                    await cache_manager.set("research_results", cache_key, result, ttl=86400)  # Cache for 24 hours
+                    
+                    # Update research status
+                    self.active_research[research_id]["status"] = "completed"
+                    self.active_research[research_id]["result"] = result
+                    
+                    # Publish event
+                    try:
+                        event = create_task_event(
+                            EventType.RESEARCH_COMPLETED,
+                            task_id,
+                            {
+                                "research_id": research_id,
+                                "topic": state.topic,
+                                "use_multi_agent": use_multi_agent
+                            }
+                        )
+                        publish_sync(event)
+                    except Exception as e:
+                        logger.warning(f"Failed to publish research completed event: {e}")
+                    
+                    logger.info(f"Research task completed: {research_id} ({state.topic})")
+                    return result
                 except Exception as e:
-                    logger.warning(f"Failed to publish research failed event: {e}")
-                
-                logger.error(f"Research task failed: {research_id} ({state.topic}): {e}")
-                raise TaskError(f"Research task failed: {str(e)}")
+                    # Update research status
+                    self.active_research[research_id]["status"] = "failed"
+                    self.active_research[research_id]["error"] = str(e)
+                    
+                    # Publish event
+                    try:
+                        event = create_task_event(
+                            EventType.RESEARCH_FAILED,
+                            task_id,
+                            {
+                                "research_id": research_id,
+                                "topic": state.topic,
+                                "use_multi_agent": use_multi_agent,
+                                "error": str(e)
+                            }
+                        )
+                        publish_sync(event)
+                    except Exception as e:
+                        logger.warning(f"Failed to publish research failed event: {e}")
+                    
+                    logger.error(f"Research task failed: {research_id} ({state.topic}): {e}")
+                    raise TaskError(f"Research task failed: {str(e)}")
+        finally:
+            # Release resources
+            resource_manager.release_resources("research", task_id)
     
     async def cancel_research(self, research_id: str) -> bool:
         """
@@ -245,6 +310,9 @@ class ParallelResearchManager:
         if cancelled:
             # Update research status
             self.active_research[research_id]["status"] = "cancelled"
+            
+            # Release resources
+            resource_manager.release_resources("research", task_id)
             
             # Publish event
             try:
@@ -287,6 +355,11 @@ class ParallelResearchManager:
         # Get task progress
         progress, progress_message = self.task_manager.get_task_progress(research["task_id"])
         
+        # Get resource usage for the task
+        resource_usage = {}
+        if research["status"] == "running":
+            resource_usage = resource_manager.get_resource_usage()
+        
         return {
             "research_id": research_id,
             "task_id": research["task_id"],
@@ -296,7 +369,8 @@ class ParallelResearchManager:
             "created_at": research["created_at"].isoformat(),
             "progress": progress,
             "progress_message": progress_message,
-            "error": research.get("error")
+            "error": research.get("error"),
+            "resource_usage": resource_usage
         }
     
     def get_all_research(self) -> List[Dict[str, Any]]:
@@ -359,9 +433,9 @@ class ParallelResearchManager:
             "running_research": len([r for r in self.active_research.values() if r["status"] == "running"]),
             "completed_research": len([r for r in self.active_research.values() if r["status"] == "completed"]),
             "failed_research": len([r for r in self.active_research.values() if r["status"] == "failed"]),
-            "cancelled_research": len([r for r in self.active_research.values() if r["status"] == "cancelled"])
+            "cancelled_research": len([r for r in self.active_research.values() if r["status"] == "cancelled"]),
+            "resource_manager": resource_manager.get_metrics()
         }
 
 # Create a singleton instance
 parallel_research_manager = ParallelResearchManager()
-
