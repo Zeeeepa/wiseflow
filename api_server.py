@@ -6,19 +6,26 @@ This module provides a FastAPI server for WiseFlow, enabling integration with ot
 """
 
 import os
-import json
 import logging
 import asyncio
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status
+from fastapi import FastAPI, Depends, Header, Request, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from core.export.webhook import WebhookManager, get_webhook_manager
+from core.api import (
+    create_api_app, 
+    verify_api_key, 
+    RequestLoggingMiddleware,
+    PerformanceMonitoringMiddleware,
+    format_success_response,
+    format_error_response,
+    ResourceManager
+)
+from core.export.safe_webhook import get_webhook_manager
 from core.llms.advanced.specialized_prompting import (
     SpecializedPromptProcessor,
     CONTENT_TYPE_TEXT,
@@ -40,46 +47,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
-app = FastAPI(
+app = create_api_app(
     title="WiseFlow API",
     description="API for WiseFlow - LLM-based information extraction and analysis",
     version="0.1.0",
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
-)
-
-# Initialize webhook manager
-webhook_manager = get_webhook_manager()
-
-# API key authentication
-API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
-
-def verify_api_key(x_api_key: str = Header(None)):
-    """
-    Verify the API key.
-    
-    Args:
-        x_api_key: API key from header
-        
-    Returns:
-        bool: True if valid
-        
-    Raises:
-        HTTPException: If API key is invalid
-    """
-    if not x_api_key or x_api_key != API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
-    return True
+# Add middleware
+app.add_middleware(RequestLoggingMiddleware, log_request_body=False, log_response_body=False)
+app.add_middleware(PerformanceMonitoringMiddleware, slow_request_threshold=2.0)
 
 # Pydantic models for request/response validation
 class ContentRequest(BaseModel):
@@ -169,36 +145,52 @@ class ContentProcessorManager:
         """
         metadata = metadata or {}
         
-        # Determine the appropriate processing method based on the parameters
-        if references:
-            logger.info(f"Processing content with contextual understanding: {content_type}")
-            return await self.prompt_processor.contextual_understanding(
-                content=content,
-                focus_point=focus_point,
-                references=references,
-                explanation=explanation,
-                content_type=content_type,
-                metadata=metadata
-            )
-        elif use_multi_step_reasoning:
-            logger.info(f"Processing content with multi-step reasoning: {content_type}")
-            return await self.prompt_processor.multi_step_reasoning(
-                content=content,
-                focus_point=focus_point,
-                explanation=explanation,
-                content_type=content_type,
-                metadata=metadata
-            )
-        else:
-            logger.info(f"Processing content with basic extraction: {content_type}")
-            return await self.prompt_processor.process(
-                content=content,
-                focus_point=focus_point,
-                explanation=explanation,
-                content_type=content_type,
-                task=TASK_EXTRACTION,
-                metadata=metadata
-            )
+        try:
+            # Determine the appropriate processing method based on the parameters
+            if references:
+                logger.info(f"Processing content with contextual understanding: {content_type}")
+                return await ResourceManager.with_timeout(
+                    self.prompt_processor.contextual_understanding(
+                        content=content,
+                        focus_point=focus_point,
+                        references=references,
+                        explanation=explanation,
+                        content_type=content_type,
+                        metadata=metadata
+                    ),
+                    timeout=60.0,
+                    error_message="Content processing with contextual understanding timed out"
+                )
+            elif use_multi_step_reasoning:
+                logger.info(f"Processing content with multi-step reasoning: {content_type}")
+                return await ResourceManager.with_timeout(
+                    self.prompt_processor.multi_step_reasoning(
+                        content=content,
+                        focus_point=focus_point,
+                        explanation=explanation,
+                        content_type=content_type,
+                        metadata=metadata
+                    ),
+                    timeout=60.0,
+                    error_message="Content processing with multi-step reasoning timed out"
+                )
+            else:
+                logger.info(f"Processing content with basic extraction: {content_type}")
+                return await ResourceManager.with_timeout(
+                    self.prompt_processor.process(
+                        content=content,
+                        focus_point=focus_point,
+                        explanation=explanation,
+                        content_type=content_type,
+                        task=TASK_EXTRACTION,
+                        metadata=metadata
+                    ),
+                    timeout=30.0,
+                    error_message="Content processing with basic extraction timed out"
+                )
+        except Exception as e:
+            logger.error(f"Error processing content: {str(e)}")
+            raise
     
     async def batch_process(
         self,
@@ -225,28 +217,41 @@ class ContentProcessorManager:
         
         logger.info(f"Batch processing {len(items)} items with task: {task}")
         
-        return await self.prompt_processor.batch_process(
-            items=items,
-            focus_point=focus_point,
-            explanation=explanation,
-            task=task,
-            max_concurrency=max_concurrency
-        )
+        try:
+            return await ResourceManager.with_timeout(
+                self.prompt_processor.batch_process(
+                    items=items,
+                    focus_point=focus_point,
+                    explanation=explanation,
+                    task=task,
+                    max_concurrency=max_concurrency
+                ),
+                timeout=120.0,
+                error_message="Batch processing timed out"
+            )
+        except Exception as e:
+            logger.error(f"Error in batch processing: {str(e)}")
+            raise
 
 # API routes
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {"message": "Welcome to WiseFlow API", "version": "0.1.0"}
+    return format_success_response(
+        message="Welcome to WiseFlow API",
+        data={"version": "0.1.0"}
+    )
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return format_success_response(
+        data={"status": "healthy", "timestamp": datetime.now().isoformat()}
+    )
 
 # Content processing endpoints
 @app.post("/api/v1/process", dependencies=[Depends(verify_api_key)])
-async def process_content(request: ContentRequest):
+async def process_content(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Process content using specialized prompting strategies.
     
@@ -270,7 +275,7 @@ async def process_content(request: ContentRequest):
         )
         
         # Trigger webhook for content processing
-        background_tasks = BackgroundTasks()
+        webhook_manager = await get_webhook_manager()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "content.processed",
@@ -282,16 +287,17 @@ async def process_content(request: ContentRequest):
             }
         )
         
-        return result
+        return format_success_response(data=result)
+    
     except Exception as e:
         logger.error(f"Error processing content: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing content: {str(e)}"
+        return format_error_response(
+            error="Processing Error",
+            detail=str(e)
         )
 
-@app.post("/api/v1/batch-process", dependencies=[Depends(verify_api_key)])
-async def batch_process_content(request: BatchContentRequest):
+@app.post("/api/v1/batch", dependencies=[Depends(verify_api_key)])
+async def batch_process(request: BatchContentRequest, background_tasks: BackgroundTasks):
     """
     Process multiple items concurrently.
     
@@ -299,7 +305,7 @@ async def batch_process_content(request: BatchContentRequest):
         request: Batch content processing request
         
     Returns:
-        List[Dict[str, Any]]: The processing results
+        Dict[str, Any]: The processing results
     """
     processor = ContentProcessorManager.get_instance()
     
@@ -313,10 +319,10 @@ async def batch_process_content(request: BatchContentRequest):
         )
         
         # Trigger webhook for batch processing
-        background_tasks = BackgroundTasks()
+        webhook_manager = await get_webhook_manager()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
-            "content.batch_processed",
+            "batch.processed",
             {
                 "focus_point": request.focus_point,
                 "item_count": len(request.items),
@@ -324,15 +330,16 @@ async def batch_process_content(request: BatchContentRequest):
             }
         )
         
-        return results
+        return format_success_response(data=results)
+    
     except Exception as e:
-        logger.error(f"Error batch processing content: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error batch processing content: {str(e)}"
+        logger.error(f"Error in batch processing: {str(e)}")
+        return format_error_response(
+            error="Batch Processing Error",
+            detail=str(e)
         )
 
-# Webhook management endpoints
+# Webhook endpoints
 @app.get("/api/v1/webhooks", dependencies=[Depends(verify_api_key)])
 async def list_webhooks():
     """
@@ -341,7 +348,9 @@ async def list_webhooks():
     Returns:
         List[Dict[str, Any]]: List of webhook configurations
     """
-    return webhook_manager.list_webhooks()
+    webhook_manager = await get_webhook_manager()
+    webhooks = await webhook_manager.list_webhooks()
+    return format_success_response(data=webhooks)
 
 @app.post("/api/v1/webhooks", dependencies=[Depends(verify_api_key)])
 async def register_webhook(request: WebhookRequest):
@@ -354,7 +363,8 @@ async def register_webhook(request: WebhookRequest):
     Returns:
         Dict[str, Any]: Webhook registration result
     """
-    webhook_id = webhook_manager.register_webhook(
+    webhook_manager = await get_webhook_manager()
+    webhook_id = await webhook_manager.register_webhook(
         endpoint=request.endpoint,
         events=request.events,
         headers=request.headers,
@@ -362,11 +372,10 @@ async def register_webhook(request: WebhookRequest):
         description=request.description
     )
     
-    return {
-        "webhook_id": webhook_id,
-        "message": "Webhook registered successfully",
-        "timestamp": datetime.now().isoformat()
-    }
+    return format_success_response(
+        data={"webhook_id": webhook_id},
+        message="Webhook registered successfully"
+    )
 
 @app.get("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
 async def get_webhook(webhook_id: str):
@@ -382,18 +391,18 @@ async def get_webhook(webhook_id: str):
     Raises:
         HTTPException: If webhook not found
     """
-    webhook = webhook_manager.get_webhook(webhook_id)
+    webhook_manager = await get_webhook_manager()
+    webhook = await webhook_manager.get_webhook(webhook_id)
     
     if not webhook:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+        return format_error_response(
+            error="Not Found",
             detail=f"Webhook not found: {webhook_id}"
         )
     
-    return {
-        "webhook_id": webhook_id,
-        "webhook": webhook
-    }
+    return format_success_response(
+        data={"webhook_id": webhook_id, "webhook": webhook}
+    )
 
 @app.put("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
 async def update_webhook(webhook_id: str, request: WebhookUpdateRequest):
@@ -410,7 +419,8 @@ async def update_webhook(webhook_id: str, request: WebhookUpdateRequest):
     Raises:
         HTTPException: If webhook not found or update failed
     """
-    success = webhook_manager.update_webhook(
+    webhook_manager = await get_webhook_manager()
+    success = await webhook_manager.update_webhook(
         webhook_id=webhook_id,
         endpoint=request.endpoint,
         events=request.events,
@@ -420,16 +430,15 @@ async def update_webhook(webhook_id: str, request: WebhookUpdateRequest):
     )
     
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+        return format_error_response(
+            error="Not Found",
             detail=f"Webhook not found or update failed: {webhook_id}"
         )
     
-    return {
-        "webhook_id": webhook_id,
-        "message": "Webhook updated successfully",
-        "timestamp": datetime.now().isoformat()
-    }
+    return format_success_response(
+        data={"webhook_id": webhook_id},
+        message="Webhook updated successfully"
+    )
 
 @app.delete("/api/v1/webhooks/{webhook_id}", dependencies=[Depends(verify_api_key)])
 async def delete_webhook(webhook_id: str):
@@ -445,19 +454,19 @@ async def delete_webhook(webhook_id: str):
     Raises:
         HTTPException: If webhook not found or deletion failed
     """
-    success = webhook_manager.delete_webhook(webhook_id)
+    webhook_manager = await get_webhook_manager()
+    success = await webhook_manager.delete_webhook(webhook_id)
     
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+        return format_error_response(
+            error="Not Found",
             detail=f"Webhook not found or deletion failed: {webhook_id}"
         )
     
-    return {
-        "webhook_id": webhook_id,
-        "message": "Webhook deleted successfully",
-        "timestamp": datetime.now().isoformat()
-    }
+    return format_success_response(
+        data={"webhook_id": webhook_id},
+        message="Webhook deleted successfully"
+    )
 
 @app.post("/api/v1/webhooks/trigger", dependencies=[Depends(verify_api_key)])
 async def trigger_webhook(request: WebhookTriggerRequest):
@@ -470,22 +479,24 @@ async def trigger_webhook(request: WebhookTriggerRequest):
     Returns:
         Dict[str, Any]: Webhook trigger result
     """
-    responses = webhook_manager.trigger_webhook(
+    webhook_manager = await get_webhook_manager()
+    responses = await webhook_manager.trigger_webhook(
         event=request.event,
         data=request.data,
         async_mode=request.async_mode
     )
     
-    return {
-        "event": request.event,
-        "message": "Webhooks triggered successfully",
-        "responses": responses if not request.async_mode else [],
-        "timestamp": datetime.now().isoformat()
-    }
+    return format_success_response(
+        data={
+            "event": request.event,
+            "responses": responses if not request.async_mode else []
+        },
+        message="Webhooks triggered successfully"
+    )
 
 # Integration endpoints
 @app.post("/api/v1/integration/extract", dependencies=[Depends(verify_api_key)])
-async def extract_information(request: ContentRequest):
+async def extract_information(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Extract information from content.
     
@@ -511,7 +522,7 @@ async def extract_information(request: ContentRequest):
         )
         
         # Trigger webhook for information extraction
-        background_tasks = BackgroundTasks()
+        webhook_manager = await get_webhook_manager()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "integration.extract",
@@ -523,20 +534,21 @@ async def extract_information(request: ContentRequest):
             }
         )
         
-        return {
-            "extracted_information": result.get("summary", ""),
-            "metadata": result.get("metadata", {}),
-            "timestamp": datetime.now().isoformat()
-        }
+        return format_success_response(
+            data={
+                "extracted_information": result.get("summary", ""),
+                "metadata": result.get("metadata", {})
+            }
+        )
     except Exception as e:
         logger.error(f"Error extracting information: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        return format_error_response(
+            error="Extraction Error",
             detail=f"Error extracting information: {str(e)}"
         )
 
 @app.post("/api/v1/integration/analyze", dependencies=[Depends(verify_api_key)])
-async def analyze_content(request: ContentRequest):
+async def analyze_content(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Analyze content using multi-step reasoning.
     
@@ -562,7 +574,7 @@ async def analyze_content(request: ContentRequest):
         )
         
         # Trigger webhook for content analysis
-        background_tasks = BackgroundTasks()
+        webhook_manager = await get_webhook_manager()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "integration.analyze",
@@ -574,21 +586,22 @@ async def analyze_content(request: ContentRequest):
             }
         )
         
-        return {
-            "analysis": result.get("summary", ""),
-            "reasoning_steps": result.get("reasoning_steps", []),
-            "metadata": result.get("metadata", {}),
-            "timestamp": datetime.now().isoformat()
-        }
+        return format_success_response(
+            data={
+                "analysis": result.get("summary", ""),
+                "reasoning_steps": result.get("reasoning_steps", []),
+                "metadata": result.get("metadata", {})
+            }
+        )
     except Exception as e:
         logger.error(f"Error analyzing content: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        return format_error_response(
+            error="Analysis Error",
             detail=f"Error analyzing content: {str(e)}"
         )
 
 @app.post("/api/v1/integration/contextual", dependencies=[Depends(verify_api_key)])
-async def contextual_understanding(request: ContentRequest):
+async def contextual_understanding(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Process content with contextual understanding.
     
@@ -601,8 +614,8 @@ async def contextual_understanding(request: ContentRequest):
         Dict[str, Any]: The contextual understanding result
     """
     if not request.references:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+        return format_error_response(
+            error="Validation Error",
             detail="References are required for contextual understanding"
         )
     
@@ -620,7 +633,7 @@ async def contextual_understanding(request: ContentRequest):
         )
         
         # Trigger webhook for contextual understanding
-        background_tasks = BackgroundTasks()
+        webhook_manager = await get_webhook_manager()
         background_tasks.add_task(
             webhook_manager.trigger_webhook,
             "integration.contextual",
@@ -632,15 +645,16 @@ async def contextual_understanding(request: ContentRequest):
             }
         )
         
-        return {
-            "contextual_understanding": result.get("summary", ""),
-            "metadata": result.get("metadata", {}),
-            "timestamp": datetime.now().isoformat()
-        }
+        return format_success_response(
+            data={
+                "contextual_understanding": result.get("summary", ""),
+                "metadata": result.get("metadata", {})
+            }
+        )
     except Exception as e:
         logger.error(f"Error in contextual understanding: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        return format_error_response(
+            error="Contextual Understanding Error",
             detail=f"Error in contextual understanding: {str(e)}"
         )
 
