@@ -104,39 +104,17 @@ wiseflow/
 
 ## Dependencies
 
-WiseFlow uses a modular dependency management approach to ensure compatibility and prevent runtime errors:
+WiseFlow uses a streamlined dependency management approach to ensure compatibility and prevent runtime errors:
 
-- `requirements.txt`: Main entry point that includes base requirements
-- `requirements-base.txt`: Core dependencies required for basic functionality
-- `requirements-optional.txt`: Optional dependencies for extended features
+- `requirements.txt`: Main requirements file with all core dependencies
 - `requirements-dev.txt`: Dependencies needed for development and testing
+- `requirements-optional.txt`: Optional dependencies for extended features
 
 Module-specific requirements:
-- `weixin_mp/requirements.txt`: Dependencies specific to the WeChat Mini Program module
 - `core/requirements.txt`: Dependencies specific to the core module
+- `weixin_mp/requirements.txt`: Dependencies specific to the WeChat Mini Program module
 
-For detailed information about dependencies, see [DEPENDENCIES.md](DEPENDENCIES.md).
-
-### Dependency Management
-
-WiseFlow includes a dependency management script to help maintain dependencies:
-
-```bash
-# Check for outdated packages
-python scripts/dependency_check.py --check-outdated
-
-# Find unused dependencies
-python scripts/dependency_check.py --find-unused
-
-# Find missing dependencies
-python scripts/dependency_check.py --find-missing
-
-# Validate version constraints
-python scripts/dependency_check.py --validate-versions
-
-# Run all checks
-python scripts/dependency_check.py --all
-```
+For detailed information about dependency management, see [docs/dependency_management.md](docs/dependency_management.md).
 
 ### Installation
 
@@ -146,9 +124,16 @@ python scripts/dependency_check.py --all
    cd wiseflow
    ```
 
-2. Install dependencies:
+2. Set up the environment using the setup script:
    ```bash
-   pip install -r requirements.txt
+   # For basic installation (core dependencies only)
+   python scripts/setup_environment.py --mode basic
+   
+   # For development environment
+   python scripts/setup_environment.py --mode dev
+   
+   # For full installation (including optional dependencies)
+   python scripts/setup_environment.py --mode full
    ```
 
 3. Set up environment variables:
@@ -346,7 +331,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 1. Clone the repository
 2. Install development dependencies:
    ```bash
-   pip install -r requirements-dev.txt
+   python scripts/setup_environment.py --mode dev
    ```
 3. Run tests:
    ```bash

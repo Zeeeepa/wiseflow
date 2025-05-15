@@ -1,9 +1,9 @@
 # WeChat Mini Program specific dependencies
-# These are in addition to the base requirements
+# These are specific dependencies required by the WeChat Mini Program module.
 
 # Include base requirements
--r ../requirements-base.txt
+-r ../requirements.txt
 
-# WebSocket support for real-time communication
-websockets>=12.0,<13.0
+# WeChat Mini Program specific dependencies
+# websockets is now included in the main requirements.txt file
 

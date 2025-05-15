@@ -1,17 +1,26 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-Dependency Check Script for WiseFlow
+Dependency check script for Wiseflow.
 
-This script helps manage and validate dependencies in the WiseFlow project.
-It can:
-1. Check for outdated packages
-2. Detect unused dependencies
-3. Find missing dependencies
-4. Validate version constraints
+This script helps maintain dependencies by:
+1. Checking for outdated packages
+2. Finding unused dependencies
+3. Finding missing dependencies
+4. Validating version constraints
+
+Usage:
+    python scripts/dependency_check.py [options]
+
+Options:
+    --check-outdated     Check for outdated packages
+    --find-unused        Find unused dependencies
+    --find-missing       Find missing dependencies
+    --validate-versions  Validate version constraints
+    --all                Run all checks
 """
 
 import argparse
-import importlib
 import os
 import re
 import subprocess
@@ -20,13 +29,51 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
 
-def parse_requirements(file_path: str) -> Dict[str, str]:
-    """Parse a requirements file and return a dictionary of package names and versions."""
-    if not os.path.exists(file_path):
-        print(f"Requirements file not found: {file_path}")
-        return {}
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Check dependencies for Wiseflow")
+    parser.add_argument(
+        "--check-outdated",
+        action="store_true",
+        help="Check for outdated packages",
+    )
+    parser.add_argument(
+        "--find-unused",
+        action="store_true",
+        help="Find unused dependencies",
+    )
+    parser.add_argument(
+        "--find-missing",
+        action="store_true",
+        help="Find missing dependencies",
+    )
+    parser.add_argument(
+        "--validate-versions",
+        action="store_true",
+        help="Validate version constraints",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Run all checks",
+    )
+    return parser.parse_args()
 
-    packages = {}
+
+def get_project_root() -> Path:
+    """Get the project root directory."""
+    return Path(__file__).parent.parent
+
+
+def get_requirements_files() -> List[Path]:
+    """Get all requirements files in the project."""
+    project_root = get_project_root()
+    return list(project_root.glob("**/requirements*.txt"))
+
+
+def parse_requirements(file_path: Path) -> Dict[str, str]:
+    """Parse a requirements file and return a dictionary of package names and versions."""
+    requirements = {}
     with open(file_path, "r") as f:
         for line in f:
             line = line.strip()
@@ -34,80 +81,63 @@ def parse_requirements(file_path: str) -> Dict[str, str]:
                 continue
             
             # Handle package with version specifier
-            match = re.match(r"([a-zA-Z0-9_\-\.]+)([<>=~!]+)([a-zA-Z0-9_\-\.]+)", line)
+            match = re.match(r"([a-zA-Z0-9_\-\.]+)([<>=!~]+)([a-zA-Z0-9_\-\.]+)", line)
             if match:
-                package_name = match.group(1).lower()
+                package_name = match.group(1)
                 version_spec = match.group(2) + match.group(3)
-                packages[package_name] = version_spec
+                requirements[package_name] = version_spec
+                continue
+            
+            # Handle package with multiple version specifiers
+            match = re.match(r"([a-zA-Z0-9_\-\.]+)(.+)", line)
+            if match:
+                package_name = match.group(1)
+                version_spec = match.group(2)
+                requirements[package_name] = version_spec
                 continue
             
             # Handle package without version specifier
-            if re.match(r"^[a-zA-Z0-9_\-\.]+$", line):
-                packages[line.lower()] = ""
+            requirements[line] = ""
     
-    return packages
+    return requirements
 
 
-def find_imports_in_file(file_path: str) -> Set[str]:
-    """Extract import statements from a Python file."""
-    imports = set()
+def get_all_requirements() -> Dict[str, str]:
+    """Get all requirements from all requirements files."""
+    all_requirements = {}
+    for file_path in get_requirements_files():
+        requirements = parse_requirements(file_path)
+        for package, version in requirements.items():
+            if package in all_requirements and all_requirements[package] != version:
+                print(f"Warning: Package {package} has different version constraints:")
+                print(f"  - {all_requirements[package]}")
+                print(f"  - {version}")
+            all_requirements[package] = version
     
-    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-        content = f.read()
-    
-    # Find standard imports
-    for match in re.finditer(r"^import\s+([a-zA-Z0-9_\.]+)", content, re.MULTILINE):
-        module = match.group(1).split(".")[0].strip()
-        if module:
-            imports.add(module)
-    
-    # Find from imports
-    for match in re.finditer(r"^from\s+([a-zA-Z0-9_\.]+)\s+import", content, re.MULTILINE):
-        module = match.group(1).split(".")[0].strip()
-        if module and module != "":
-            imports.add(module)
-    
-    return imports
+    return all_requirements
 
 
-def find_all_imports(directory: str) -> Set[str]:
-    """Find all imports in Python files in the given directory."""
-    all_imports = set()
+def get_installed_packages() -> Dict[str, str]:
+    """Get all installed packages and their versions."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "list", "--format=json"],
+        capture_output=True,
+        text=True,
+    )
     
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".py"):
-                file_path = os.path.join(root, file)
-                try:
-                    file_imports = find_imports_in_file(file_path)
-                    all_imports.update(file_imports)
-                except Exception as e:
-                    print(f"Error processing {file_path}: {e}")
+    if result.returncode != 0:
+        print(f"Error running pip list: {result.stderr}")
+        return {}
     
-    return all_imports
+    import json
+    packages = json.loads(result.stdout)
+    return {package["name"].lower(): package["version"] for package in packages}
 
 
-def is_standard_library(module_name: str) -> bool:
-    """Check if a module is part of the Python standard library."""
-    if module_name in sys.builtin_module_names:
-        return True
+def check_outdated_packages():
+    """Check for outdated packages."""
+    print("\n=== Checking for outdated packages ===\n")
     
-    try:
-        spec = importlib.util.find_spec(module_name)
-        if spec is None:
-            return False
-        
-        location = spec.origin
-        if location is None:
-            return True
-        
-        return "site-packages" not in location and "dist-packages" not in location
-    except (ImportError, AttributeError):
-        return False
-
-
-def check_outdated_packages() -> List[Tuple[str, str, str]]:
-    """Check for outdated packages using pip."""
     result = subprocess.run(
         [sys.executable, "-m", "pip", "list", "--outdated", "--format=json"],
         capture_output=True,
@@ -115,162 +145,246 @@ def check_outdated_packages() -> List[Tuple[str, str, str]]:
     )
     
     if result.returncode != 0:
-        print(f"Error checking outdated packages: {result.stderr}")
-        return []
+        print(f"Error checking for outdated packages: {result.stderr}")
+        return
     
     import json
-    try:
-        outdated = json.loads(result.stdout)
-        return [(pkg["name"], pkg["version"], pkg["latest_version"]) for pkg in outdated]
-    except json.JSONDecodeError:
-        print(f"Error parsing pip output: {result.stdout}")
-        return []
+    outdated = json.loads(result.stdout)
+    
+    if not outdated:
+        print("All packages are up to date!")
+        return
+    
+    print(f"Found {len(outdated)} outdated packages:")
+    for package in outdated:
+        print(f"  - {package['name']}: {package['version']} -> {package['latest_version']}")
+
+
+def find_imports_in_file(file_path: Path) -> Set[str]:
+    """Find all imports in a Python file."""
+    imports = set()
+    
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    
+    # Find import statements
+    import_matches = re.finditer(r"import\s+([a-zA-Z0-9_\-\.]+)", content)
+    for match in import_matches:
+        package = match.group(1).split(".")[0].lower()
+        imports.add(package)
+    
+    # Find from ... import statements
+    from_matches = re.finditer(r"from\s+([a-zA-Z0-9_\-\.]+)\s+import", content)
+    for match in from_matches:
+        package = match.group(1).split(".")[0].lower()
+        imports.add(package)
+    
+    return imports
+
+
+def find_all_imports() -> Set[str]:
+    """Find all imports in all Python files."""
+    project_root = get_project_root()
+    imports = set()
+    
+    for file_path in project_root.glob("**/*.py"):
+        if "__pycache__" in str(file_path):
+            continue
+        
+        try:
+            file_imports = find_imports_in_file(file_path)
+            imports.update(file_imports)
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+    
+    return imports
+
+
+def find_unused_dependencies():
+    """Find unused dependencies."""
+    print("\n=== Finding unused dependencies ===\n")
+    
+    all_requirements = get_all_requirements()
+    all_imports = find_all_imports()
+    
+    # Standard library modules to exclude
+    stdlib_modules = {
+        "os", "sys", "re", "time", "datetime", "json", "logging", "argparse",
+        "collections", "pathlib", "typing", "uuid", "enum", "traceback",
+        "asyncio", "io", "math", "random", "string", "functools", "itertools",
+        "contextlib", "copy", "csv", "hashlib", "importlib", "inspect",
+        "multiprocessing", "pickle", "shutil", "signal", "socket", "subprocess",
+        "tempfile", "threading", "urllib", "warnings", "weakref", "zipfile",
+    }
+    
+    # Package name mappings (package name -> import name)
+    package_mappings = {
+        "beautifulsoup4": "bs4",
+        "python-dotenv": "dotenv",
+        "scikit-learn": "sklearn",
+        "pillow": "pil",
+        "google-api-python-client": "googleapiclient",
+        "fake-useragent": "fake_useragent",
+        "tf-playwright-stealth": "playwright_stealth",
+        "faust-cchardet": "cchardet",
+    }
+    
+    # Invert the mappings for lookup
+    import_to_package = {v: k for k, v in package_mappings.items()}
+    
+    # Find unused dependencies
+    unused = []
+    for package in all_requirements:
+        package_lower = package.lower()
+        
+        # Check if the package is imported directly
+        if package_lower in all_imports:
+            continue
+        
+        # Check if the package has a different import name
+        if package_lower in package_mappings and package_mappings[package_lower] in all_imports:
+            continue
+        
+        # Some packages are used indirectly (e.g., plugins, CLI tools)
+        # Add exceptions here if needed
+        if package_lower in {"pip-tools", "pre-commit", "pytest", "mypy", "flake8", "black", "isort", "sphinx"}:
+            continue
+        
+        unused.append(package)
+    
+    if not unused:
+        print("No unused dependencies found!")
+        return
+    
+    print(f"Found {len(unused)} potentially unused dependencies:")
+    for package in sorted(unused):
+        print(f"  - {package}")
+    
+    print("\nNote: Some dependencies might be used indirectly or through entry points.")
+    print("Verify before removing any dependencies.")
+
+
+def find_missing_dependencies():
+    """Find missing dependencies."""
+    print("\n=== Finding missing dependencies ===\n")
+    
+    all_requirements = get_all_requirements()
+    all_imports = find_all_imports()
+    installed_packages = get_installed_packages()
+    
+    # Standard library modules to exclude
+    stdlib_modules = {
+        "os", "sys", "re", "time", "datetime", "json", "logging", "argparse",
+        "collections", "pathlib", "typing", "uuid", "enum", "traceback",
+        "asyncio", "io", "math", "random", "string", "functools", "itertools",
+        "contextlib", "copy", "csv", "hashlib", "importlib", "inspect",
+        "multiprocessing", "pickle", "shutil", "signal", "socket", "subprocess",
+        "tempfile", "threading", "urllib", "warnings", "weakref", "zipfile",
+    }
+    
+    # Package name mappings (import name -> package name)
+    import_mappings = {
+        "bs4": "beautifulsoup4",
+        "dotenv": "python-dotenv",
+        "sklearn": "scikit-learn",
+        "pil": "pillow",
+        "googleapiclient": "google-api-python-client",
+        "fake_useragent": "fake-useragent",
+        "playwright_stealth": "tf-playwright-stealth",
+        "cchardet": "faust-cchardet",
+    }
+    
+    # Find missing dependencies
+    missing = []
+    for import_name in all_imports:
+        # Skip standard library modules
+        if import_name in stdlib_modules:
+            continue
+        
+        # Check if the import is a package name
+        if import_name in all_requirements or import_name in installed_packages:
+            continue
+        
+        # Check if the import has a different package name
+        if import_name in import_mappings and import_mappings[import_name] in all_requirements:
+            continue
+        
+        # Skip local imports (modules within the project)
+        if import_name in {"core", "dashboard", "weixin_mp", "wiseflow"}:
+            continue
+        
+        missing.append(import_name)
+    
+    if not missing:
+        print("No missing dependencies found!")
+        return
+    
+    print(f"Found {len(missing)} potentially missing dependencies:")
+    for import_name in sorted(missing):
+        print(f"  - {import_name}")
+    
+    print("\nNote: Some imports might be from local modules or standard library.")
+    print("Verify before adding any dependencies.")
+
+
+def validate_version_constraints():
+    """Validate version constraints."""
+    print("\n=== Validating version constraints ===\n")
+    
+    all_requirements = {}
+    for file_path in get_requirements_files():
+        requirements = parse_requirements(file_path)
+        for package, version in requirements.items():
+            if package not in all_requirements:
+                all_requirements[package] = {}
+            
+            all_requirements[package][file_path.name] = version
+    
+    # Find packages with different version constraints
+    conflicts = {}
+    for package, versions in all_requirements.items():
+        if len(versions) > 1 and len(set(versions.values())) > 1:
+            conflicts[package] = versions
+    
+    if not conflicts:
+        print("No version conflicts found!")
+        return
+    
+    print(f"Found {len(conflicts)} packages with version conflicts:")
+    for package, versions in conflicts.items():
+        print(f"  - {package}:")
+        for file_name, version in versions.items():
+            print(f"    - {file_name}: {version}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="WiseFlow Dependency Management Tool")
-    parser.add_argument("--check-outdated", action="store_true", help="Check for outdated packages")
-    parser.add_argument("--find-unused", action="store_true", help="Find unused dependencies")
-    parser.add_argument("--find-missing", action="store_true", help="Find missing dependencies")
-    parser.add_argument("--validate-versions", action="store_true", help="Validate version constraints")
-    parser.add_argument("--all", action="store_true", help="Run all checks")
+    """Main function."""
+    args = parse_args()
     
-    args = parser.parse_args()
-    
-    # If no arguments provided, show help
+    # If no options are specified, show help
     if not any(vars(args).values()):
-        parser.print_help()
+        print("No options specified. Use --help to see available options.")
         return
     
-    # Get the project root directory
-    project_root = Path(__file__).parent.parent.absolute()
+    # Run all checks if --all is specified
+    if args.all:
+        args.check_outdated = True
+        args.find_unused = True
+        args.find_missing = True
+        args.validate_versions = True
     
-    # Check for outdated packages
-    if args.check_outdated or args.all:
-        print("\n=== Checking for outdated packages ===")
-        outdated = check_outdated_packages()
-        if outdated:
-            print(f"Found {len(outdated)} outdated packages:")
-            for name, current, latest in outdated:
-                print(f"  {name}: {current} -> {latest}")
-        else:
-            print("All packages are up to date!")
+    # Run specified checks
+    if args.check_outdated:
+        check_outdated_packages()
     
-    # Find unused dependencies
-    if args.find_unused or args.all:
-        print("\n=== Checking for unused dependencies ===")
-        
-        # Parse requirements files
-        req_files = [
-            "requirements-base.txt",
-            "requirements-optional.txt",
-            "weixin_mp/requirements.txt",
-            "core/requirements.txt",
-        ]
-        
-        all_requirements = {}
-        for req_file in req_files:
-            file_path = os.path.join(project_root, req_file)
-            if os.path.exists(file_path):
-                requirements = parse_requirements(file_path)
-                print(f"Found {len(requirements)} packages in {req_file}")
-                all_requirements.update(requirements)
-        
-        # Find all imports in the codebase
-        all_imports = find_all_imports(project_root)
-        print(f"Found {len(all_imports)} unique imports in the codebase")
-        
-        # Filter out standard library imports
-        non_std_imports = {imp for imp in all_imports if not is_standard_library(imp)}
-        print(f"Found {len(non_std_imports)} non-standard library imports")
-        
-        # Find unused dependencies
-        unused_deps = []
-        for req in all_requirements:
-            # Handle package name variations
-            req_variations = [req, req.replace("-", "_")]
-            if not any(var in non_std_imports for var in req_variations):
-                unused_deps.append(req)
-        
-        if unused_deps:
-            print(f"Found {len(unused_deps)} potentially unused dependencies:")
-            for dep in sorted(unused_deps):
-                print(f"  {dep}")
-        else:
-            print("No unused dependencies found!")
+    if args.find_unused:
+        find_unused_dependencies()
     
-    # Find missing dependencies
-    if args.find_missing or args.all:
-        print("\n=== Checking for missing dependencies ===")
-        
-        # Parse requirements files
-        req_files = [
-            "requirements-base.txt",
-            "requirements-optional.txt",
-            "weixin_mp/requirements.txt",
-            "core/requirements.txt",
-        ]
-        
-        all_requirements = {}
-        for req_file in req_files:
-            file_path = os.path.join(project_root, req_file)
-            if os.path.exists(file_path):
-                requirements = parse_requirements(file_path)
-                all_requirements.update(requirements)
-        
-        # Find all imports in the codebase
-        all_imports = find_all_imports(project_root)
-        
-        # Filter out standard library imports
-        non_std_imports = {imp for imp in all_imports if not is_standard_library(imp)}
-        
-        # Find missing dependencies
-        missing_deps = []
-        for imp in non_std_imports:
-            # Handle package name variations
-            imp_variations = [imp, imp.replace("_", "-")]
-            if not any(var in all_requirements for var in imp_variations):
-                missing_deps.append(imp)
-        
-        if missing_deps:
-            print(f"Found {len(missing_deps)} potentially missing dependencies:")
-            for dep in sorted(missing_deps):
-                print(f"  {dep}")
-        else:
-            print("No missing dependencies found!")
+    if args.find_missing:
+        find_missing_dependencies()
     
-    # Validate version constraints
-    if args.validate_versions or args.all:
-        print("\n=== Validating version constraints ===")
-        
-        # Parse requirements files
-        req_files = [
-            "requirements-base.txt",
-            "requirements-optional.txt",
-            "weixin_mp/requirements.txt",
-            "core/requirements.txt",
-        ]
-        
-        version_conflicts = []
-        all_versions = {}
-        
-        for req_file in req_files:
-            file_path = os.path.join(project_root, req_file)
-            if os.path.exists(file_path):
-                requirements = parse_requirements(file_path)
-                
-                for pkg, version in requirements.items():
-                    if pkg in all_versions and all_versions[pkg] != version and version != "":
-                        version_conflicts.append((pkg, all_versions[pkg], version, req_file))
-                    elif version != "":
-                        all_versions[pkg] = version
-        
-        if version_conflicts:
-            print(f"Found {len(version_conflicts)} version conflicts:")
-            for pkg, ver1, ver2, file in version_conflicts:
-                print(f"  {pkg}: {ver1} vs {ver2} in {file}")
-        else:
-            print("No version conflicts found!")
+    if args.validate_versions:
+        validate_version_constraints()
 
 
 if __name__ == "__main__":
