@@ -1,5 +1,5 @@
-# Include base requirements
--r requirements-base.txt
+# WiseFlow Optional Dependencies
+# These are additional dependencies for extended features
 
 # Optional LLM integrations
 litellm>=1.0.0,<2.0.0  # For multiple LLM provider support

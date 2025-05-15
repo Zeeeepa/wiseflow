@@ -1,9 +1,9 @@
 # Core module specific dependencies
-# These are in addition to the base requirements
+# These are in addition to the main requirements
 
-# Include base requirements
--r ../requirements-base.txt
+# Include main requirements
+-r ../requirements.txt
 
-# For optional features, install with:
-# pip install -r ../requirements-optional.txt
+# No additional core-specific dependencies at this time
+# Add any core-specific dependencies below if needed
 
