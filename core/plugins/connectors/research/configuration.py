@@ -1,11 +1,15 @@
 """Configuration for research module."""
 
 import os
+import logging
 from enum import Enum
-from dataclasses import dataclass, fields
-from typing import Any, Optional, Dict 
+from dataclasses import dataclass, fields, field
+from typing import Any, Optional, Dict, List, Union
 
 from langchain_core.runnables import RunnableConfig
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 DEFAULT_REPORT_STRUCTURE = """Use this structure to create a report on the user-provided topic:
 
@@ -36,6 +40,9 @@ class ResearchMode(Enum):
     GRAPH = "graph"
     MULTI_AGENT = "multi_agent"
 
+# Default fallback order for search APIs when primary API fails
+DEFAULT_FALLBACK_APIS = [SearchAPI.TAVILY, SearchAPI.PERPLEXITY, SearchAPI.EXA, SearchAPI.DUCKDUCKGO]
+
 @dataclass(kw_only=True)
 class Configuration:
     """The configurable fields for the research module."""
@@ -44,6 +51,20 @@ class Configuration:
     search_api: SearchAPI = SearchAPI.TAVILY # Default to TAVILY
     search_api_config: Optional[Dict[str, Any]] = None
     research_mode: ResearchMode = ResearchMode.LINEAR # Default to LINEAR mode
+    
+    # Error handling and recovery configuration
+    enable_fallback_apis: bool = True  # Whether to try fallback APIs when primary API fails
+    fallback_apis: List[SearchAPI] = field(default_factory=lambda: [api for api in DEFAULT_FALLBACK_APIS])
+    max_retries: int = 3  # Maximum number of retries for failed API calls
+    retry_delay: float = 1.0  # Delay between retries in seconds
+    
+    # Logging configuration
+    log_level: str = "INFO"  # Default log level
+    enable_debug_logging: bool = False  # Enable detailed debug logging
+    
+    # Caching configuration
+    enable_search_cache: bool = True  # Whether to cache search results
+    cache_ttl: int = 3600  # Cache time-to-live in seconds (1 hour)
     
     # Graph-specific configuration
     number_of_queries: int = 2 # Number of search queries to generate per iteration
@@ -59,7 +80,9 @@ class Configuration:
     
     # Multi-agent specific configuration
     supervisor_model: str = "openai:gpt-4.1" # Model for supervisor agent in multi-agent setup
-    researcher_model: str = "openai:gpt-4.1" # Model for research agents in multi-agent setup 
+    researcher_model: str = "openai:gpt-4.1" # Model for research agents in multi-agent setup
+    max_concurrent_researchers: int = 3  # Maximum number of concurrent researcher agents
+    enable_parallel_execution: bool = True  # Whether to run researcher agents in parallel
 
     @classmethod
     def from_runnable_config(
@@ -69,10 +92,50 @@ class Configuration:
         configurable = (
             config["configurable"] if config and "configurable" in config else {}
         )
-        values: dict[str, Any] = {
-            f.name: os.environ.get(f.name.upper(), configurable.get(f.name))
-            for f in fields(cls)
-            if f.init
-        }
-        return cls(**{k: v for k, v in values.items() if v})
-
+        values: dict[str, Any] = {}
+        
+        # Process each field
+        for f in fields(cls):
+            if not f.init:
+                continue
+                
+            # Check environment variables first (with appropriate type conversion)
+            env_key = f.name.upper()
+            env_value = os.environ.get(env_key)
+            
+            # Check configurable dict next
+            config_value = configurable.get(f.name)
+            
+            # Determine the final value
+            if env_value is not None:
+                # Convert environment variable to appropriate type
+                if f.type == bool or f.type == Optional[bool]:
+                    values[f.name] = env_value.lower() in ('true', 'yes', '1', 'y')
+                elif f.type == int or f.type == Optional[int]:
+                    values[f.name] = int(env_value)
+                elif f.type == float or f.type == Optional[float]:
+                    values[f.name] = float(env_value)
+                elif f.type == List[SearchAPI] or f.type == Optional[List[SearchAPI]]:
+                    api_names = env_value.split(',')
+                    values[f.name] = [SearchAPI(name.strip()) for name in api_names if name.strip()]
+                elif f.type == SearchAPI or f.type == Optional[SearchAPI]:
+                    values[f.name] = SearchAPI(env_value)
+                elif f.type == ResearchMode or f.type == Optional[ResearchMode]:
+                    values[f.name] = ResearchMode(env_value)
+                else:
+                    values[f.name] = env_value
+            elif config_value is not None:
+                values[f.name] = config_value
+        
+        # Create instance with non-None values
+        instance = cls(**{k: v for k, v in values.items() if v is not None})
+        
+        # Configure logging based on settings
+        if instance.enable_debug_logging:
+            logging.getLogger("core.plugins.connectors.research").setLevel(logging.DEBUG)
+        else:
+            logging.getLogger("core.plugins.connectors.research").setLevel(
+                getattr(logging, instance.log_level)
+            )
+        
+        return instance

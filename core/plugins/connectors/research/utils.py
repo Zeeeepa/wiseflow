@@ -3,8 +3,13 @@
 import os
 import json
 import logging
-from typing import Dict, List, Any, Optional, Union, Callable
+import time
+import functools
+import hashlib
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Union, Callable, Tuple
 import importlib.util
+import traceback
 
 from langchain_core.runnables import RunnableConfig
 from langchain.chat_models import init_chat_model
@@ -12,7 +17,12 @@ from langchain.chat_models import init_chat_model
 from core.plugins.connectors.research.state import Sections, Section
 from core.plugins.connectors.research.configuration import Configuration, SearchAPI
 
+# Setup logger
 logger = logging.getLogger(__name__)
+
+# Simple in-memory cache for search results
+_search_cache = {}
+_cache_timestamps = {}
 
 def format_sections(sections: Sections) -> List[Dict[str, Any]]:
     """Format sections for output.
@@ -87,10 +97,161 @@ def get_search_params(config: Optional[Configuration] = None) -> Dict[str, Any]:
     elif search_api == SearchAPI.EXA and "api_key" not in search_params:
         search_params["api_key"] = os.environ.get("EXA_API_KEY")
     
+    elif search_api == SearchAPI.LINKUP and "api_key" not in search_params:
+        search_params["api_key"] = os.environ.get("LINKUP_API_KEY")
+    
+    # Add common parameters
+    search_params["max_retries"] = config.max_retries
+    search_params["retry_delay"] = config.retry_delay
+    
     return search_params
 
-def select_and_execute_search(query: str, search_api: SearchAPI, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Select and execute a search API.
+def cache_key(query: str, search_api: SearchAPI, params: Dict[str, Any]) -> str:
+    """Generate a cache key for search results.
+    
+    Args:
+        query (str): The search query
+        search_api (SearchAPI): The search API used
+        params (Dict[str, Any]): The search parameters
+        
+    Returns:
+        str: The cache key
+    """
+    # Create a deterministic representation of the parameters
+    param_str = json.dumps(params, sort_keys=True)
+    key_str = f"{query}:{search_api.value}:{param_str}"
+    
+    # Create a hash of the key string
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+def clear_expired_cache(ttl: int = 3600) -> None:
+    """Clear expired cache entries.
+    
+    Args:
+        ttl (int, optional): Cache time-to-live in seconds. Defaults to 3600.
+    """
+    now = datetime.now()
+    expired_keys = []
+    
+    for key, timestamp in _cache_timestamps.items():
+        if (now - timestamp).total_seconds() > ttl:
+            expired_keys.append(key)
+    
+    for key in expired_keys:
+        if key in _search_cache:
+            del _search_cache[key]
+        if key in _cache_timestamps:
+            del _cache_timestamps[key]
+    
+    logger.debug(f"Cleared {len(expired_keys)} expired cache entries")
+
+def with_retry(max_retries: int = 3, retry_delay: float = 1.0):
+    """Decorator for functions that should be retried on failure.
+    
+    Args:
+        max_retries (int, optional): Maximum number of retries. Defaults to 3.
+        retry_delay (float, optional): Delay between retries in seconds. Defaults to 1.0.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        delay = retry_delay * (2 ** attempt)  # Exponential backoff
+                        logger.warning(
+                            f"Attempt {attempt + 1}/{max_retries + 1} failed: {str(e)}. "
+                            f"Retrying in {delay:.2f} seconds..."
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(
+                            f"All {max_retries + 1} attempts failed. Last error: {str(e)}"
+                        )
+            
+            # If we get here, all attempts failed
+            raise last_exception
+        
+        return wrapper
+    
+    return decorator
+
+def select_and_execute_search(
+    query: str, 
+    search_api: SearchAPI, 
+    search_params: Dict[str, Any],
+    config: Optional[Configuration] = None
+) -> List[Dict[str, Any]]:
+    """Select and execute a search API with fallback support.
+    
+    Args:
+        query (str): The search query
+        search_api (SearchAPI): The search API to use
+        search_params (Dict[str, Any]): The search parameters
+        config (Optional[Configuration], optional): The configuration. Defaults to None.
+        
+    Returns:
+        List[Dict[str, Any]]: The search results
+    """
+    if not config:
+        config = Configuration()
+    
+    # Check cache first if enabled
+    if config.enable_search_cache:
+        cache_k = cache_key(query, search_api, search_params)
+        clear_expired_cache(config.cache_ttl)
+        
+        if cache_k in _search_cache:
+            logger.debug(f"Cache hit for query: {query}")
+            return _search_cache[cache_k]
+    
+    # Try primary search API
+    try:
+        logger.info(f"Executing search with {search_api.value} for query: {query}")
+        results = _execute_search(query, search_api, search_params)
+        
+        # Cache results if enabled
+        if config.enable_search_cache and results:
+            cache_k = cache_key(query, search_api, search_params)
+            _search_cache[cache_k] = results
+            _cache_timestamps[cache_k] = datetime.now()
+            logger.debug(f"Cached results for query: {query}")
+        
+        return results
+    except Exception as e:
+        logger.error(f"Error executing search with {search_api.value}: {str(e)}")
+        logger.debug(f"Error details: {traceback.format_exc()}")
+        
+        # Try fallback APIs if enabled
+        if config.enable_fallback_apis and config.fallback_apis:
+            for fallback_api in config.fallback_apis:
+                if fallback_api != search_api:
+                    try:
+                        logger.info(f"Trying fallback API {fallback_api.value} for query: {query}")
+                        results = _execute_search(query, fallback_api, search_params)
+                        
+                        # Cache results if enabled
+                        if config.enable_search_cache and results:
+                            cache_k = cache_key(query, fallback_api, search_params)
+                            _search_cache[cache_k] = results
+                            _cache_timestamps[cache_k] = datetime.now()
+                            logger.debug(f"Cached results from fallback API for query: {query}")
+                        
+                        return results
+                    except Exception as fallback_e:
+                        logger.error(f"Error executing fallback search with {fallback_api.value}: {str(fallback_e)}")
+                        logger.debug(f"Fallback error details: {traceback.format_exc()}")
+        
+        # If all APIs fail, return empty results
+        logger.error(f"All search APIs failed for query: {query}")
+        return []
+
+def _execute_search(query: str, search_api: SearchAPI, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Execute a search with the specified API.
     
     Args:
         query (str): The search query
@@ -100,31 +261,26 @@ def select_and_execute_search(query: str, search_api: SearchAPI, search_params: 
     Returns:
         List[Dict[str, Any]]: The search results
     """
-    try:
-        if search_api == SearchAPI.TAVILY:
-            return _execute_tavily_search(query, search_params)
-        elif search_api == SearchAPI.PERPLEXITY:
-            return _execute_perplexity_search(query, search_params)
-        elif search_api == SearchAPI.EXA:
-            return _execute_exa_search(query, search_params)
-        elif search_api == SearchAPI.ARXIV:
-            return _execute_arxiv_search(query, search_params)
-        elif search_api == SearchAPI.PUBMED:
-            return _execute_pubmed_search(query, search_params)
-        elif search_api == SearchAPI.LINKUP:
-            return _execute_linkup_search(query, search_params)
-        elif search_api == SearchAPI.DUCKDUCKGO:
-            return _execute_duckduckgo_search(query, search_params)
-        elif search_api == SearchAPI.GOOGLESEARCH:
-            return _execute_googlesearch_search(query, search_params)
-        else:
-            logger.warning(f"Unsupported search API: {search_api}. Falling back to Tavily.")
-            return _execute_tavily_search(query, search_params)
-    except Exception as e:
-        logger.error(f"Error executing search with {search_api}: {e}")
-        # Return empty results on error
-        return []
+    if search_api == SearchAPI.TAVILY:
+        return _execute_tavily_search(query, search_params)
+    elif search_api == SearchAPI.PERPLEXITY:
+        return _execute_perplexity_search(query, search_params)
+    elif search_api == SearchAPI.EXA:
+        return _execute_exa_search(query, search_params)
+    elif search_api == SearchAPI.ARXIV:
+        return _execute_arxiv_search(query, search_params)
+    elif search_api == SearchAPI.PUBMED:
+        return _execute_pubmed_search(query, search_params)
+    elif search_api == SearchAPI.LINKUP:
+        return _execute_linkup_search(query, search_params)
+    elif search_api == SearchAPI.DUCKDUCKGO:
+        return _execute_duckduckgo_search(query, search_params)
+    elif search_api == SearchAPI.GOOGLESEARCH:
+        return _execute_googlesearch_search(query, search_params)
+    else:
+        raise ValueError(f"Unsupported search API: {search_api}")
 
+@with_retry()
 def _execute_tavily_search(query: str, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Execute a Tavily search.
     
@@ -147,20 +303,26 @@ def _execute_tavily_search(query: str, search_params: Dict[str, Any]) -> List[Di
         search_depth = search_params.get("search_depth", "basic")
         max_results = search_params.get("max_results", 10)
         
+        logger.debug(f"Executing Tavily search with depth={search_depth}, max_results={max_results}")
+        
         response = client.search(
             query=query,
             search_depth=search_depth,
             max_results=max_results
         )
         
-        return response.get("results", [])
+        results = response.get("results", [])
+        logger.debug(f"Tavily search returned {len(results)} results")
+        
+        return results
     except ImportError:
         logger.error("Tavily package not installed. Please install with 'pip install tavily'")
-        return []
+        raise
     except Exception as e:
-        logger.error(f"Error executing Tavily search: {e}")
-        return []
+        logger.error(f"Error executing Tavily search: {str(e)}")
+        raise
 
+@with_retry()
 def _execute_perplexity_search(query: str, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Execute a Perplexity search.
     
@@ -183,20 +345,25 @@ def _execute_perplexity_search(query: str, search_params: Dict[str, Any]) -> Lis
             "Content-Type": "application/json"
         }
         
+        max_results = search_params.get("max_results", 10)
+        
         data = {
             "query": query,
-            "max_results": search_params.get("max_results", 10)
+            "max_results": max_results
         }
+        
+        logger.debug(f"Executing Perplexity search with max_results={max_results}")
         
         response = requests.post(
             "https://api.perplexity.ai/search",
             headers=headers,
-            json=data
+            json=data,
+            timeout=30  # Add timeout to prevent hanging
         )
         
         if response.status_code != 200:
             logger.error(f"Perplexity API error: {response.status_code} - {response.text}")
-            return []
+            raise ValueError(f"Perplexity API error: {response.status_code} - {response.text}")
         
         results = response.json().get("results", [])
         
@@ -210,14 +377,17 @@ def _execute_perplexity_search(query: str, search_params: Dict[str, Any]) -> Lis
                 "score": result.get("relevance_score", 0)
             })
         
+        logger.debug(f"Perplexity search returned {len(formatted_results)} results")
+        
         return formatted_results
     except ImportError:
         logger.error("Requests package not installed. Please install with 'pip install requests'")
-        return []
+        raise
     except Exception as e:
-        logger.error(f"Error executing Perplexity search: {e}")
-        return []
+        logger.error(f"Error executing Perplexity search: {str(e)}")
+        raise
 
+@with_retry()
 def _execute_exa_search(query: str, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Execute an Exa search.
     
@@ -238,11 +408,14 @@ def _execute_exa_search(query: str, search_params: Dict[str, Any]) -> List[Dict[
         exa = Exa(api_key=api_key)
         
         max_results = search_params.get("max_results", 10)
+        use_autoprompt = search_params.get("use_autoprompt", True)
+        
+        logger.debug(f"Executing Exa search with max_results={max_results}, use_autoprompt={use_autoprompt}")
         
         response = exa.search(
             query=query,
             num_results=max_results,
-            use_autoprompt=search_params.get("use_autoprompt", True)
+            use_autoprompt=use_autoprompt
         )
         
         # Format results to match Tavily format
@@ -255,14 +428,17 @@ def _execute_exa_search(query: str, search_params: Dict[str, Any]) -> List[Dict[
                 "score": result.relevance_score
             })
         
+        logger.debug(f"Exa search returned {len(formatted_results)} results")
+        
         return formatted_results
     except ImportError:
         logger.error("Exa package not installed. Please install with 'pip install exa-py'")
-        return []
+        raise
     except Exception as e:
-        logger.error(f"Error executing Exa search: {e}")
-        return []
+        logger.error(f"Error executing Exa search: {str(e)}")
+        raise
 
+@with_retry()
 def _execute_arxiv_search(query: str, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Execute an arXiv search.
     
@@ -277,6 +453,8 @@ def _execute_arxiv_search(query: str, search_params: Dict[str, Any]) -> List[Dic
         import arxiv
         
         max_results = search_params.get("max_results", 10)
+        
+        logger.debug(f"Executing arXiv search with max_results={max_results}")
         
         client = arxiv.Client()
         search = arxiv.Search(
@@ -299,14 +477,17 @@ def _execute_arxiv_search(query: str, search_params: Dict[str, Any]) -> List[Dic
                 "score": 1.0  # arXiv doesn't provide relevance scores
             })
         
+        logger.debug(f"arXiv search returned {len(formatted_results)} results")
+        
         return formatted_results
     except ImportError:
         logger.error("arXiv package not installed. Please install with 'pip install arxiv'")
-        return []
+        raise
     except Exception as e:
-        logger.error(f"Error executing arXiv search: {e}")
-        return []
+        logger.error(f"Error executing arXiv search: {str(e)}")
+        raise
 
+@with_retry()
 def _execute_pubmed_search(query: str, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Execute a PubMed search.
     
@@ -323,6 +504,8 @@ def _execute_pubmed_search(query: str, search_params: Dict[str, Any]) -> List[Di
         max_results = search_params.get("max_results", 10)
         email = search_params.get("email", "example@example.com")
         
+        logger.debug(f"Executing PubMed search with max_results={max_results}")
+        
         pubmed = PubMed(tool="WiseflowResearch", email=email)
         results = pubmed.query(query, max_results=max_results)
         
@@ -338,14 +521,17 @@ def _execute_pubmed_search(query: str, search_params: Dict[str, Any]) -> List[Di
                 "score": 1.0  # PubMed doesn't provide relevance scores
             })
         
+        logger.debug(f"PubMed search returned {len(formatted_results)} results")
+        
         return formatted_results
     except ImportError:
         logger.error("PyMed package not installed. Please install with 'pip install pymed'")
-        return []
+        raise
     except Exception as e:
-        logger.error(f"Error executing PubMed search: {e}")
-        return []
+        logger.error(f"Error executing PubMed search: {str(e)}")
+        raise
 
+@with_retry()
 def _execute_linkup_search(query: str, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Execute a LinkUp search.
     
@@ -368,20 +554,25 @@ def _execute_linkup_search(query: str, search_params: Dict[str, Any]) -> List[Di
             "Content-Type": "application/json"
         }
         
+        max_results = search_params.get("max_results", 10)
+        
         data = {
             "query": query,
-            "limit": search_params.get("max_results", 10)
+            "limit": max_results
         }
+        
+        logger.debug(f"Executing LinkUp search with max_results={max_results}")
         
         response = requests.post(
             "https://api.linkup.com/v1/search",
             headers=headers,
-            json=data
+            json=data,
+            timeout=30  # Add timeout to prevent hanging
         )
         
         if response.status_code != 200:
             logger.error(f"LinkUp API error: {response.status_code} - {response.text}")
-            return []
+            raise ValueError(f"LinkUp API error: {response.status_code} - {response.text}")
         
         results = response.json().get("results", [])
         
@@ -397,14 +588,17 @@ def _execute_linkup_search(query: str, search_params: Dict[str, Any]) -> List[Di
                 "score": result.get("relevance_score", 0)
             })
         
+        logger.debug(f"LinkUp search returned {len(formatted_results)} results")
+        
         return formatted_results
     except ImportError:
         logger.error("Requests package not installed. Please install with 'pip install requests'")
-        return []
+        raise
     except Exception as e:
-        logger.error(f"Error executing LinkUp search: {e}")
-        return []
+        logger.error(f"Error executing LinkUp search: {str(e)}")
+        raise
 
+@with_retry()
 def _execute_duckduckgo_search(query: str, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Execute a DuckDuckGo search.
     
@@ -420,6 +614,8 @@ def _execute_duckduckgo_search(query: str, search_params: Dict[str, Any]) -> Lis
         
         max_results = search_params.get("max_results", 10)
         
+        logger.debug(f"Executing DuckDuckGo search with max_results={max_results}")
+        
         ddgs = DDGS()
         results = list(ddgs.text(query, max_results=max_results))
         
@@ -433,14 +629,17 @@ def _execute_duckduckgo_search(query: str, search_params: Dict[str, Any]) -> Lis
                 "score": 1.0  # DuckDuckGo doesn't provide relevance scores
             })
         
+        logger.debug(f"DuckDuckGo search returned {len(formatted_results)} results")
+        
         return formatted_results
     except ImportError:
         logger.error("DuckDuckGo Search package not installed. Please install with 'pip install duckduckgo-search'")
-        return []
+        raise
     except Exception as e:
-        logger.error(f"Error executing DuckDuckGo search: {e}")
-        return []
+        logger.error(f"Error executing DuckDuckGo search: {str(e)}")
+        raise
 
+@with_retry()
 def _execute_googlesearch_search(query: str, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Execute a Google search.
     
@@ -457,6 +656,8 @@ def _execute_googlesearch_search(query: str, search_params: Dict[str, Any]) -> L
         from bs4 import BeautifulSoup
         
         max_results = search_params.get("max_results", 10)
+        
+        logger.debug(f"Executing Google search with max_results={max_results}")
         
         # Get URLs from Google search
         urls = list(search(query, num_results=max_results))
@@ -483,7 +684,7 @@ def _execute_googlesearch_search(query: str, search_params: Dict[str, Any]) -> L
                     "score": 1.0  # Google search doesn't provide relevance scores
                 })
             except Exception as e:
-                logger.warning(f"Error fetching content for URL {url}: {e}")
+                logger.warning(f"Error fetching content for URL {url}: {str(e)}")
                 # Add URL without content
                 formatted_results.append({
                     "title": url,
@@ -492,11 +693,12 @@ def _execute_googlesearch_search(query: str, search_params: Dict[str, Any]) -> L
                     "score": 1.0
                 })
         
+        logger.debug(f"Google search returned {len(formatted_results)} results")
+        
         return formatted_results
     except ImportError:
         logger.error("Required packages not installed. Please install with 'pip install googlesearch-python requests beautifulsoup4'")
-        return []
+        raise
     except Exception as e:
-        logger.error(f"Error executing Google search: {e}")
-        return []
-
+        logger.error(f"Error executing Google search: {str(e)}")
+        raise
