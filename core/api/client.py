@@ -9,8 +9,26 @@ import logging
 import aiohttp
 import requests
 from typing import Dict, List, Any, Optional, Union
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+class APIClientError(Exception):
+    """Exception for API client errors."""
+    
+    def __init__(self, message: str, status_code: Optional[int] = None, response: Optional[Dict[str, Any]] = None):
+        """
+        Initialize the API client error.
+        
+        Args:
+            message: Error message
+            status_code: HTTP status code
+            response: API response
+        """
+        self.message = message
+        self.status_code = status_code
+        self.response = response
+        super().__init__(self.message)
 
 class WiseFlowClient:
     """Client for interacting with the WiseFlow API."""
@@ -27,7 +45,9 @@ class WiseFlowClient:
         self.api_key = api_key
         self.headers = {
             "X-API-Key": api_key,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "WiseFlowClient/1.0"
         }
     
     def _get_url(self, endpoint: str) -> str:
@@ -42,22 +62,98 @@ class WiseFlowClient:
         """
         return f"{self.base_url}/{endpoint.lstrip('/')}"
     
+    def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
+        """
+        Handle API response.
+        
+        Args:
+            response: HTTP response
+            
+        Returns:
+            Dict[str, Any]: Response data
+            
+        Raises:
+            APIClientError: If the response indicates an error
+        """
+        try:
+            response_data = response.json()
+            
+            # Check for error response
+            if response.status_code >= 400:
+                error_message = response_data.get("message", "Unknown error")
+                error_code = response_data.get("error_code", "UNKNOWN")
+                raise APIClientError(
+                    message=f"{error_code}: {error_message}",
+                    status_code=response.status_code,
+                    response=response_data
+                )
+            
+            # Return data field if present, otherwise return the whole response
+            if isinstance(response_data, dict) and "data" in response_data:
+                return response_data["data"]
+            
+            return response_data
+        except json.JSONDecodeError:
+            raise APIClientError(
+                message=f"Invalid JSON response: {response.text}",
+                status_code=response.status_code
+            )
+    
+    async def _handle_async_response(self, response: aiohttp.ClientResponse) -> Dict[str, Any]:
+        """
+        Handle asynchronous API response.
+        
+        Args:
+            response: HTTP response
+            
+        Returns:
+            Dict[str, Any]: Response data
+            
+        Raises:
+            APIClientError: If the response indicates an error
+        """
+        try:
+            response_data = await response.json()
+            
+            # Check for error response
+            if response.status >= 400:
+                error_message = response_data.get("message", "Unknown error")
+                error_code = response_data.get("error_code", "UNKNOWN")
+                raise APIClientError(
+                    message=f"{error_code}: {error_message}",
+                    status_code=response.status,
+                    response=response_data
+                )
+            
+            # Return data field if present, otherwise return the whole response
+            if isinstance(response_data, dict) and "data" in response_data:
+                return response_data["data"]
+            
+            return response_data
+        except json.JSONDecodeError:
+            raise APIClientError(
+                message=f"Invalid JSON response: {await response.text()}",
+                status_code=response.status
+            )
+    
     def health_check(self) -> Dict[str, Any]:
         """
         Check the health of the API.
         
         Returns:
             Dict[str, Any]: Health check response
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/health")
         
         try:
             response = requests.get(url)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Health check failed: {str(e)}")
-            return {"status": "error", "message": str(e)}
+            raise APIClientError(message=f"Health check failed: {str(e)}")
     
     def process_content(
         self,
@@ -83,6 +179,9 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: The processing result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/process")
         
@@ -98,11 +197,10 @@ class WiseFlowClient:
         
         try:
             response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Content processing failed: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Content processing failed: {str(e)}")
     
     def batch_process(
         self,
@@ -124,6 +222,9 @@ class WiseFlowClient:
             
         Returns:
             List[Dict[str, Any]]: The processing results
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/batch-process")
         
@@ -137,11 +238,10 @@ class WiseFlowClient:
         
         try:
             response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Batch processing failed: {str(e)}")
-            return [{"error": str(e)}]
+            raise APIClientError(message=f"Batch processing failed: {str(e)}")
     
     def extract_information(
         self,
@@ -165,6 +265,9 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: The extraction result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/integration/extract")
         
@@ -180,11 +283,10 @@ class WiseFlowClient:
         
         try:
             response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Information extraction failed: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Information extraction failed: {str(e)}")
     
     def analyze_content(
         self,
@@ -208,6 +310,9 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: The analysis result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/integration/analyze")
         
@@ -223,11 +328,10 @@ class WiseFlowClient:
         
         try:
             response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Content analysis failed: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Content analysis failed: {str(e)}")
     
     def contextual_understanding(
         self,
@@ -251,6 +355,9 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: The contextual understanding result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/integration/contextual")
         
@@ -266,11 +373,10 @@ class WiseFlowClient:
         
         try:
             response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Contextual understanding failed: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Contextual understanding failed: {str(e)}")
     
     # Webhook management methods
     def list_webhooks(self) -> List[Dict[str, Any]]:
@@ -279,16 +385,18 @@ class WiseFlowClient:
         
         Returns:
             List[Dict[str, Any]]: List of webhook configurations
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/webhooks")
         
         try:
             response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Failed to list webhooks: {str(e)}")
-            return []
+            raise APIClientError(message=f"Failed to list webhooks: {str(e)}")
     
     def register_webhook(
         self,
@@ -310,6 +418,9 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: Webhook registration result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/webhooks")
         
@@ -323,11 +434,10 @@ class WiseFlowClient:
         
         try:
             response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Failed to register webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to register webhook: {str(e)}")
     
     def get_webhook(self, webhook_id: str) -> Dict[str, Any]:
         """
@@ -338,16 +448,18 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: Webhook configuration
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
         
         try:
             response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Failed to get webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to get webhook: {str(e)}")
     
     def update_webhook(
         self,
@@ -371,6 +483,9 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: Webhook update result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
         
@@ -388,11 +503,10 @@ class WiseFlowClient:
         
         try:
             response = requests.put(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Failed to update webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to update webhook: {str(e)}")
     
     def delete_webhook(self, webhook_id: str) -> Dict[str, Any]:
         """
@@ -403,16 +517,18 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: Webhook deletion result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
         
         try:
             response = requests.delete(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Failed to delete webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to delete webhook: {str(e)}")
     
     def trigger_webhook(
         self,
@@ -430,6 +546,9 @@ class WiseFlowClient:
             
         Returns:
             Dict[str, Any]: Webhook trigger result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/webhooks/trigger")
         
@@ -441,62 +560,167 @@ class WiseFlowClient:
         
         try:
             response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
+            return self._handle_response(response)
+        except requests.RequestException as e:
             logger.error(f"Failed to trigger webhook: {str(e)}")
-            return {"error": str(e)}
-
-
-class AsyncWiseFlowClient:
-    """Asynchronous client for interacting with the WiseFlow API."""
+            raise APIClientError(message=f"Failed to trigger webhook: {str(e)}")
     
-    def __init__(self, base_url: str, api_key: str):
+    # Information processing methods
+    def get_information(self, information_id: str) -> Dict[str, Any]:
         """
-        Initialize the asynchronous WiseFlow API client.
+        Get information by ID.
         
         Args:
-            base_url: Base URL of the WiseFlow API
-            api_key: API key for authentication
-        """
-        self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
-        self.headers = {
-            "X-API-Key": api_key,
-            "Content-Type": "application/json"
-        }
-    
-    def _get_url(self, endpoint: str) -> str:
-        """
-        Get the full URL for an endpoint.
-        
-        Args:
-            endpoint: API endpoint
+            information_id: Information ID
             
         Returns:
-            str: Full URL
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
         """
-        return f"{self.base_url}/{endpoint.lstrip('/')}"
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
     
-    async def health_check(self) -> Dict[str, Any]:
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Check the health of the API.
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    # Async methods
+    async def async_health_check(self) -> Dict[str, Any]:
+        """
+        Check the health of the API asynchronously.
         
         Returns:
             Dict[str, Any]: Health check response
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/health")
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Health check failed: {str(e)}")
-            return {"status": "error", "message": str(e)}
+            raise APIClientError(message=f"Health check failed: {str(e)}")
     
-    async def process_content(
+    async def async_process_content(
         self,
         content: str,
         focus_point: str,
@@ -507,7 +731,7 @@ class AsyncWiseFlowClient:
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Process content using specialized prompting strategies.
+        Process content using specialized prompting strategies asynchronously.
         
         Args:
             content: The content to process
@@ -520,6 +744,9 @@ class AsyncWiseFlowClient:
             
         Returns:
             Dict[str, Any]: The processing result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/process")
         
@@ -536,13 +763,12 @@ class AsyncWiseFlowClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Content processing failed: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Content processing failed: {str(e)}")
     
-    async def batch_process(
+    async def async_batch_process(
         self,
         items: List[Dict[str, Any]],
         focus_point: str,
@@ -551,7 +777,7 @@ class AsyncWiseFlowClient:
         max_concurrency: int = 5
     ) -> List[Dict[str, Any]]:
         """
-        Process multiple items concurrently.
+        Process multiple items concurrently asynchronously.
         
         Args:
             items: List of items to process
@@ -562,6 +788,9 @@ class AsyncWiseFlowClient:
             
         Returns:
             List[Dict[str, Any]]: The processing results
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/batch-process")
         
@@ -576,14 +805,12 @@ class AsyncWiseFlowClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Batch processing failed: {str(e)}")
-            return [{"error": str(e)}]
+            raise APIClientError(message=f"Batch processing failed: {str(e)}")
     
-    # Integration endpoints
-    async def extract_information(
+    async def async_extract_information(
         self,
         content: str,
         focus_point: str,
@@ -593,7 +820,7 @@ class AsyncWiseFlowClient:
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Extract information from content.
+        Extract information from content asynchronously.
         
         Args:
             content: The content to process
@@ -605,6 +832,9 @@ class AsyncWiseFlowClient:
             
         Returns:
             Dict[str, Any]: The extraction result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/integration/extract")
         
@@ -621,13 +851,12 @@ class AsyncWiseFlowClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Information extraction failed: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Information extraction failed: {str(e)}")
     
-    async def analyze_content(
+    async def async_analyze_content(
         self,
         content: str,
         focus_point: str,
@@ -637,7 +866,7 @@ class AsyncWiseFlowClient:
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Analyze content using multi-step reasoning.
+        Analyze content using multi-step reasoning asynchronously.
         
         Args:
             content: The content to process
@@ -649,6 +878,9 @@ class AsyncWiseFlowClient:
             
         Returns:
             Dict[str, Any]: The analysis result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/integration/analyze")
         
@@ -665,13 +897,12 @@ class AsyncWiseFlowClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Content analysis failed: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Content analysis failed: {str(e)}")
     
-    async def contextual_understanding(
+    async def async_contextual_understanding(
         self,
         content: str,
         focus_point: str,
@@ -681,7 +912,7 @@ class AsyncWiseFlowClient:
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Process content with contextual understanding.
+        Process content with contextual understanding asynchronously.
         
         Args:
             content: The content to process
@@ -693,6 +924,9 @@ class AsyncWiseFlowClient:
             
         Returns:
             Dict[str, Any]: The contextual understanding result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/integration/contextual")
         
@@ -709,32 +943,32 @@ class AsyncWiseFlowClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Contextual understanding failed: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Contextual understanding failed: {str(e)}")
     
-    # Webhook management methods
-    async def list_webhooks(self) -> List[Dict[str, Any]]:
+    async def async_list_webhooks(self) -> List[Dict[str, Any]]:
         """
-        List all registered webhooks.
+        List all registered webhooks asynchronously.
         
         Returns:
             List[Dict[str, Any]]: List of webhook configurations
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/webhooks")
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Failed to list webhooks: {str(e)}")
-            return []
+            raise APIClientError(message=f"Failed to list webhooks: {str(e)}")
     
-    async def register_webhook(
+    async def async_register_webhook(
         self,
         endpoint: str,
         events: List[str],
@@ -743,7 +977,7 @@ class AsyncWiseFlowClient:
         description: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Register a new webhook.
+        Register a new webhook asynchronously.
         
         Args:
             endpoint: Webhook endpoint URL
@@ -754,6 +988,9 @@ class AsyncWiseFlowClient:
             
         Returns:
             Dict[str, Any]: Webhook registration result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/webhooks")
         
@@ -768,34 +1005,35 @@ class AsyncWiseFlowClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Failed to register webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to register webhook: {str(e)}")
     
-    async def get_webhook(self, webhook_id: str) -> Dict[str, Any]:
+    async def async_get_webhook(self, webhook_id: str) -> Dict[str, Any]:
         """
-        Get a webhook by ID.
+        Get a webhook by ID asynchronously.
         
         Args:
             webhook_id: Webhook ID
             
         Returns:
             Dict[str, Any]: Webhook configuration
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Failed to get webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to get webhook: {str(e)}")
     
-    async def update_webhook(
+    async def async_update_webhook(
         self,
         webhook_id: str,
         endpoint: Optional[str] = None,
@@ -805,7 +1043,7 @@ class AsyncWiseFlowClient:
         description: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Update an existing webhook.
+        Update an existing webhook asynchronously.
         
         Args:
             webhook_id: ID of the webhook to update
@@ -817,6 +1055,9 @@ class AsyncWiseFlowClient:
             
         Returns:
             Dict[str, Any]: Webhook update result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
         
@@ -835,41 +1076,42 @@ class AsyncWiseFlowClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.put(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Failed to update webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to update webhook: {str(e)}")
     
-    async def delete_webhook(self, webhook_id: str) -> Dict[str, Any]:
+    async def async_delete_webhook(self, webhook_id: str) -> Dict[str, Any]:
         """
-        Delete a webhook.
+        Delete a webhook asynchronously.
         
         Args:
             webhook_id: ID of the webhook to delete
             
         Returns:
             Dict[str, Any]: Webhook deletion result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url(f"/api/v1/webhooks/{webhook_id}")
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.delete(url, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Failed to delete webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to delete webhook: {str(e)}")
     
-    async def trigger_webhook(
+    async def async_trigger_webhook(
         self,
         event: str,
         data: Dict[str, Any],
         async_mode: bool = True
     ) -> Dict[str, Any]:
         """
-        Trigger webhooks for a specific event.
+        Trigger webhooks for a specific event asynchronously.
         
         Args:
             event: Event name
@@ -878,6 +1120,9 @@ class AsyncWiseFlowClient:
             
         Returns:
             Dict[str, Any]: Webhook trigger result
+            
+        Raises:
+            APIClientError: If the request fails
         """
         url = self._get_url("/api/v1/webhooks/trigger")
         
@@ -890,8 +1135,2062 @@ class AsyncWiseFlowClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
-        except Exception as e:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
             logger.error(f"Failed to trigger webhook: {str(e)}")
-            return {"error": str(e)}
+            raise APIClientError(message=f"Failed to trigger webhook: {str(e)}")
+    
+    async def async_get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID asynchronously.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self.headers) as response:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    async def async_list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items asynchronously.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, headers=self.headers) as response:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    async def async_process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point asynchronously.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=self.headers) as response:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    async def async_generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items asynchronously.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=self.headers) as response:
+                    return await self._handle_async_response(response)
+        except aiohttp.ClientError as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to list information: {str(e)}")
+            raise APIClientError(message=f"Failed to list information: {str(e)}")
+    
+    def process_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process sources based on a focus point.
+        
+        Args:
+            sources: List of sources to process
+            focus_point: Focus point for processing
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Process response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/process")
+        
+        payload = {
+            "sources": sources,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to process sources: {str(e)}")
+            raise APIClientError(message=f"Failed to process sources: {str(e)}")
+    
+    def generate_summary(
+        self,
+        information_ids: List[str],
+        focus_point: str,
+        explanation: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary from multiple information items.
+        
+        Args:
+            information_ids: List of information IDs to summarize
+            focus_point: Focus point for summarization
+            explanation: Additional explanation or context
+            
+        Returns:
+            Dict[str, Any]: Summary response
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information/summary")
+        
+        payload = {
+            "information_ids": information_ids,
+            "focus_point": focus_point,
+            "explanation": explanation
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to generate summary: {str(e)}")
+            raise APIClientError(message=f"Failed to generate summary: {str(e)}")
+    
+    def get_information(self, information_id: str) -> Dict[str, Any]:
+        """
+        Get information by ID.
+        
+        Args:
+            information_id: Information ID
+            
+        Returns:
+            Dict[str, Any]: Information details
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url(f"/api/v1/information/{information_id}")
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            return self._handle_response(response)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get information: {str(e)}")
+            raise APIClientError(message=f"Failed to get information: {str(e)}")
+    
+    def list_information(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        focus_point: Optional[str] = None,
+        source_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List information items.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            focus_point: Filter by focus point
+            source_type: Filter by source type
+            
+        Returns:
+            Dict[str, Any]: Paginated list of information items
+            
+        Raises:
+            APIClientError: If the request fails
+        """
+        url = self._get_url("/api/v1/information")
+        
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+        
+        if focus_point:
+            params["focus_point"] = focus_point
+        if source_type:
+            params["source_type"] = source_type
