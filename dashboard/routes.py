@@ -59,6 +59,31 @@ async def database_management(request: Request):
         {"request": request}
     )
 
+# New routes for parallel research flows
+@router.get("/parallel-research", response_class=HTMLResponse)
+async def parallel_research_dashboard(request: Request):
+    """Serve the parallel research dashboard page."""
+    return templates.TemplateResponse(
+        "parallel_research_dashboard.html", 
+        {"request": request}
+    )
+
+@router.get("/parallel-research/start", response_class=HTMLResponse)
+async def parallel_research_start(request: Request):
+    """Serve the form for starting new research flows."""
+    return templates.TemplateResponse(
+        "parallel_research_start.html", 
+        {"request": request}
+    )
+
+@router.get("/parallel-research/{flow_id}", response_class=HTMLResponse)
+async def parallel_research_detail(request: Request, flow_id: str):
+    """Serve the detailed view of a specific research flow."""
+    return templates.TemplateResponse(
+        "parallel_research_detail.html", 
+        {"request": request, "flow_id": flow_id}
+    )
+
 @router.get("/plugins", response_class=HTMLResponse)
 async def plugins_info(request: Request):
     """Get information about available plugins."""

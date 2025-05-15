@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Start New Research Flow - WiseFlow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/parallel_research.css">
+</head>
+<body>
+    <a href="#main-content" class="visually-hidden-focusable skip-link">Skip to main content</a>
+    
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark" aria-label="Main navigation">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#" aria-label="WiseFlow Home">WiseFlow</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="/dashboard/parallel-research">Parallel Research</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/data-mining">Data Mining</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/templates">Templates</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/database">Database</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/visualization">Visualization</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/settings">Settings</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main id="main-content" class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>Start New Research Flow</h1>
+            <a href="/dashboard/parallel-research" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <form id="new-research-flow-form">
+                    <div class="mb-3">
+                        <label for="flow-name" class="form-label">Flow Name</label>
+                        <input type="text" class="form-control" id="flow-name" required placeholder="Enter a descriptive name for this research flow">
+                    </div>
+                    <div class="mb-3">
+                        <label for="flow-description" class="form-label">Description</label>
+                        <textarea class="form-control" id="flow-description" rows="3" placeholder="Describe the purpose and goals of this research flow"></textarea>
+                    </div>
+
+                    <h3 class="mt-4 mb-3">Research Tasks</h3>
+                    <p class="text-muted">Add one or more research tasks to run in parallel</p>
+
+                    <div id="tasks-container">
+                        <!-- Task templates will be added here dynamically -->
+                    </div>
+
+                    <div class="mb-3 mt-3">
+                        <button type="button" class="btn btn-outline-primary" id="add-task-btn">
+                            <i class="bi bi-plus-circle"></i> Add Task
+                        </button>
+                    </div>
+
+                    <div class="d-flex justify-content-between mt-4">
+                        <button type="button" class="btn btn-outline-secondary" id="save-as-template-btn">
+                            <i class="bi bi-save"></i> Save as Template
+                        </button>
+                        <div>
+                            <button type="button" class="btn btn-outline-secondary me-2" id="clear-form-btn">Clear Form</button>
+                            <button type="submit" class="btn btn-primary">Create Research Flow</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">Templates</h5>
+            </div>
+            <div class="card-body">
+                <div class="row" id="templates-container">
+                    <!-- Templates will be loaded here dynamically -->
+                    <div class="col-12 text-center">
+                        <p>No templates available</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Task Template (hidden) -->
+    <template id="task-template">
+        <div class="card mb-3 task-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Research Task</h5>
+                <button type="button" class="btn btn-sm btn-outline-danger remove-task-btn">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Task Name</label>
+                    <input type="text" class="form-control task-name" required placeholder="Enter task name">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Description</label>
+                    <textarea class="form-control task-description" rows="2" placeholder="Describe what this task will research"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Source Type</label>
+                    <select class="form-control task-source" required>
+                        <option value="">Select a source type</option>
+                        <option value="web">Web Search</option>
+                        <option value="github">GitHub</option>
+                        <option value="arxiv">ArXiv</option>
+                        <option value="youtube">YouTube</option>
+                        <option value="custom">Custom API</option>
+                    </select>
+                </div>
+                <div class="source-config-container">
+                    <!-- Source-specific configuration will be loaded here dynamically -->
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Source Config Templates (hidden) -->
+    <template id="web-source-template">
+        <div class="mb-3">
+            <label class="form-label">Search Query</label>
+            <input type="text" class="form-control config-search-query" required placeholder="Enter search query">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Max Results</label>
+            <input type="number" class="form-control config-max-results" value="10" min="1" max="50">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Time Range</label>
+            <select class="form-control config-time-range">
+                <option value="any">Any time</option>
+                <option value="day">Past 24 hours</option>
+                <option value="week">Past week</option>
+                <option value="month">Past month</option>
+                <option value="year">Past year</option>
+            </select>
+        </div>
+    </template>
+
+    <template id="github-source-template">
+        <div class="mb-3">
+            <label class="form-label">Repository</label>
+            <input type="text" class="form-control config-repository" placeholder="owner/repo">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Search Query</label>
+            <input type="text" class="form-control config-search-query" required placeholder="Enter search query">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Search Type</label>
+            <select class="form-control config-search-type">
+                <option value="code">Code</option>
+                <option value="issues">Issues</option>
+                <option value="prs">Pull Requests</option>
+                <option value="discussions">Discussions</option>
+            </select>
+        </div>
+    </template>
+
+    <template id="arxiv-source-template">
+        <div class="mb-3">
+            <label class="form-label">Search Query</label>
+            <input type="text" class="form-control config-search-query" required placeholder="Enter search query">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Categories</label>
+            <select class="form-control config-categories" multiple>
+                <option value="cs.AI">Computer Science - Artificial Intelligence</option>
+                <option value="cs.CL">Computer Science - Computation and Language</option>
+                <option value="cs.LG">Computer Science - Machine Learning</option>
+                <option value="stat.ML">Statistics - Machine Learning</option>
+                <option value="cs.CV">Computer Science - Computer Vision</option>
+                <option value="cs.NE">Computer Science - Neural and Evolutionary Computing</option>
+            </select>
+            <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple categories</small>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Max Results</label>
+            <input type="number" class="form-control config-max-results" value="10" min="1" max="50">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Sort By</label>
+            <select class="form-control config-sort-by">
+                <option value="relevance">Relevance</option>
+                <option value="lastUpdatedDate">Last Updated</option>
+                <option value="submittedDate">Submission Date</option>
+            </select>
+        </div>
+    </template>
+
+    <template id="youtube-source-template">
+        <div class="mb-3">
+            <label class="form-label">Search Query</label>
+            <input type="text" class="form-control config-search-query" required placeholder="Enter search query">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Max Results</label>
+            <input type="number" class="form-control config-max-results" value="10" min="1" max="50">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Content Type</label>
+            <select class="form-control config-content-type">
+                <option value="any">Any</option>
+                <option value="video">Videos</option>
+                <option value="channel">Channels</option>
+                <option value="playlist">Playlists</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Duration</label>
+            <select class="form-control config-duration">
+                <option value="any">Any</option>
+                <option value="short">Short (< 4 minutes)</option>
+                <option value="medium">Medium (4-20 minutes)</option>
+                <option value="long">Long (> 20 minutes)</option>
+            </select>
+        </div>
+    </template>
+
+    <template id="custom-source-template">
+        <div class="mb-3">
+            <label class="form-label">API Endpoint</label>
+            <input type="url" class="form-control config-api-endpoint" required placeholder="https://api.example.com/search">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Method</label>
+            <select class="form-control config-method">
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Parameters (JSON)</label>
+            <textarea class="form-control config-parameters" rows="4" placeholder='{"query": "example", "limit": 10}'></textarea>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Headers (JSON)</label>
+            <textarea class="form-control config-headers" rows="2" placeholder='{"Authorization": "Bearer YOUR_API_KEY"}'></textarea>
+        </div>
+    </template>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div id="toast-notification" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+                <strong class="me-auto" id="toast-title">Notification</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body" id="toast-message">
+                <!-- Toast message will be set dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/api_client.js"></script>
+    <script src="/static/js/event_bus.js"></script>
+    <script src="/static/js/utils.js"></script>
+    <script src="/static/js/parallel_research_start.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,241 @@
+/* Parallel Research Dashboard Styles */
+
+/* Status badges */
+.flow-status-badge .badge,
+.task-status-badge {
+    font-size: 0.9rem;
+    padding: 0.4rem 0.8rem;
+}
+
+.badge.status-pending {
+    background-color: #6c757d;
+}
+
+.badge.status-running {
+    background-color: #0d6efd;
+}
+
+.badge.status-completed {
+    background-color: #198754;
+}
+
+.badge.status-failed {
+    background-color: #dc3545;
+}
+
+.badge.status-paused {
+    background-color: #fd7e14;
+}
+
+.badge.status-cancelled {
+    background-color: #6c757d;
+}
+
+/* Progress bars */
+.progress-container {
+    margin-bottom: 1rem;
+}
+
+.progress {
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background-color: #e9ecef;
+}
+
+.progress-bar {
+    transition: width 0.6s ease;
+}
+
+/* Task cards */
+.task-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.task-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.task-card .card-header {
+    padding: 0.75rem 1rem;
+}
+
+.task-card .card-body {
+    padding: 1rem;
+}
+
+/* Statistics cards */
+.stat-card {
+    background-color: #f8f9fa;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    text-align: center;
+    height: 100%;
+}
+
+.stat-card h6 {
+    margin-bottom: 0.5rem;
+    color: #6c757d;
+}
+
+.stat-card .stat-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #212529;
+}
+
+/* Results display */
+.result-item .card {
+    border-left: 4px solid #0d6efd;
+}
+
+.result-item .card-header {
+    background-color: rgba(13, 110, 253, 0.05);
+}
+
+.result-content {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* Source type badges */
+.badge.source-web {
+    background-color: #0dcaf0;
+}
+
+.badge.source-github {
+    background-color: #6f42c1;
+}
+
+.badge.source-arxiv {
+    background-color: #20c997;
+}
+
+.badge.source-youtube {
+    background-color: #dc3545;
+}
+
+.badge.source-custom {
+    background-color: #6c757d;
+}
+
+/* Form elements */
+.task-source-config {
+    border-left: 3px solid #0d6efd;
+    padding-left: 1rem;
+    margin-top: 1rem;
+}
+
+/* Animation for loading states */
+@keyframes pulse {
+    0% {
+        opacity: 0.6;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0.6;
+    }
+}
+
+.loading-pulse {
+    animation: pulse 1.5s infinite ease-in-out;
+}
+
+/* Recent activity list */
+#recent-activity-list .list-group-item {
+    border-left: 3px solid transparent;
+    padding: 0.75rem 1rem;
+}
+
+#recent-activity-list .activity-running {
+    border-left-color: #0d6efd;
+}
+
+#recent-activity-list .activity-completed {
+    border-left-color: #198754;
+}
+
+#recent-activity-list .activity-failed {
+    border-left-color: #dc3545;
+}
+
+#recent-activity-list .activity-paused {
+    border-left-color: #fd7e14;
+}
+
+#recent-activity-list .activity-cancelled {
+    border-left-color: #6c757d;
+}
+
+.activity-timestamp {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+
+/* Templates section */
+.template-card {
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.template-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .flow-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .flow-actions .btn {
+        margin-bottom: 0.5rem;
+    }
+    
+    .stat-card .stat-value {
+        font-size: 1.25rem;
+    }
+}
+
+/* Accessibility improvements */
+.btn:focus, 
+.form-control:focus, 
+.form-select:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+.visually-hidden-focusable:not(:focus):not(:focus-within) {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .stat-card {
+        background-color: #212529;
+    }
+    
+    .stat-card h6 {
+        color: #adb5bd;
+    }
+    
+    .stat-card .stat-value {
+        color: #f8f9fa;
+    }
+    
+    .result-item .card-header {
+        background-color: rgba(13, 110, 253, 0.1);
+    }
+}
+
