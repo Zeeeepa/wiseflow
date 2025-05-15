@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research Flow Details - WiseFlow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/parallel_research.css">
+</head>
+<body>
+    <a href="#main-content" class="visually-hidden-focusable skip-link">Skip to main content</a>
+    
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark" aria-label="Main navigation">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#" aria-label="WiseFlow Home">WiseFlow</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="/dashboard/parallel-research">Parallel Research</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/data-mining">Data Mining</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/templates">Templates</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/database">Database</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/visualization">Visualization</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard/settings">Settings</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main id="main-content" class="container-fluid mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <a href="/dashboard/parallel-research" class="btn btn-outline-secondary mb-2">
+                    <i class="bi bi-arrow-left"></i> Back to Dashboard
+                </a>
+                <h1 id="flow-name">Research Flow Details</h1>
+                <p id="flow-description" class="text-muted"></p>
+            </div>
+            <div class="d-flex flex-column align-items-end">
+                <div class="flow-status-badge mb-2" id="flow-status-badge">
+                    <span class="badge bg-secondary">Unknown</span>
+                </div>
+                <div class="btn-group" id="flow-actions">
+                    <button type="button" class="btn btn-primary" id="start-flow-btn">
+                        <i class="bi bi-play-fill"></i> Start
+                    </button>
+                    <button type="button" class="btn btn-warning" id="pause-flow-btn">
+                        <i class="bi bi-pause-fill"></i> Pause
+                    </button>
+                    <button type="button" class="btn btn-success" id="resume-flow-btn">
+                        <i class="bi bi-play-fill"></i> Resume
+                    </button>
+                    <button type="button" class="btn btn-danger" id="cancel-flow-btn">
+                        <i class="bi bi-x-circle"></i> Cancel
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" id="add-task-btn">
+                        <i class="bi bi-plus-circle"></i> Add Task
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Overall Progress</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="progress-container">
+                            <div class="progress" style="height: 25px;">
+                                <div id="overall-progress-bar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between mt-2">
+                            <div>
+                                <strong>Started:</strong> <span id="flow-started-at">-</span>
+                            </div>
+                            <div>
+                                <strong>Tasks:</strong> <span id="tasks-summary">0 completed of 0 total</span>
+                            </div>
+                            <div>
+                                <strong>Completed:</strong> <span id="flow-completed-at">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Research Tasks</h5>
+                        <div class="btn-group" role="group" aria-label="Task filter options">
+                            <button type="button" class="btn btn-outline-secondary active" data-task-filter="all">All</button>
+                            <button type="button" class="btn btn-outline-secondary" data-task-filter="running">Running</button>
+                            <button type="button" class="btn btn-outline-secondary" data-task-filter="completed">Completed</button>
+                            <button type="button" class="btn btn-outline-secondary" data-task-filter="failed">Failed</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="tasks-container">
+                            <!-- Tasks will be loaded here dynamically -->
+                            <div class="text-center py-4" id="no-tasks-message">
+                                <p>No tasks found for this research flow.</p>
+                                <button type="button" class="btn btn-primary" id="add-first-task-btn">
+                                    <i class="bi bi-plus-circle"></i> Add Your First Task
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Task Distribution</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="task-status-chart"></canvas>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Source Distribution</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="source-distribution-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Research Results</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info" id="no-results-message">
+                            <i class="bi bi-info-circle"></i> Results will appear here as tasks complete.
+                        </div>
+                        <div id="results-container" class="d-none">
+                            <!-- Results will be loaded here dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Task Template (hidden) -->
+    <template id="task-card-template">
+        <div class="task-card mb-3">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="task-name mb-0">Task Name</h5>
+                    <div class="task-actions">
+                        <span class="badge task-status-badge me-2">Status</span>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                Actions
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><button class="dropdown-item view-results-btn" type="button">View Results</button></li>
+                                <li><button class="dropdown-item pause-task-btn" type="button">Pause</button></li>
+                                <li><button class="dropdown-item resume-task-btn" type="button">Resume</button></li>
+                                <li><button class="dropdown-item cancel-task-btn" type="button">Cancel</button></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><button class="dropdown-item remove-task-btn" type="button">Remove</button></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p class="task-description text-muted"></p>
+                    <div class="d-flex justify-content-between mb-2">
+                        <div><strong>Source:</strong> <span class="task-source"></span></div>
+                        <div><strong>Progress:</strong> <span class="task-progress-text">0%</span></div>
+                    </div>
+                    <div class="progress mb-3">
+                        <div class="progress-bar task-progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <div class="d-flex justify-content-between task-timestamps">
+                        <div><small>Created: <span class="task-created-at"></span></small></div>
+                        <div><small>Started: <span class="task-started-at">-</span></small></div>
+                        <div><small>Completed: <span class="task-completed-at">-</span></small></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Result Item Template (hidden) -->
+    <template id="result-item-template">
+        <div class="result-item mb-4">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="result-title mb-0">Result Title</h5>
+                    <div>
+                        <span class="badge bg-secondary result-source">Source</span>
+                        <button class="btn btn-sm btn-outline-primary ms-2 export-result-btn">
+                            <i class="bi bi-download"></i> Export
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="result-content"></div>
+                    <div class="mt-3">
+                        <small class="text-muted">From task: <span class="result-task-name"></span></small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Add Task Modal -->
+    <div class="modal fade" id="add-task-modal" tabindex="-1" aria-labelledby="add-task-modal-label" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="add-task-modal-label">Add New Research Task</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="add-task-form">
+                        <div class="mb-3">
+                            <label for="task-name" class="form-label">Task Name</label>
+                            <input type="text" class="form-control" id="task-name" required placeholder="Enter task name">
+                        </div>
+                        <div class="mb-3">
+                            <label for="task-description" class="form-label">Description</label>
+                            <textarea class="form-control" id="task-description" rows="2" placeholder="Describe what this task will research"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="task-source" class="form-label">Source Type</label>
+                            <select class="form-control" id="task-source" required>
+                                <option value="">Select a source type</option>
+                                <option value="web">Web Search</option>
+                                <option value="github">GitHub</option>
+                                <option value="arxiv">ArXiv</option>
+                                <option value="youtube">YouTube</option>
+                                <option value="custom">Custom API</option>
+                            </select>
+                        </div>
+                        <div id="source-config-container">
+                            <!-- Source-specific configuration will be loaded here dynamically -->
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="save-task-btn">Add Task</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Results Modal -->
+    <div class="modal fade" id="task-results-modal" tabindex="-1" aria-labelledby="task-results-modal-label" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="task-results-modal-label">Task Results</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="task-results-container">
+                    <!-- Task results will be loaded here dynamically -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="export-all-results-btn">Export All Results</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div id="toast-notification" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+                <strong class="me-auto" id="toast-title">Notification</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body" id="toast-message">
+                <!-- Toast message will be set dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/js/api_client.js"></script>
+    <script src="/static/js/event_bus.js"></script>
+    <script src="/static/js/utils.js"></script>
+    <script src="/static/js/parallel_research_detail.js"></script>
+</body>
+</html>
+

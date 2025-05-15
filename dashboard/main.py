@@ -12,7 +12,7 @@ from dashboard.plugins import dashboard_plugin_manager
 from dashboard.routes import router as dashboard_router
 from dashboard.search_api import router as search_api_router
 from dashboard.data_mining_api import router as data_mining_api_router
-from dashboard.research_api import router as research_api_router
+from dashboard.parallel_research import ResearchFlow, ResearchTask, ResearchFlowManager, ResearchFlowStatus, ResearchTaskStatus
 from core.utils.pb_api import PbTalker
 import logging
 import os
@@ -72,6 +72,25 @@ class ConnectorRequest(BaseModel):
     config: Optional[Dict[str, Any]] = None
 
 
+class ResearchTaskRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    source: str
+    source_config: Dict[str, Any]
+
+class ResearchFlowRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    user_id: Optional[str] = None
+    tasks: Optional[List[ResearchTaskRequest]] = None
+
+class TaskStatusUpdateRequest(BaseModel):
+    status: str
+    progress: Optional[float] = None
+    results: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+
+
 app = FastAPI(
     title="wiseflow Backend Server",
     description="From WiseFlow Team.",
@@ -93,6 +112,7 @@ bs = BackendService()
 pb = PbTalker(logger)
 dashboard_manager = DashboardManager(pb)
 notification_manager = NotificationManager(pb)
+research_flow_manager = ResearchFlowManager(pb)  # Add research flow manager
 
 # Initialize dashboard plugin manager
 dashboard_plugin_manager.initialize()
@@ -108,9 +128,6 @@ app.include_router(search_api_router, prefix="/search")
 
 # Include data mining API router
 app.include_router(data_mining_api_router, prefix="/data-mining")
-
-# Include research API router
-app.include_router(research_api_router, prefix="/research")
 
 # Dashboard endpoints
 @app.get("/")
@@ -439,3 +456,172 @@ def configure_notification_settings(request: NotificationSettingsRequest):
     settings = configure_notifications(request.settings)
     
     return settings
+
+
+# Parallel Research Flow API endpoints
+@app.post("/research-flows", response_model=Dict[str, Any])
+def create_research_flow(request: ResearchFlowRequest):
+    """Create a new research flow."""
+    flow = research_flow_manager.create_flow(
+        name=request.name,
+        description=request.description,
+        user_id=request.user_id
+    )
+    
+    # Add tasks if provided
+    if request.tasks:
+        for task_request in request.tasks:
+            task = ResearchTask(
+                name=task_request.name,
+                description=task_request.description,
+                source=task_request.source,
+                source_config=task_request.source_config
+            )
+            research_flow_manager.add_task_to_flow(flow.flow_id, task)
+    
+    # Get the updated flow
+    flow = research_flow_manager.get_flow(flow.flow_id)
+    
+    return flow.to_dict()
+
+@app.get("/research-flows", response_model=List[Dict[str, Any]])
+def get_research_flows(user_id: Optional[str] = None, status: Optional[str] = None):
+    """Get all research flows for a user."""
+    status_enum = ResearchFlowStatus(status) if status else None
+    flows = research_flow_manager.get_all_flows(user_id, status_enum)
+    
+    return [flow.to_dict() for flow in flows]
+
+@app.get("/research-flows/{flow_id}", response_model=Dict[str, Any])
+def get_research_flow(flow_id: str):
+    """Get a research flow by ID."""
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    if not flow:
+        raise HTTPException(status_code=404, detail="Research flow not found")
+    
+    return flow.to_dict()
+
+@app.post("/research-flows/{flow_id}/tasks", response_model=Dict[str, Any])
+def add_task_to_flow(flow_id: str, request: ResearchTaskRequest):
+    """Add a task to a research flow."""
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    if not flow:
+        raise HTTPException(status_code=404, detail="Research flow not found")
+    
+    task = ResearchTask(
+        name=request.name,
+        description=request.description,
+        source=request.source,
+        source_config=request.source_config
+    )
+    
+    success = research_flow_manager.add_task_to_flow(flow_id, task)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to add task to flow")
+    
+    # Get the updated flow
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    return flow.to_dict()
+
+@app.delete("/research-flows/{flow_id}/tasks/{task_id}", response_model=Dict[str, bool])
+def remove_task_from_flow(flow_id: str, task_id: str):
+    """Remove a task from a research flow."""
+    success = research_flow_manager.remove_task_from_flow(flow_id, task_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Research flow or task not found")
+    
+    return {"success": success}
+
+@app.put("/research-flows/{flow_id}/tasks/{task_id}/status", response_model=Dict[str, Any])
+def update_task_status(flow_id: str, task_id: str, request: TaskStatusUpdateRequest):
+    """Update the status of a task in a research flow."""
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    if not flow:
+        raise HTTPException(status_code=404, detail="Research flow not found")
+    
+    status_enum = ResearchTaskStatus(request.status)
+    
+    success = research_flow_manager.update_task_status(
+        flow_id=flow_id,
+        task_id=task_id,
+        status=status_enum,
+        progress=request.progress,
+        results=request.results,
+        error_message=request.error_message
+    )
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found in flow")
+    
+    # Get the updated flow
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    return flow.to_dict()
+
+@app.post("/research-flows/{flow_id}/start", response_model=Dict[str, Any])
+def start_research_flow(flow_id: str):
+    """Start a research flow."""
+    success = research_flow_manager.start_flow(flow_id)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to start research flow")
+    
+    # Get the updated flow
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    return flow.to_dict()
+
+@app.post("/research-flows/{flow_id}/pause", response_model=Dict[str, Any])
+def pause_research_flow(flow_id: str):
+    """Pause a research flow."""
+    success = research_flow_manager.pause_flow(flow_id)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to pause research flow")
+    
+    # Get the updated flow
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    return flow.to_dict()
+
+@app.post("/research-flows/{flow_id}/resume", response_model=Dict[str, Any])
+def resume_research_flow(flow_id: str):
+    """Resume a paused research flow."""
+    success = research_flow_manager.resume_flow(flow_id)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to resume research flow")
+    
+    # Get the updated flow
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    return flow.to_dict()
+
+@app.post("/research-flows/{flow_id}/cancel", response_model=Dict[str, Any])
+def cancel_research_flow(flow_id: str):
+    """Cancel a research flow."""
+    success = research_flow_manager.cancel_flow(flow_id)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to cancel research flow")
+    
+    # Get the updated flow
+    flow = research_flow_manager.get_flow(flow_id)
+    
+    return flow.to_dict()
+
+@app.delete("/research-flows/{flow_id}", response_model=Dict[str, bool])
+def delete_research_flow(flow_id: str):
+    """Delete a research flow."""
+    success = research_flow_manager.delete_flow(flow_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Research flow not found")
+    
+    return {"success": success}
