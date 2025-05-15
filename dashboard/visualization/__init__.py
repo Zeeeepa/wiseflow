@@ -11,11 +11,15 @@ import json
 import os
 from datetime import datetime
 import uuid
+import weakref
 
 from core.analysis import KnowledgeGraph, Entity, Relationship
 from core.utils.pb_api import PbTalker
 
 logger = logging.getLogger(__name__)
+
+# Keep track of visualization instances for proper cleanup
+_visualization_instances = weakref.WeakSet()
 
 class Dashboard:
     """Base class for customizable dashboards."""
@@ -135,6 +139,13 @@ class Dashboard:
         dashboards_data = pb.read("dashboards", filter=filter_str)
         
         return [cls.from_dict(data) for data in dashboards_data]
+    
+    def __del__(self):
+        """Clean up resources when the dashboard is deleted."""
+        # Clear visualizations to help with garbage collection
+        if hasattr(self, 'visualizations'):
+            self.visualizations.clear()
+        logger.debug(f"Dashboard {self.dashboard_id} resources cleaned up")
 
 
 class Visualization:
@@ -162,6 +173,9 @@ class Visualization:
         self.config = config or {}
         self.created_at = datetime.now()
         self.updated_at = datetime.now()
+        
+        # Register instance for cleanup tracking
+        _visualization_instances.add(self)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert the visualization to a dictionary."""
@@ -210,6 +224,17 @@ class Visualization:
             "type": self.type,
             "data": {}
         }
+    
+    def __del__(self):
+        """Clean up resources when the visualization is deleted."""
+        # Close any open file handles or resources
+        self._cleanup_resources()
+        logger.debug(f"Visualization {self.visualization_id} resources cleaned up")
+    
+    def _cleanup_resources(self):
+        """Clean up any resources used by the visualization."""
+        # Base implementation does nothing, subclasses should override if needed
+        pass
 
 
 class KnowledgeGraphVisualization(Visualization):
@@ -228,6 +253,9 @@ class KnowledgeGraphVisualization(Visualization):
             data_source=data_source,
             config=config or {}
         )
+        
+        # Cache the graph data to avoid repeated file reads
+        self._cached_graph_data = None
     
     def render(self) -> Dict[str, Any]:
         """Render the knowledge graph visualization."""
@@ -279,7 +307,10 @@ class KnowledgeGraphVisualization(Visualization):
             if file_path and os.path.exists(file_path):
                 try:
                     with open(file_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
+                        data = json.load(f)
+                        # Cache the data to avoid repeated file reads
+                        self._cached_graph_data = data
+                        return data
                 except Exception as e:
                     logger.error(f"Error loading knowledge graph from file: {e}")
         
@@ -288,7 +319,7 @@ class KnowledgeGraphVisualization(Visualization):
             pass
         
         # Return empty graph if data source is invalid or data cannot be loaded
-        return {"entities": []}
+        return {"entities": [], "relationships": []}
     
     def _apply_filters(self, graph_data: Dict[str, Any]) -> Dict[str, Any]:
         """Apply filters to the knowledge graph data."""
@@ -317,6 +348,12 @@ class KnowledgeGraphVisualization(Visualization):
             filtered_entities.append(entity)
         
         return {"entities": filtered_entities}
+    
+    def _cleanup_resources(self):
+        """Clean up any resources used by the knowledge graph visualization."""
+        # Clear any cached data
+        if hasattr(self, '_cached_graph_data'):
+            del self._cached_graph_data
 
 
 class TrendVisualization(Visualization):
