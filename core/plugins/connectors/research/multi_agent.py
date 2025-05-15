@@ -1,6 +1,10 @@
-"""Multi-agent research graph implementation."""
+"""Multi-agent research graph implementation with enhanced coordination and error handling."""
 
-from typing import Literal, Dict, List, Any, Optional
+import logging
+import time
+import asyncio
+from typing import Literal, Dict, List, Any, Optional, Tuple, Set
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -27,8 +31,13 @@ from core.plugins.connectors.research.utils import (
     format_sections, 
     get_config_value, 
     get_search_params, 
-    select_and_execute_search
+    select_and_execute_search,
+    ResearchError,
+    SearchAPIError,
+    ConfigurationError
 )
+
+logger = logging.getLogger(__name__)
 
 # Multi-agent specific prompts
 
@@ -97,319 +106,649 @@ The final report should follow this structure:
 {report_structure}
 """
 
+COORDINATION_PROMPT = """You are the coordination agent in a multi-agent research system. Your role is to:
+
+1. Monitor the progress of all researcher agents
+2. Identify overlaps or gaps in the research
+3. Provide guidance to ensure comprehensive coverage of the topic
+4. Facilitate communication between researcher agents when needed
+
+Research Topic: {topic}
+Current Research Questions and Progress:
+{research_progress}
+
+Your task is to:
+1. Identify any overlaps where multiple agents are researching similar aspects
+2. Identify any gaps in the research that aren't being addressed
+3. Suggest adjustments to research questions to ensure comprehensive coverage
+4. Facilitate knowledge sharing between agents when beneficial
+
+Provide specific recommendations for each researcher agent to optimize the overall research effort.
+"""
+
 # Node functions
 
-async def supervisor_planning(state: ReportState, config: RunnableConfig):
-    """Supervisor agent plans the research approach.
+async def initialize_multi_agent_research(state: ReportState, config: RunnableConfig) -> Dict[str, Any]:
+    """Initialize the multi-agent research process.
     
-    This node:
-    1. Analyzes the research topic
-    2. Breaks it down into subtopics
-    3. Formulates research questions for each subtopic
+    Args:
+        state (ReportState): The current state
+        config (RunnableConfig): The configuration
+        
+    Returns:
+        Dict[str, Any]: Updated state with research questions
     """
-    # Get configuration
-    configuration = state.config or Configuration()
-    report_structure = configuration.report_structure
+    start_time = time.time()
+    logger.info(f"Initializing multi-agent research for topic: {state.topic}")
     
-    # Initialize supervisor model
-    supervisor_model = configuration.supervisor_model
-    provider, model = supervisor_model.split(":", 1) if ":" in supervisor_model else ("openai", supervisor_model)
-    
-    supervisor = init_chat_model(
-        provider=provider,
-        model=model
-    )
-    
-    # Determine number of researchers (subtopics)
-    num_researchers = 3  # Default to 3 researchers/subtopics
-    
-    # Generate research plan
-    prompt = SUPERVISOR_PROMPT.format(
-        topic=state.topic,
-        num_researchers=num_researchers,
-        report_structure=report_structure
-    )
-    
-    response = await supervisor.ainvoke([HumanMessage(content=prompt)])
-    plan_content = response.content
-    
-    # Extract research questions from the plan
-    research_questions = []
-    in_questions_section = False
-    
-    for line in plan_content.split("\n"):
-        line = line.strip()
+    try:
+        # Get configuration
+        configuration = state.config or Configuration()
+        num_researchers = configuration.num_researcher_agents
+        report_structure = configuration.report_structure
         
-        if "research question" in line.lower() or "subtopic" in line.lower():
-            in_questions_section = True
-            continue
-            
-        if in_questions_section and line and not line.startswith("#") and not "conclusion" in line.lower():
-            # Clean up the line
-            clean_line = line
-            if clean_line[0].isdigit() and clean_line[1:3] in [". ", ") "]:
-                clean_line = clean_line[3:].strip()
-            elif clean_line[0] in ["-", "*"]:
-                clean_line = clean_line[1:].strip()
-                
-            if ":" in clean_line:
-                clean_line = clean_line.split(":", 1)[1].strip()
-                
-            research_questions.append(clean_line)
-            
-        if in_questions_section and ("integration" in line.lower() or "conclusion" in line.lower()):
-            in_questions_section = False
-    
-    # If no questions were extracted, create default ones
-    if not research_questions:
-        research_questions = [
-            f"What is the background and context of {state.topic}?",
-            f"What are the key aspects and components of {state.topic}?",
-            f"What are the latest developments and future trends in {state.topic}?"
-        ]
-    
-    # Limit to the specified number of researchers
-    research_questions = research_questions[:num_researchers]
-    
-    # Create initial sections based on research questions
-    sections = []
-    for question in research_questions:
-        # Convert question to a section title
-        title = question.rstrip("?")
-        if title.startswith("What"):
-            title = title[4:].strip()
-            if title.startswith("is") or title.startswith("are"):
-                title = title[2:].strip()
-                
-        title = title.capitalize()
+        # Initialize supervisor model
+        supervisor_model_name = configuration.supervisor_model
+        provider, model = supervisor_model_name.split(":", 1) if ":" in supervisor_model_name else ("openai", supervisor_model_name)
         
-        sections.append(Section(
-            title=title,
-            content="",
-            subsections=[]
-        ))
-    
-    # Add introduction and conclusion sections
-    sections.insert(0, Section(title="Introduction", content="", subsections=[]))
-    sections.append(Section(title="Conclusion", content="", subsections=[]))
-    
-    # Update state
-    state.sections = Sections(sections=sections)
-    state.queries = [{"text": question, "metadata": {}} for question in research_questions]
-    
-    return state
+        supervisor = init_chat_model(
+            provider=provider,
+            model=model
+        )
+        
+        # Generate research questions
+        prompt = SUPERVISOR_PROMPT.format(
+            topic=state.topic,
+            num_researchers=num_researchers,
+            report_structure=report_structure
+        )
+        
+        response = await supervisor.ainvoke([HumanMessage(content=prompt)])
+        response_content = response.content
+        
+        # Extract research questions
+        research_questions = []
+        in_questions_section = False
+        
+        for line in response_content.split("\n"):
+            line = line.strip()
+            
+            # Look for sections that might contain research questions
+            if any(marker in line.lower() for marker in ["research question", "subtopic", "aspect"]):
+                in_questions_section = True
+                continue
+                
+            if in_questions_section and line and not line.startswith("#"):
+                # Clean up the line to extract just the question
+                if line[0].isdigit() and line[1:3] in [". ", ") "]:
+                    line = line[3:].strip()
+                elif line[0] in ["-", "*"]:
+                    line = line[1:].strip()
+                    
+                # If it looks like a question or topic, add it
+                if line and len(line) > 10:  # Arbitrary minimum length to filter out headers
+                    research_questions.append(line)
+                    
+                # Stop if we've found enough questions
+                if len(research_questions) >= num_researchers:
+                    break
+        
+        # If we didn't extract enough questions, generate some basic ones
+        while len(research_questions) < num_researchers:
+            research_questions.append(f"Research aspect {len(research_questions)+1} of {state.topic}")
+        
+        # Limit to the configured number of researchers
+        research_questions = research_questions[:num_researchers]
+        
+        logger.info(f"Generated {len(research_questions)} research questions in {time.time() - start_time:.2f}s")
+        
+        return {
+            "research_questions": research_questions,
+            "research_results": [],
+            "agent_status": {q: "pending" for q in research_questions},
+            "coordination_feedback": {}
+        }
+    except Exception as e:
+        logger.error(f"Error initializing multi-agent research: {str(e)}", exc_info=True)
+        raise ResearchError(f"Failed to initialize multi-agent research: {str(e)}") from e
 
-async def researcher_investigation(state: ReportState, config: RunnableConfig):
-    """Researcher agents investigate their assigned questions.
+async def coordinate_research(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+    """Coordinate the research efforts of multiple agents.
     
-    This node:
-    1. For each research question, performs searches
-    2. Analyzes search results
-    3. Writes a section addressing the question
+    Args:
+        state (Dict[str, Any]): The current state
+        config (RunnableConfig): The configuration
+        
+    Returns:
+        Dict[str, Any]: Updated state with coordination feedback
     """
-    # Get configuration
-    configuration = state.config or Configuration()
-    search_api = configuration.search_api
-    search_params = get_search_params(configuration)
+    start_time = time.time()
+    logger.info("Coordinating multi-agent research")
     
-    # Initialize researcher model
-    researcher_model = configuration.researcher_model
-    provider, model = researcher_model.split(":", 1) if ":" in researcher_model else ("openai", researcher_model)
+    try:
+        # Get configuration
+        configuration = state.config or Configuration()
+        
+        # Skip coordination if there are fewer than 2 research questions
+        if len(state.get("research_questions", [])) < 2:
+            logger.info("Skipping coordination with fewer than 2 research questions")
+            return state
+        
+        # Initialize coordination model
+        supervisor_model_name = configuration.supervisor_model
+        provider, model = supervisor_model_name.split(":", 1) if ":" in supervisor_model_name else ("openai", supervisor_model_name)
+        
+        coordinator = init_chat_model(
+            provider=provider,
+            model=model
+        )
+        
+        # Prepare research progress information
+        research_progress = []
+        for i, question in enumerate(state.get("research_questions", [])):
+            status = state.get("agent_status", {}).get(question, "pending")
+            result = ""
+            
+            if status == "completed" and i < len(state.get("research_results", [])):
+                result = state["research_results"][i].get("summary", "No summary available")
+                
+            research_progress.append(f"Agent {i+1}:\nQuestion: {question}\nStatus: {status}\nFindings: {result}")
+        
+        # Generate coordination feedback
+        prompt = COORDINATION_PROMPT.format(
+            topic=state.topic,
+            research_progress="\n\n".join(research_progress)
+        )
+        
+        response = await coordinator.ainvoke([HumanMessage(content=prompt)])
+        response_content = response.content
+        
+        # Extract coordination feedback for each agent
+        coordination_feedback = {}
+        current_agent = None
+        current_feedback = []
+        
+        for line in response_content.split("\n"):
+            line = line.strip()
+            
+            # Look for agent headers
+            if line.lower().startswith(("agent ", "researcher ")):
+                # Save previous agent's feedback if any
+                if current_agent is not None and current_feedback:
+                    coordination_feedback[current_agent] = "\n".join(current_feedback)
+                    current_feedback = []
+                
+                # Extract agent number
+                try:
+                    agent_num = int(line.split()[1].rstrip(":")) - 1
+                    if 0 <= agent_num < len(state.get("research_questions", [])):
+                        current_agent = state["research_questions"][agent_num]
+                    else:
+                        current_agent = None
+                except (IndexError, ValueError):
+                    current_agent = None
+            
+            # Add line to current feedback if we have an agent
+            elif current_agent is not None and line:
+                current_feedback.append(line)
+        
+        # Save the last agent's feedback
+        if current_agent is not None and current_feedback:
+            coordination_feedback[current_agent] = "\n".join(current_feedback)
+        
+        logger.info(f"Generated coordination feedback for {len(coordination_feedback)} agents in {time.time() - start_time:.2f}s")
+        
+        # Update the state with coordination feedback
+        state["coordination_feedback"] = coordination_feedback
+        return state
+    except Exception as e:
+        logger.error(f"Error coordinating research: {str(e)}", exc_info=True)
+        # Continue without coordination rather than failing the entire process
+        return state
+
+async def execute_parallel_research(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+    """Execute research tasks in parallel using multiple agents.
     
-    researcher = init_chat_model(
-        provider=provider,
-        model=model
-    )
+    Args:
+        state (Dict[str, Any]): The current state
+        config (RunnableConfig): The configuration
+        
+    Returns:
+        Dict[str, Any]: Updated state with research results
+    """
+    start_time = time.time()
+    logger.info("Executing parallel research with multiple agents")
     
-    # Get research questions from state
-    research_questions = [query["text"] for query in state.queries]
+    try:
+        # Get configuration
+        configuration = state.config or Configuration()
+        max_concurrent = configuration.max_concurrent_agents
+        timeout = configuration.agent_timeout
+        
+        # Get research questions
+        research_questions = state.get("research_questions", [])
+        if not research_questions:
+            logger.warning("No research questions to process")
+            return state
+        
+        # Initialize researcher model
+        researcher_model_name = configuration.researcher_model
+        provider, model = researcher_model_name.split(":", 1) if ":" in researcher_model_name else ("openai", researcher_model_name)
+        
+        # Create a thread pool for parallel execution
+        with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            # Submit all research tasks
+            future_to_question = {}
+            for i, question in enumerate(research_questions):
+                # Skip already completed questions
+                if state.get("agent_status", {}).get(question) == "completed":
+                    continue
+                    
+                # Update status to in_progress
+                if "agent_status" not in state:
+                    state["agent_status"] = {}
+                state["agent_status"][question] = "in_progress"
+                
+                # Get coordination feedback if available
+                coordination = state.get("coordination_feedback", {}).get(question, "")
+                
+                # Submit the research task
+                future = executor.submit(
+                    research_question,
+                    question=question,
+                    topic=state.topic,
+                    provider=provider,
+                    model=model,
+                    coordination_feedback=coordination,
+                    search_api=configuration.search_api,
+                    search_params=get_search_params(configuration)
+                )
+                future_to_question[future] = question
+            
+            # Process results as they complete
+            research_results = state.get("research_results", [])
+            for future in as_completed(future_to_question, timeout=timeout):
+                question = future_to_question[future]
+                try:
+                    result = future.result()
+                    # Update status to completed
+                    state["agent_status"][question] = "completed"
+                    # Add result to research_results
+                    research_results.append({
+                        "question": question,
+                        "content": result["content"],
+                        "summary": result["summary"],
+                        "sources": result["sources"]
+                    })
+                except Exception as e:
+                    logger.error(f"Error researching question '{question}': {str(e)}", exc_info=True)
+                    # Update status to failed
+                    state["agent_status"][question] = "failed"
+                    # Add error result
+                    research_results.append({
+                        "question": question,
+                        "content": f"Research failed: {str(e)}",
+                        "summary": "Research could not be completed",
+                        "sources": []
+                    })
+        
+        # Update the state with research results
+        state["research_results"] = research_results
+        
+        logger.info(f"Completed parallel research for {len(research_results)} questions in {time.time() - start_time:.2f}s")
+        return state
+    except Exception as e:
+        logger.error(f"Error executing parallel research: {str(e)}", exc_info=True)
+        raise ResearchError(f"Failed to execute parallel research: {str(e)}") from e
+
+def research_question(
+    question: str, 
+    topic: str, 
+    provider: str, 
+    model: str,
+    coordination_feedback: str = "",
+    search_api: SearchAPI = SearchAPI.TAVILY,
+    search_params: Dict[str, Any] = None
+) -> Dict[str, Any]:
+    """Research a specific question using a researcher agent.
     
-    # Skip introduction and conclusion for now
-    content_sections = state.sections.sections[1:-1]
+    Args:
+        question (str): The research question
+        topic (str): The overall research topic
+        provider (str): The model provider
+        model (str): The model name
+        coordination_feedback (str): Feedback from the coordination agent
+        search_api (SearchAPI): The search API to use
+        search_params (Dict[str, Any]): The search parameters
+        
+    Returns:
+        Dict[str, Any]: The research results
+    """
+    start_time = time.time()
+    logger.info(f"Researching question: {question}")
     
-    # For each research question, perform research and write section
-    updated_sections = [state.sections.sections[0]]  # Start with introduction
-    
-    for i, (question, section) in enumerate(zip(research_questions, content_sections)):
-        # Generate search queries for this question
-        search_query_1 = question
-        search_query_2 = f"{state.topic} {section.title}"
+    try:
+        # Initialize researcher model
+        researcher = init_chat_model(
+            provider=provider,
+            model=model
+        )
+        
+        # Generate the prompt
+        prompt_text = RESEARCHER_PROMPT.format(
+            research_question=question,
+            topic=topic
+        )
+        
+        # Add coordination feedback if available
+        if coordination_feedback:
+            prompt_text += f"\n\nCoordination Feedback:\n{coordination_feedback}"
+        
+        # Generate search queries
+        response = researcher.invoke([HumanMessage(content=prompt_text + "\n\nFirst, generate 3-5 search queries to gather information on this question.")])
+        response_content = response.content
+        
+        # Extract search queries
+        queries = []
+        in_queries_section = False
+        
+        for line in response_content.split("\n"):
+            line = line.strip()
+            
+            if any(marker in line.lower() for marker in ["search quer", "queries"]):
+                in_queries_section = True
+                continue
+                
+            if in_queries_section and line and not line.startswith("#"):
+                # Clean up the line
+                if line[0].isdigit() and line[1:3] in [". ", ") "]:
+                    line = line[3:].strip()
+                elif line[0] in ["-", "*"]:
+                    line = line[1:].strip()
+                    
+                if line and len(line) > 5:  # Arbitrary minimum length
+                    queries.append(line)
+                    
+                # Limit to 5 queries
+                if len(queries) >= 5:
+                    break
+        
+        # If no queries were extracted, create a default one
+        if not queries:
+            queries = [question]
         
         # Execute searches
-        search_results_1 = select_and_execute_search(
-            search_query_1, 
-            search_api, 
-            search_params
-        )
+        all_search_results = []
+        for query in queries:
+            try:
+                results = select_and_execute_search(query, search_api, search_params or {})
+                all_search_results.append({
+                    "query": query,
+                    "results": results
+                })
+            except Exception as e:
+                logger.error(f"Error executing search for query '{query}': {str(e)}", exc_info=True)
+                all_search_results.append({
+                    "query": query,
+                    "results": [],
+                    "error": str(e)
+                })
         
-        search_results_2 = select_and_execute_search(
-            search_query_2, 
-            search_api, 
-            search_params
-        )
+        # Format search results for the researcher
+        formatted_results = []
+        for search in all_search_results:
+            formatted_results.append(f"Query: {search['query']}")
+            
+            if "error" in search:
+                formatted_results.append(f"Error: {search['error']}")
+                continue
+                
+            for i, result in enumerate(search["results"]):
+                title = result.get("title", "No title")
+                content = result.get("content", result.get("text", "No content"))
+                url = result.get("url", "No URL")
+                
+                formatted_results.append(f"Result {i+1}: {title}")
+                formatted_results.append(f"URL: {url}")
+                formatted_results.append(f"Content: {content[:500]}..." if len(content) > 500 else f"Content: {content}")
+                formatted_results.append("")
         
-        # Combine search results
-        combined_results = search_results_1 + search_results_2
-        
-        # Format search results for the prompt
-        search_results_text = ""
-        for j, result in enumerate(combined_results):
-            search_results_text += f"Result {j+1}: {result.get('title', 'No title')}\n"
-            search_results_text += f"URL: {result.get('url', 'No URL')}\n"
-            search_results_text += f"Content: {result.get('content', 'No content')}\n\n"
-        
-        # Write section content
-        prompt = RESEARCHER_PROMPT.format(
+        # Generate the research section
+        prompt_text = RESEARCHER_PROMPT.format(
             research_question=question,
-            topic=state.topic
+            topic=topic
         )
         
-        prompt += f"\nSearch Results:\n{search_results_text}"
+        prompt_text += "\n\nSearch Results:\n" + "\n".join(formatted_results)
         
-        response = await researcher.ainvoke([HumanMessage(content=prompt)])
+        if coordination_feedback:
+            prompt_text += f"\n\nCoordination Feedback:\n{coordination_feedback}"
+            
+        prompt_text += "\n\nBased on these search results, write a comprehensive section addressing the research question."
+        
+        response = researcher.invoke([HumanMessage(content=prompt_text)])
         section_content = response.content
         
-        # Update section
-        updated_section = Section(
-            title=section.title,
-            content=section_content,
-            subsections=section.subsections
+        # Generate a summary
+        summary_prompt = f"Summarize the key findings from your research on: {question}\n\nProvide a concise summary (2-3 sentences) of the main insights."
+        summary_response = researcher.invoke([HumanMessage(content=summary_prompt), AIMessage(content=section_content)])
+        summary = summary_response.content
+        
+        # Extract sources
+        sources = []
+        for search in all_search_results:
+            for result in search.get("results", []):
+                if "url" in result and result["url"] not in [s.get("url") for s in sources]:
+                    sources.append({
+                        "title": result.get("title", "No title"),
+                        "url": result["url"]
+                    })
+        
+        logger.info(f"Completed research for question '{question}' in {time.time() - start_time:.2f}s")
+        
+        return {
+            "content": section_content,
+            "summary": summary,
+            "sources": sources
+        }
+    except Exception as e:
+        logger.error(f"Error researching question '{question}': {str(e)}", exc_info=True)
+        raise ResearchError(f"Failed to research question '{question}': {str(e)}") from e
+
+async def integrate_research_results(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+    """Integrate research results into a cohesive report.
+    
+    Args:
+        state (Dict[str, Any]): The current state
+        config (RunnableConfig): The configuration
+        
+    Returns:
+        Dict[str, Any]: Updated state with integrated report
+    """
+    start_time = time.time()
+    logger.info("Integrating research results")
+    
+    try:
+        # Get configuration
+        configuration = state.config or Configuration()
+        report_structure = configuration.report_structure
+        
+        # Initialize integration model
+        supervisor_model_name = configuration.supervisor_model
+        provider, model = supervisor_model_name.split(":", 1) if ":" in supervisor_model_name else ("openai", supervisor_model_name)
+        
+        integrator = init_chat_model(
+            provider=provider,
+            model=model
         )
         
-        updated_sections.append(updated_section)
-    
-    # Add conclusion placeholder
-    updated_sections.append(state.sections.sections[-1])
-    
-    # Update state
-    state.sections = Sections(sections=updated_sections)
-    state.search_results = [
-        {
-            "query": question,
-            "results": select_and_execute_search(question, search_api, search_params),
-            "metadata": {}
-        }
-        for question in research_questions
-    ]
-    
-    return state
-
-async def integration_finalization(state: ReportState, config: RunnableConfig):
-    """Integration agent finalizes the report.
-    
-    This node:
-    1. Reviews all research sections
-    2. Writes introduction and conclusion
-    3. Ensures consistency across the report
-    """
-    # Get configuration
-    configuration = state.config or Configuration()
-    report_structure = configuration.report_structure
-    
-    # Initialize supervisor model (used for integration)
-    supervisor_model = configuration.supervisor_model
-    provider, model = supervisor_model.split(":", 1) if ":" in supervisor_model else ("openai", supervisor_model)
-    
-    integrator = init_chat_model(
-        provider=provider,
-        model=model
-    )
-    
-    # Format research sections for the prompt
-    research_sections_text = ""
-    for i, section in enumerate(state.sections.sections[1:-1]):  # Skip intro and conclusion
-        research_sections_text += f"Section {i+1}: {section.title}\n"
-        research_sections_text += f"{section.content}\n\n"
-    
-    # Generate integrated report
-    prompt = INTEGRATION_PROMPT.format(
-        topic=state.topic,
-        research_sections=research_sections_text,
-        report_structure=report_structure
-    )
-    
-    response = await integrator.ainvoke([HumanMessage(content=prompt)])
-    integrated_content = response.content
-    
-    # Extract sections from integrated content
-    sections = []
-    current_section = None
-    current_content = []
-    
-    for line in integrated_content.split("\n"):
-        if line.startswith("# ") or line.startswith("## "):
-            # Save previous section if it exists
-            if current_section:
-                sections.append(Section(
-                    title=current_section,
-                    content="\n".join(current_content),
-                    subsections=[]
-                ))
-                current_content = []
+        # Format research sections
+        research_sections = []
+        for result in state.get("research_results", []):
+            research_sections.append(f"Question: {result['question']}\n\n{result['content']}")
+        
+        # Generate the integrated report
+        prompt = INTEGRATION_PROMPT.format(
+            topic=state.topic,
+            research_sections="\n\n---\n\n".join(research_sections),
+            report_structure=report_structure
+        )
+        
+        response = await integrator.ainvoke([HumanMessage(content=prompt)])
+        report_content = response.content
+        
+        # Parse the report into sections
+        sections = []
+        current_section = None
+        current_content = []
+        
+        for line in report_content.split("\n"):
+            # Check if this is a section header
+            if line.startswith("# "):
+                # Save the previous section if any
+                if current_section is not None and current_content:
+                    sections.append({
+                        "title": current_section,
+                        "content": "\n".join(current_content),
+                        "subsections": []
+                    })
+                    current_content = []
+                
+                # Start a new section
+                current_section = line[2:].strip()
             
-            # Extract new section title
-            current_section = line.split(" ", 1)[1] if " " in line else line
-        elif current_section:
-            current_content.append(line)
-    
-    # Add the last section
-    if current_section and current_content:
-        sections.append(Section(
-            title=current_section,
-            content="\n".join(current_content),
-            subsections=[]
-        ))
-    
-    # If no sections were extracted, use the original sections with the integrated content
-    # as the introduction and conclusion
-    if not sections:
-        # Split the content roughly in half for intro and conclusion
-        content_parts = integrated_content.split("\n\n")
-        midpoint = len(content_parts) // 2
+            # Check if this is a subsection header
+            elif line.startswith("## ") and current_section is not None:
+                # Save the current content to the section
+                if current_content:
+                    if not sections:
+                        sections.append({
+                            "title": current_section,
+                            "content": "\n".join(current_content),
+                            "subsections": []
+                        })
+                    else:
+                        sections[-1]["content"] = "\n".join(current_content)
+                    current_content = []
+                
+                # Add the subsection
+                subsection_title = line[3:].strip()
+                if sections:
+                    sections[-1]["subsections"].append({
+                        "title": subsection_title,
+                        "content": ""
+                    })
+            
+            # Check if this is a subsection content
+            elif line.startswith("### ") and current_section is not None:
+                # Ignore these deeper headers for now
+                continue
+            
+            # Add the line to the current content
+            elif current_section is not None:
+                current_content.append(line)
         
-        intro_content = "\n\n".join(content_parts[:midpoint])
-        conclusion_content = "\n\n".join(content_parts[midpoint:])
+        # Save the last section
+        if current_section is not None and current_content:
+            if not sections:
+                sections.append({
+                    "title": current_section,
+                    "content": "\n".join(current_content),
+                    "subsections": []
+                })
+            else:
+                # Check if this is content for the last section or a subsection
+                if sections[-1]["subsections"]:
+                    # Assume it's for the last subsection
+                    sections[-1]["subsections"][-1]["content"] = "\n".join(current_content)
+                else:
+                    # It's for the section itself
+                    sections[-1]["content"] = "\n".join(current_content)
         
-        # Update introduction and conclusion
-        updated_sections = []
-        for i, section in enumerate(state.sections.sections):
-            if i == 0:  # Introduction
-                updated_sections.append(Section(
-                    title=section.title,
-                    content=intro_content,
-                    subsections=section.subsections
-                ))
-            elif i == len(state.sections.sections) - 1:  # Conclusion
-                updated_sections.append(Section(
-                    title=section.title,
-                    content=conclusion_content,
-                    subsections=section.subsections
-                ))
-            else:  # Keep other sections as is
-                updated_sections.append(section)
+        # Create the final report sections
+        final_sections = Sections(sections=[
+            Section(
+                title=section["title"],
+                content=section["content"],
+                subsections=[
+                    Section(title=subsection["title"], content=subsection["content"])
+                    for subsection in section["subsections"]
+                ]
+            )
+            for section in sections
+        ])
         
-        sections = updated_sections
+        logger.info(f"Integrated research results into {len(sections)} sections in {time.time() - start_time:.2f}s")
+        
+        return {
+            "sections": final_sections
+        }
+    except Exception as e:
+        logger.error(f"Error integrating research results: {str(e)}", exc_info=True)
+        raise ResearchError(f"Failed to integrate research results: {str(e)}") from e
+
+# Define the graph
+def build_graph():
+    """Build the multi-agent research graph.
     
-    # Update state
-    state.sections = Sections(sections=sections)
+    Returns:
+        StateGraph: The compiled research graph
+    """
+    # Create a new graph
+    builder = StateGraph(ReportState)
     
-    return state
+    # Add nodes
+    builder.add_node("initialize", initialize_multi_agent_research)
+    builder.add_node("coordinate", coordinate_research)
+    builder.add_node("research", execute_parallel_research)
+    builder.add_node("integrate", integrate_research_results)
+    
+    # Add edges
+    builder.add_edge(START, "initialize")
+    builder.add_edge("initialize", "research")
+    builder.add_edge("research", "coordinate")
+    builder.add_edge("coordinate", "research")
+    builder.add_edge("research", "integrate")
+    builder.add_edge("integrate", END)
+    
+    # Add conditional edges
+    def should_coordinate(state: Dict[str, Any]) -> Literal["coordinate", "integrate"]:
+        """Determine if coordination is needed.
+        
+        Args:
+            state (Dict[str, Any]): The current state
+            
+        Returns:
+            Literal["coordinate", "integrate"]: The next node
+        """
+        # Check if all research is complete
+        all_complete = True
+        for status in state.get("agent_status", {}).values():
+            if status != "completed":
+                all_complete = False
+                break
+        
+        # If all research is complete, move to integration
+        if all_complete:
+            return "integrate"
+        
+        # Otherwise, coordinate the research
+        return "coordinate"
+    
+    # Replace the direct edge with a conditional one
+    builder.remove_edge("research", "coordinate")
+    builder.remove_edge("research", "integrate")
+    builder.add_conditional_edges(
+        "research",
+        should_coordinate,
+        {
+            "coordinate": "coordinate",
+            "integrate": "integrate"
+        }
+    )
+    
+    # Compile the graph
+    return builder.compile()
 
-# Graph definition
-
-graph = StateGraph(ReportState)
-
-# Add nodes
-graph.add_node("supervisor_planning", supervisor_planning)
-graph.add_node("researcher_investigation", researcher_investigation)
-graph.add_node("integration_finalization", integration_finalization)
-
-# Add edges
-graph.add_edge(START, "supervisor_planning")
-graph.add_edge("supervisor_planning", "researcher_investigation")
-graph.add_edge("researcher_investigation", "integration_finalization")
-graph.add_edge("integration_finalization", END)
-
-# Compile the graph
-graph = graph.compile()
-
+# Create the graph
+graph = build_graph()
