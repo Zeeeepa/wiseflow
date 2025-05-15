@@ -11,13 +11,14 @@ import logging
 from typing import Dict, Any
 
 import uvicorn
-from fastapi import FastAPI, Depends, Request, Response
+from fastapi import FastAPI, Depends, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.di_container import DIContainer, get_container
 from core.infrastructure.di.service_registration import register_services
 from core.infrastructure.config.configuration_service import ConfigurationService
 from core.api.controllers.information_controller import router as information_router
+from core.api.controllers.research_controller import router as research_router
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="WiseFlow API",
         description="API for WiseFlow - LLM-based information extraction and analysis",
-        version="0.1.0",
+        version="0.2.0",
     )
     
     # Add CORS middleware
@@ -73,7 +74,14 @@ def create_app() -> FastAPI:
         return response
     
     # Add routes
-    app.include_router(information_router)
+    app.include_router(information_router, prefix="/api/v1")
+    app.include_router(research_router, prefix="/api/v1")
+    
+    # Add root endpoint
+    @app.get("/")
+    async def root():
+        """Root endpoint."""
+        return {"message": "Welcome to WiseFlow API", "version": "0.2.0"}
     
     # Add health check endpoint
     @app.get("/health")
@@ -130,4 +138,3 @@ def run_app():
 
 if __name__ == "__main__":
     run_app()
-

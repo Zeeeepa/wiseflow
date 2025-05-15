@@ -12,6 +12,7 @@ from dashboard.plugins import dashboard_plugin_manager
 from dashboard.routes import router as dashboard_router
 from dashboard.search_api import router as search_api_router
 from dashboard.data_mining_api import router as data_mining_api_router
+from dashboard.research_api import router as research_api_router
 from core.utils.pb_api import PbTalker
 import logging
 import os
@@ -107,6 +108,9 @@ app.include_router(search_api_router, prefix="/search")
 
 # Include data mining API router
 app.include_router(data_mining_api_router, prefix="/data-mining")
+
+# Include research API router
+app.include_router(research_api_router, prefix="/research")
 
 # Dashboard endpoints
 @app.get("/")
