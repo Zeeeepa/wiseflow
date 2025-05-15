@@ -1,0 +1,545 @@
+{% extends "base.html" %}
+
+{% block title %}Task Monitor Dashboard{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Task Monitor Dashboard</h1>
+    
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Task Statistics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="card bg-primary text-white mb-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Total Tasks</h5>
+                                    <h2 class="card-text">{{ stats.total_tasks }}</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-warning text-dark mb-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Pending Tasks</h5>
+                                    <h2 class="card-text">{{ stats.pending_tasks }}</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-success text-white mb-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Completed Tasks</h5>
+                                    <h2 class="card-text">{{ stats.completed_tasks }}</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-danger text-white mb-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Failed Tasks</h5>
+                                    <h2 class="card-text">{{ stats.failed_tasks }}</h2>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card mb-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Active Tasks</h5>
+                                    <h2 class="card-text">{{ stats.active_tasks }}</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card mb-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Queue Size</h5>
+                                    <h2 class="card-text">{{ stats.queue_size }}</h2>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5>Task List</h5>
+                    <div>
+                        <button id="refresh-tasks" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                        <button id="clear-completed" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-trash"></i> Clear Completed
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Task ID</th>
+                                    <th>Topic</th>
+                                    <th>Status</th>
+                                    <th>Progress</th>
+                                    <th>Duration</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="task-table-body">
+                                {% if tasks %}
+                                    {% for task in tasks %}
+                                    <tr>
+                                        <td>{{ task.task_id }}</td>
+                                        <td>{{ task.topic }}</td>
+                                        <td>
+                                            {% if task.status == 'pending' %}
+                                                <span class="badge bg-secondary">Pending</span>
+                                            {% elif task.status == 'running' %}
+                                                <span class="badge bg-primary">Running</span>
+                                            {% elif task.status == 'completed' %}
+                                                <span class="badge bg-success">Completed</span>
+                                            {% elif task.status == 'failed' %}
+                                                <span class="badge bg-danger">Failed</span>
+                                            {% else %}
+                                                <span class="badge bg-info">{{ task.status }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="progress">
+                                                <div class="progress-bar" role="progressbar" style="width: {{ task.progress * 100 }}%" aria-valuenow="{{ task.progress * 100 }}" aria-valuemin="0" aria-valuemax="100">{{ task.progress * 100 }}%</div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            {% if task.duration %}
+                                                {{ task.duration|round(1) }} sec
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="btn-group" role="group">
+                                                <button type="button" class="btn btn-sm btn-outline-primary view-task" data-task-id="{{ task.task_id }}">View</button>
+                                                {% if task.status == 'failed' %}
+                                                    <button type="button" class="btn btn-sm btn-outline-warning retry-task" data-task-id="{{ task.task_id }}">Retry</button>
+                                                {% endif %}
+                                                {% if task.status == 'pending' or task.status == 'running' %}
+                                                    <button type="button" class="btn btn-sm btn-outline-danger cancel-task" data-task-id="{{ task.task_id }}">Cancel</button>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                {% else %}
+                                    <tr>
+                                        <td colspan="6" class="text-center">No tasks found</td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Task Details Modal -->
+    <div class="modal fade" id="taskDetailsModal" tabindex="-1" aria-labelledby="taskDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="taskDetailsModalLabel">Task Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="task-details-content">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p>Loading task details...</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize variables
+        const refreshTasksBtn = document.getElementById('refresh-tasks');
+        const clearCompletedBtn = document.getElementById('clear-completed');
+        const taskTableBody = document.getElementById('task-table-body');
+        const taskDetailsModal = new bootstrap.Modal(document.getElementById('taskDetailsModal'));
+        const taskDetailsContent = document.getElementById('task-details-content');
+        
+        // Add event listeners
+        refreshTasksBtn.addEventListener('click', refreshTasks);
+        clearCompletedBtn.addEventListener('click', clearCompletedTasks);
+        
+        // Add event listeners for task actions
+        document.querySelectorAll('.view-task').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const taskId = this.getAttribute('data-task-id');
+                viewTaskDetails(taskId);
+            });
+        });
+        
+        document.querySelectorAll('.retry-task').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const taskId = this.getAttribute('data-task-id');
+                retryTask(taskId);
+            });
+        });
+        
+        document.querySelectorAll('.cancel-task').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const taskId = this.getAttribute('data-task-id');
+                cancelTask(taskId);
+            });
+        });
+        
+        // Set up auto-refresh
+        const autoRefreshInterval = setInterval(refreshTasks, 30000); // Refresh every 30 seconds
+        
+        // Function to refresh tasks
+        async function refreshTasks() {
+            try {
+                const response = await fetch('/task-monitor', {
+                    method: 'GET',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status}`);
+                }
+                
+                const html = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                
+                // Update task table
+                const newTaskTableBody = doc.getElementById('task-table-body');
+                if (newTaskTableBody) {
+                    taskTableBody.innerHTML = newTaskTableBody.innerHTML;
+                    
+                    // Re-add event listeners
+                    document.querySelectorAll('.view-task').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            const taskId = this.getAttribute('data-task-id');
+                            viewTaskDetails(taskId);
+                        });
+                    });
+                    
+                    document.querySelectorAll('.retry-task').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            const taskId = this.getAttribute('data-task-id');
+                            retryTask(taskId);
+                        });
+                    });
+                    
+                    document.querySelectorAll('.cancel-task').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            const taskId = this.getAttribute('data-task-id');
+                            cancelTask(taskId);
+                        });
+                    });
+                }
+                
+                // Update statistics
+                const statElements = doc.querySelectorAll('.card-text');
+                const currentStatElements = document.querySelectorAll('.card-text');
+                
+                for (let i = 0; i < statElements.length; i++) {
+                    if (currentStatElements[i]) {
+                        currentStatElements[i].textContent = statElements[i].textContent;
+                    }
+                }
+            } catch (error) {
+                console.error('Error refreshing tasks:', error);
+            }
+        }
+        
+        // Function to clear completed tasks
+        async function clearCompletedTasks() {
+            if (!confirm('Are you sure you want to clear all completed tasks?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/v1/integration/clear-completed-tasks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': localStorage.getItem('api_key') || ''
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                alert(`Cleared ${result.cleared_count} completed tasks.`);
+                
+                // Refresh the task list
+                refreshTasks();
+            } catch (error) {
+                console.error('Error clearing completed tasks:', error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+        
+        // Function to view task details
+        async function viewTaskDetails(taskId) {
+            // Show the modal
+            taskDetailsModal.show();
+            
+            // Reset content
+            taskDetailsContent.innerHTML = `
+                <div class="text-center">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p>Loading task details...</p>
+                </div>
+            `;
+            
+            try {
+                const response = await fetch('/api/v1/integration/task-status', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': localStorage.getItem('api_key') || ''
+                    },
+                    body: JSON.stringify({ task_id: taskId })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status}`);
+                }
+                
+                const task = await response.json();
+                
+                // Update modal title
+                document.getElementById('taskDetailsModalLabel').textContent = `Task Details: ${task.topic}`;
+                
+                // Build task details HTML
+                let html = `
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6>Task ID</h6>
+                            <p>${task.task_id}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Status</h6>
+                            <p>
+                `;
+                
+                // Add status badge
+                if (task.status === 'pending') {
+                    html += '<span class="badge bg-secondary">Pending</span>';
+                } else if (task.status === 'running') {
+                    html += '<span class="badge bg-primary">Running</span>';
+                } else if (task.status === 'completed') {
+                    html += '<span class="badge bg-success">Completed</span>';
+                } else if (task.status === 'failed') {
+                    html += '<span class="badge bg-danger">Failed</span>';
+                } else {
+                    html += `<span class="badge bg-info">${task.status}</span>`;
+                }
+                
+                html += `
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6>Start Time</h6>
+                            <p>${task.start_time ? new Date(task.start_time * 1000).toLocaleString() : 'Not started'}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>End Time</h6>
+                            <p>${task.end_time ? new Date(task.end_time * 1000).toLocaleString() : 'Not completed'}</p>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6>Duration</h6>
+                            <p>${task.duration ? task.duration.toFixed(2) + ' seconds' : 'N/A'}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Progress</h6>
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" style="width: ${task.progress * 100}%" aria-valuenow="${task.progress * 100}" aria-valuemin="0" aria-valuemax="100">${(task.progress * 100).toFixed(0)}%</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // Add error message if failed
+                if (task.status === 'failed' && task.error) {
+                    html += `
+                        <div class="alert alert-danger">
+                            <h6>Error</h6>
+                            <p>${task.error}</p>
+                        </div>
+                    `;
+                }
+                
+                // Add result if completed
+                if (task.status === 'completed' && task.result) {
+                    html += `<hr><h5>Research Results</h5>`;
+                    
+                    if (task.result.sections && task.result.sections.length > 0) {
+                        html += '<div class="accordion" id="resultAccordion">';
+                        
+                        task.result.sections.forEach((section, index) => {
+                            html += `
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header" id="heading${index}">
+                                        <button class="accordion-button ${index > 0 ? 'collapsed' : ''}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${index}" aria-expanded="${index === 0}" aria-controls="collapse${index}">
+                                            ${section.title || 'Section ' + (index + 1)}
+                                        </button>
+                                    </h2>
+                                    <div id="collapse${index}" class="accordion-collapse collapse ${index === 0 ? 'show' : ''}" aria-labelledby="heading${index}" data-bs-parent="#resultAccordion">
+                                        <div class="accordion-body">
+                                            ${section.content || ''}
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        
+                        html += '</div>';
+                    } else {
+                        html += '<div class="alert alert-warning">No sections found in the research results.</div>';
+                    }
+                }
+                
+                // Add metadata
+                if (task.metadata && Object.keys(task.metadata).length > 0) {
+                    html += `
+                        <hr>
+                        <h5>Metadata</h5>
+                        <table class="table table-sm">
+                            <tbody>
+                    `;
+                    
+                    for (const [key, value] of Object.entries(task.metadata)) {
+                        html += `
+                            <tr>
+                                <th>${key}</th>
+                                <td>${typeof value === 'object' ? JSON.stringify(value) : value}</td>
+                            </tr>
+                        `;
+                    }
+                    
+                    html += `
+                            </tbody>
+                        </table>
+                    `;
+                }
+                
+                // Update modal content
+                taskDetailsContent.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading task details:', error);
+                taskDetailsContent.innerHTML = `
+                    <div class="alert alert-danger">
+                        <h5>Error</h5>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        // Function to retry a task
+        async function retryTask(taskId) {
+            try {
+                const response = await fetch('/api/v1/integration/task-retry', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': localStorage.getItem('api_key') || ''
+                    },
+                    body: JSON.stringify({ task_id: taskId })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Task has been resubmitted for retry.');
+                    refreshTasks();
+                } else {
+                    alert(`Failed to retry task: ${result.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Error retrying task:', error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+        
+        // Function to cancel a task
+        async function cancelTask(taskId) {
+            if (!confirm('Are you sure you want to cancel this task?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/v1/integration/task-cancel', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': localStorage.getItem('api_key') || ''
+                    },
+                    body: JSON.stringify({ task_id: taskId })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Task has been cancelled.');
+                    refreshTasks();
+                } else {
+                    alert(`Failed to cancel task: ${result.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Error cancelling task:', error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+    });
+</script>
+{% endblock %}
+

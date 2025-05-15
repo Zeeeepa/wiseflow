@@ -1,0 +1,396 @@
+{% extends "base.html" %}
+
+{% block title %}Parallel Research Dashboard{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Parallel Research Dashboard</h1>
+    <div class="row">
+        <div class="col-md-12 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Parallel Research Configuration</h5>
+                </div>
+                <div class="card-body">
+                    <form id="parallel-research-form">
+                        <div class="mb-3">
+                            <label for="topics" class="form-label">Research Topics (one per line)</label>
+                            <textarea class="form-control" id="topics" name="topics" rows="5" required></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="search-api" class="form-label">Search API</label>
+                            <select class="form-select" id="search-api" name="search_api">
+                                <option value="tavily">Tavily</option>
+                                <option value="perplexity">Perplexity</option>
+                                <option value="exa">Exa</option>
+                                <option value="serper">Serper</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="research-mode" class="form-label">Research Mode</label>
+                            <select class="form-select" id="research-mode" name="research_mode">
+                                <option value="linear">Linear</option>
+                                <option value="graph">Graph</option>
+                                <option value="multi_agent">Multi-Agent</option>
+                            </select>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="max-search-depth" class="form-label">Max Search Depth</label>
+                                    <input type="number" class="form-control" id="max-search-depth" name="max_search_depth" value="2" min="1" max="5">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="number-of-queries" class="form-label">Number of Queries</label>
+                                    <input type="number" class="form-control" id="number-of-queries" name="number_of_queries" value="2" min="1" max="10">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="max-concurrent-tasks" class="form-label">Max Concurrent Tasks</label>
+                                    <input type="number" class="form-control" id="max-concurrent-tasks" name="max_concurrent_tasks" value="3" min="1" max="10">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="timeout" class="form-label">Timeout (seconds, optional)</label>
+                            <input type="number" class="form-control" id="timeout" name="timeout" min="10">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Start Parallel Research</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Research Tasks</h5>
+                </div>
+                <div class="card-body">
+                    <div id="research-status" class="alert alert-info d-none">
+                        <span id="status-message">Research in progress...</span>
+                        <div class="progress mt-2">
+                            <div id="research-progress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div id="task-list" class="mt-3">
+                        <div class="text-center text-muted">
+                            <p>Start parallel research to see tasks here</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Research Results</h5>
+                </div>
+                <div class="card-body">
+                    <div id="research-results">
+                        <div class="text-center text-muted">
+                            <p>Select a task to view results</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const parallelResearchForm = document.getElementById('parallel-research-form');
+        const researchStatus = document.getElementById('research-status');
+        const statusMessage = document.getElementById('status-message');
+        const researchProgress = document.getElementById('research-progress');
+        const taskList = document.getElementById('task-list');
+        const researchResults = document.getElementById('research-results');
+        
+        let taskIds = [];
+        let pollingInterval;
+        
+        parallelResearchForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Show status
+            researchStatus.classList.remove('d-none');
+            statusMessage.textContent = 'Starting parallel research...';
+            researchProgress.style.width = '5%';
+            
+            // Get form data
+            const formData = new FormData(parallelResearchForm);
+            const requestData = {};
+            
+            for (const [key, value] of formData.entries()) {
+                if (key === 'topics') {
+                    // Split topics by newline
+                    requestData[key] = value.split('\n').filter(topic => topic.trim() !== '');
+                } else {
+                    requestData[key] = value;
+                }
+            }
+            
+            try {
+                // Start parallel research
+                const response = await fetch('/api/v1/integration/parallel-research', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': localStorage.getItem('api_key') || ''
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                // Update status
+                statusMessage.textContent = 'Parallel research tasks submitted successfully!';
+                researchProgress.style.width = '30%';
+                
+                // Store task IDs
+                taskIds = result.task_ids || [];
+                
+                // Display tasks
+                displayTasks(taskIds);
+                
+                // Start polling for task status
+                startPolling(taskIds);
+            } catch (error) {
+                console.error('Error:', error);
+                statusMessage.textContent = `Error: ${error.message}`;
+                researchStatus.classList.remove('alert-info');
+                researchStatus.classList.add('alert-danger');
+            }
+        });
+        
+        function displayTasks(taskIds) {
+            if (!taskIds || taskIds.length === 0) {
+                taskList.innerHTML = '<div class="alert alert-warning">No tasks were created.</div>';
+                return;
+            }
+            
+            let html = '<div class="list-group">';
+            
+            taskIds.forEach((taskId, index) => {
+                html += `
+                    <a href="#" class="list-group-item list-group-item-action task-item" data-task-id="${taskId}">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1">Task ${index + 1}</h5>
+                            <span class="badge bg-secondary task-status-${taskId}">Pending</span>
+                        </div>
+                        <p class="mb-1">Task ID: ${taskId}</p>
+                        <div class="progress mt-2">
+                            <div class="progress-bar task-progress-${taskId}" role="progressbar" style="width: 0%"></div>
+                        </div>
+                    </a>
+                `;
+            });
+            
+            html += '</div>';
+            taskList.innerHTML = html;
+            
+            // Add event listeners to task items
+            document.querySelectorAll('.task-item').forEach(item => {
+                item.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const taskId = this.getAttribute('data-task-id');
+                    loadTaskResult(taskId);
+                });
+            });
+        }
+        
+        function startPolling(taskIds) {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+            
+            pollingInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/v1/integration/task-batch-status', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-API-Key': localStorage.getItem('api_key') || ''
+                        },
+                        body: JSON.stringify({ task_ids: taskIds })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Error: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    // Update task statuses
+                    updateTaskStatuses(result.tasks);
+                    
+                    // Check if all tasks are completed
+                    const allCompleted = Object.values(result.tasks).every(task => 
+                        task.status === 'completed' || task.status === 'failed');
+                    
+                    if (allCompleted) {
+                        clearInterval(pollingInterval);
+                        
+                        // Update status
+                        statusMessage.textContent = 'All research tasks completed!';
+                        researchProgress.style.width = '100%';
+                        researchStatus.classList.remove('alert-info');
+                        researchStatus.classList.add('alert-success');
+                    }
+                } catch (error) {
+                    console.error('Error polling task status:', error);
+                }
+            }, 5000); // Poll every 5 seconds
+        }
+        
+        function updateTaskStatuses(tasks) {
+            if (!tasks) return;
+            
+            Object.entries(tasks).forEach(([taskId, task]) => {
+                const statusBadge = document.querySelector(`.task-status-${taskId}`);
+                const progressBar = document.querySelector(`.task-progress-${taskId}`);
+                
+                if (statusBadge) {
+                    statusBadge.textContent = task.status.charAt(0).toUpperCase() + task.status.slice(1);
+                    
+                    // Update badge color
+                    statusBadge.className = 'badge';
+                    if (task.status === 'completed') {
+                        statusBadge.classList.add('bg-success');
+                    } else if (task.status === 'failed') {
+                        statusBadge.classList.add('bg-danger');
+                    } else if (task.status === 'running') {
+                        statusBadge.classList.add('bg-primary');
+                    } else {
+                        statusBadge.classList.add('bg-secondary');
+                    }
+                }
+                
+                if (progressBar) {
+                    progressBar.style.width = `${task.progress * 100}%`;
+                }
+            });
+            
+            // Update overall progress
+            const totalProgress = Object.values(tasks).reduce((sum, task) => sum + task.progress, 0) / Object.keys(tasks).length;
+            researchProgress.style.width = `${Math.max(30, totalProgress * 100)}%`;
+        }
+        
+        async function loadTaskResult(taskId) {
+            try {
+                const response = await fetch(`/api/v1/integration/task-status`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': localStorage.getItem('api_key') || ''
+                    },
+                    body: JSON.stringify({ task_id: taskId })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status}`);
+                }
+                
+                const task = await response.json();
+                
+                if (task.status !== 'completed') {
+                    researchResults.innerHTML = `
+                        <div class="alert alert-info">
+                            <h4>Task ${taskId}</h4>
+                            <p>Status: ${task.status}</p>
+                            <p>This task is not yet completed. Results will be available when the task is done.</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // Display task result
+                if (task.result) {
+                    displayTaskResult(task.result);
+                } else {
+                    researchResults.innerHTML = `
+                        <div class="alert alert-warning">
+                            <h4>Task ${taskId}</h4>
+                            <p>No results available for this task.</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading task result:', error);
+                researchResults.innerHTML = `
+                    <div class="alert alert-danger">
+                        <h4>Error</h4>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        function displayTaskResult(result) {
+            let html = '<h4>Research Results for: ' + result.topic + '</h4>';
+            
+            if (result.sections && result.sections.length > 0) {
+                html += '<div class="accordion" id="researchAccordion">';
+                
+                result.sections.forEach((section, index) => {
+                    html += `
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="heading${index}">
+                                <button class="accordion-button ${index > 0 ? 'collapsed' : ''}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${index}" aria-expanded="${index === 0}" aria-controls="collapse${index}">
+                                    ${section.title || 'Section ' + (index + 1)}
+                                </button>
+                            </h2>
+                            <div id="collapse${index}" class="accordion-collapse collapse ${index === 0 ? 'show' : ''}" aria-labelledby="heading${index}" data-bs-parent="#researchAccordion">
+                                <div class="accordion-body">
+                                    ${section.content || ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += '</div>';
+            } else {
+                html += '<div class="alert alert-warning">No sections found in the research results.</div>';
+            }
+            
+            // Add metadata
+            if (result.metadata) {
+                html += `
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h5>Research Metadata</h5>
+                        </div>
+                        <div class="card-body">
+                            <ul class="list-group">
+                                <li class="list-group-item">Search API: ${result.metadata.search_api}</li>
+                                <li class="list-group-item">Research Mode: ${result.metadata.research_mode}</li>
+                                <li class="list-group-item">Search Depth: ${result.metadata.search_depth}</li>
+                                <li class="list-group-item">Queries Per Iteration: ${result.metadata.queries_per_iteration}</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            researchResults.innerHTML = html;
+        }
+    });
+</script>
+{% endblock %}
+

@@ -9,6 +9,7 @@ import os
 import logging
 
 from dashboard.plugins import dashboard_plugin_manager
+from core.plugins.connectors.research.parallel_manager import get_parallel_research_manager
 
 logger = logging.getLogger(__name__)
 
@@ -162,4 +163,38 @@ async def arxiv_config(request: Request):
     return templates.TemplateResponse(
         "arxiv_dialog.html", 
         {"request": request}
+    )
+
+# Add routes for parallel research
+@router.get("/research", response_class=HTMLResponse)
+async def research_dashboard(request: Request):
+    """Serve the research dashboard page."""
+    return templates.TemplateResponse(
+        "research_dashboard.html", 
+        {"request": request}
+    )
+
+@router.get("/parallel-research", response_class=HTMLResponse)
+async def parallel_research_dashboard(request: Request):
+    """Serve the parallel research dashboard page."""
+    return templates.TemplateResponse(
+        "parallel_research_dashboard.html", 
+        {"request": request}
+    )
+
+@router.get("/task-monitor", response_class=HTMLResponse)
+async def task_monitor_dashboard(request: Request):
+    """Serve the task monitor dashboard page."""
+    # Get task statistics from the parallel research manager
+    parallel_research_manager = get_parallel_research_manager()
+    stats = parallel_research_manager.get_stats()
+    tasks = parallel_research_manager.list_tasks()
+    
+    return templates.TemplateResponse(
+        "task_monitor_dashboard.html", 
+        {
+            "request": request,
+            "stats": stats,
+            "tasks": tasks
+        }
     )

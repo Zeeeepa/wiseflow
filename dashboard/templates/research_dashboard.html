@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}Research Dashboard{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Research Dashboard</h1>
+    <div class="row">
+        <div class="col-md-12 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Research Configuration</h5>
+                </div>
+                <div class="card-body">
+                    <form id="research-form">
+                        <div class="mb-3">
+                            <label for="topic" class="form-label">Research Topic</label>
+                            <input type="text" class="form-control" id="topic" name="topic" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="search-api" class="form-label">Search API</label>
+                            <select class="form-select" id="search-api" name="search_api">
+                                <option value="tavily">Tavily</option>
+                                <option value="perplexity">Perplexity</option>
+                                <option value="exa">Exa</option>
+                                <option value="serper">Serper</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="research-mode" class="form-label">Research Mode</label>
+                            <select class="form-select" id="research-mode" name="research_mode">
+                                <option value="linear">Linear</option>
+                                <option value="graph">Graph</option>
+                                <option value="multi_agent">Multi-Agent</option>
+                            </select>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="max-search-depth" class="form-label">Max Search Depth</label>
+                                    <input type="number" class="form-control" id="max-search-depth" name="max_search_depth" value="2" min="1" max="5">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="number-of-queries" class="form-label">Number of Queries</label>
+                                    <input type="number" class="form-control" id="number-of-queries" name="number_of_queries" value="2" min="1" max="10">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="timeout" class="form-label">Timeout (seconds, optional)</label>
+                            <input type="number" class="form-control" id="timeout" name="timeout" min="10">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Start Research</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Research Results</h5>
+                </div>
+                <div class="card-body">
+                    <div id="research-status" class="alert alert-info d-none">
+                        <span id="status-message">Research in progress...</span>
+                        <div class="progress mt-2">
+                            <div id="research-progress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div id="research-results" class="mt-3">
+                        <div class="text-center text-muted">
+                            <p>Start a research task to see results here</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const researchForm = document.getElementById('research-form');
+        const researchStatus = document.getElementById('research-status');
+        const statusMessage = document.getElementById('status-message');
+        const researchProgress = document.getElementById('research-progress');
+        const researchResults = document.getElementById('research-results');
+        
+        researchForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Show status
+            researchStatus.classList.remove('d-none');
+            statusMessage.textContent = 'Starting research...';
+            researchProgress.style.width = '5%';
+            
+            // Get form data
+            const formData = new FormData(researchForm);
+            const requestData = {};
+            for (const [key, value] of formData.entries()) {
+                requestData[key] = value;
+            }
+            
+            try {
+                // Start research
+                const response = await fetch('/api/v1/integration/research', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': localStorage.getItem('api_key') || ''
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                // Update status
+                statusMessage.textContent = 'Research completed successfully!';
+                researchProgress.style.width = '100%';
+                researchStatus.classList.remove('alert-info');
+                researchStatus.classList.add('alert-success');
+                
+                // Display results
+                displayResults(result);
+            } catch (error) {
+                console.error('Error:', error);
+                statusMessage.textContent = `Error: ${error.message}`;
+                researchStatus.classList.remove('alert-info');
+                researchStatus.classList.add('alert-danger');
+            }
+        });
+        
+        function displayResults(result) {
+            let html = '<h4>Research Results for: ' + result.topic + '</h4>';
+            
+            if (result.sections && result.sections.length > 0) {
+                html += '<div class="accordion" id="researchAccordion">';
+                
+                result.sections.forEach((section, index) => {
+                    html += `
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="heading${index}">
+                                <button class="accordion-button ${index > 0 ? 'collapsed' : ''}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${index}" aria-expanded="${index === 0}" aria-controls="collapse${index}">
+                                    ${section.title || 'Section ' + (index + 1)}
+                                </button>
+                            </h2>
+                            <div id="collapse${index}" class="accordion-collapse collapse ${index === 0 ? 'show' : ''}" aria-labelledby="heading${index}" data-bs-parent="#researchAccordion">
+                                <div class="accordion-body">
+                                    ${section.content || ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += '</div>';
+            } else {
+                html += '<div class="alert alert-warning">No sections found in the research results.</div>';
+            }
+            
+            // Add metadata
+            if (result.metadata) {
+                html += `
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h5>Research Metadata</h5>
+                        </div>
+                        <div class="card-body">
+                            <ul class="list-group">
+                                <li class="list-group-item">Search API: ${result.metadata.search_api}</li>
+                                <li class="list-group-item">Research Mode: ${result.metadata.research_mode}</li>
+                                <li class="list-group-item">Search Depth: ${result.metadata.search_depth}</li>
+                                <li class="list-group-item">Queries Per Iteration: ${result.metadata.queries_per_iteration}</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            researchResults.innerHTML = html;
+        }
+    });
+</script>
+{% endblock %}
+
