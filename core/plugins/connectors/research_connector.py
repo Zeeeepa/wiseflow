@@ -4,10 +4,9 @@ This connector provides deep research capabilities using various search APIs and
 It's based on the open_deep_research library but implemented directly in wiseflow.
 """
 
-from typing import Dict, Any, Optional, List
-from enum import Enum
+from typing import Dict, Any, Optional
 
-from core.plugins.connectors.research.configuration import Configuration, ResearchMode, SearchAPI
+from core.plugins.connectors.research.configuration import Configuration
 from core.plugins.connectors.research.utils import format_sections
 from core.plugins.connectors.research.state import ReportState, Sections
 
@@ -137,4 +136,3 @@ class ResearchConnector:
         for key, value in kwargs.items():
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
-

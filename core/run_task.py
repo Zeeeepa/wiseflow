@@ -2,13 +2,11 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
-import time
-import json
 import asyncio
 import signal
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Callable, Awaitable
+from typing import Dict, List, Any, Optional, Callable
 
 # Import from centralized imports module
 from core.imports import (
@@ -23,11 +21,7 @@ from core.imports import (
     TaskStatus,
     handle_exceptions,
     WiseflowError,
-    log_error,
-    save_error_to_file,
-    Event,
     EventType,
-    publish,
     publish_sync
 )
 
@@ -314,8 +308,7 @@ async def schedule_task():
                     main_task_id = task_manager.register_task(
                         name=f"Focus: {focus.get('focuspoint', '')}",
                         func=process_focus_task_wrapper,
-                        focus,
-                        sites,
+                        args=(focus, sites),
                         priority=TaskPriority.HIGH,
                         max_retries=2,
                         retry_delay=60.0,
@@ -350,7 +343,7 @@ async def schedule_task():
                         insight_task_id = task_manager.register_task(
                             name=f"Insights: {focus.get('focuspoint', '')}",
                             func=generate_insights_wrapper,
-                            focus,
+                            args=(focus,),
                             dependencies=[main_task_id],
                             priority=TaskPriority.NORMAL,
                             max_retries=1,

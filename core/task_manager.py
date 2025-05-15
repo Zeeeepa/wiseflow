@@ -4,21 +4,19 @@ Task management module for WiseFlow.
 This module provides functionality to manage and execute tasks asynchronously.
 """
 
-import os
-import time
 import asyncio
 import logging
 import uuid
-from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
+from typing import Dict, Any, Optional, Callable, List, Set
 from datetime import datetime
 from enum import Enum, auto
 
 from core.config import config
 from core.event_system import (
-    EventType, Event, publish_sync,
+    EventType, publish_sync,
     create_task_event
 )
-from core.utils.error_handling import handle_exceptions, TaskError
+from core.utils.error_handling import handle_exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -214,89 +212,42 @@ class TaskManager:
         
         # Add task to manager
         self.tasks[task_id] = task
-        
-def cancel_task(self, task_id: str) -> bool:
-    task = self.get_task(task_id)
-    if not task:
-        logger.warning(f"Task {task_id} not found")
-        return False
-        
-    try:
-        # Cleanup any allocated resources
-        self._cleanup_task_resources(task)
-        
-        # Cancel the task
-        if task.status == TaskStatus.RUNNING:
-            task.task_object.cancel()
-            self.running_tasks.discard(task_id)
-        elif task.status == TaskStatus.PENDING:
-            self.pending_tasks.discard(task_id)
-        elif task.status == TaskStatus.WAITING:
-            self.waiting_tasks.discard(task_id)
-            
-        task.status = TaskStatus.CANCELLED
-        task.completed_at = datetime.now()
-        self.cancelled_tasks.add(task_id)
-        
-        # Publish event
-        event = create_task_event(
-            EventType.TASK_CANCELLED,
-            task_id,
-            {"name": task.name, "reason": "cancelled by user"}
-        )
-        publish_sync(event)
-        
-        return True
-    except Exception as e:
-        logger.error(f"Error cancelling task {task_id}: {e}")
-        return False
-        return task_id
     
     def cancel_task(self, task_id: str) -> bool:
-        """
-        Cancel a task.
-        
-        Args:
-            task_id: ID of the task to cancel
-            
-        Returns:
-            True if the task was cancelled, False otherwise
-        """
-        task = self.tasks.get(task_id)
+        task = self.get_task(task_id)
         if not task:
             logger.warning(f"Task {task_id} not found")
             return False
         
-        if task.status == TaskStatus.RUNNING:
-            if task.task_object and not task.task_object.done():
-                task.task_object.cancel()
-            
-            self.running_tasks.discard(task_id)
-            self.cancelled_tasks.add(task_id)
-        elif task.status == TaskStatus.PENDING:
-            self.cancelled_tasks.add(task_id)
-        elif task.status == TaskStatus.WAITING:
-            self.waiting_tasks.discard(task_id)
-            self.cancelled_tasks.add(task_id)
-        else:
-            logger.warning(f"Cannot cancel task {task_id} with status {task.status}")
-            return False
-        
-        task.status = TaskStatus.CANCELLED
-        
-        # Publish event
         try:
+            # Cleanup any allocated resources
+            self._cleanup_task_resources(task)
+            
+            # Cancel the task
+            if task.status == TaskStatus.RUNNING:
+                task.task_object.cancel()
+                self.running_tasks.discard(task_id)
+            elif task.status == TaskStatus.PENDING:
+                self.pending_tasks.discard(task_id)
+            elif task.status == TaskStatus.WAITING:
+                self.waiting_tasks.discard(task_id)
+                
+            task.status = TaskStatus.CANCELLED
+            task.completed_at = datetime.now()
+            self.cancelled_tasks.add(task_id)
+            
+            # Publish event
             event = create_task_event(
-                EventType.TASK_FAILED,
+                EventType.TASK_CANCELLED,
                 task_id,
-                {"name": task.name, "reason": "cancelled"}
+                {"name": task.name, "reason": "cancelled by user"}
             )
             publish_sync(event)
+            
+            return True
         except Exception as e:
-            logger.warning(f"Failed to publish task cancelled event: {e}")
-        
-        logger.info(f"Task cancelled: {task_id} ({task.name})")
-        return True
+            logger.error(f"Error cancelling task {task_id}: {e}")
+            return False
     
     def get_task(self, task_id: str) -> Optional[Task]:
         """
@@ -637,4 +588,3 @@ def cancel_task(self, task_id: str) -> bool:
 
 # Create a singleton instance
 task_manager = TaskManager()
-
