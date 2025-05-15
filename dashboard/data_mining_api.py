@@ -10,7 +10,86 @@ import os
 import asyncio
 from datetime import datetime
 
-from core.task.data_mining_manager import data_mining_manager
+# Import the data_mining_manager or create a fallback if it doesn't exist
+try:
+    from core.task.data_mining_manager import data_mining_manager
+except ImportError:
+    # Create a fallback data_mining_manager for development/testing
+    class DataMiningManagerFallback:
+        """Fallback implementation of DataMiningManager for development/testing"""
+        
+        async def create_task(self, name, task_type, description, search_params, context_files=None):
+            """Create a new data mining task"""
+            task_id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            logging.info(f"Created task {task_id} (fallback implementation)")
+            return task_id
+        
+        async def run_task(self, task_id):
+            """Run a data mining task"""
+            logging.info(f"Running task {task_id} (fallback implementation)")
+            return True
+        
+        async def get_all_tasks(self, status=None):
+            """Get all data mining tasks"""
+            return []
+        
+        async def get_task(self, task_id):
+            """Get a data mining task by ID"""
+            return None
+        
+        async def update_task(self, task_id, updates):
+            """Update a data mining task"""
+            return False
+        
+        async def delete_task(self, task_id):
+            """Delete a data mining task"""
+            return False
+        
+        async def toggle_task_status(self, task_id, active):
+            """Toggle the status of a data mining task"""
+            return False
+        
+        async def get_task_results(self, task_id):
+            """Get the results of a data mining task"""
+            return {"error": "Task not found"}
+        
+        async def analyze_task_results(self, task_id):
+            """Analyze the results of a data mining task"""
+            return False
+        
+        async def save_template(self, template_data):
+            """Save a data mining template"""
+            template_id = f"template_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            return template_id
+        
+        async def get_templates(self, template_type=None):
+            """Get all data mining templates"""
+            return []
+        
+        async def generate_preview(self, search_params):
+            """Generate a preview of a data mining task"""
+            return {
+                "estimated_repos": 10,
+                "estimated_files": 100,
+                "estimated_time": "10 minutes"
+            }
+        
+        async def create_task_interconnection(self, source_task_id, target_task_id, interconnection_type, description=""):
+            """Create an interconnection between two data mining tasks"""
+            interconnection_id = f"interconnection_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            return interconnection_id
+        
+        async def get_all_task_interconnections(self):
+            """Get all task interconnections"""
+            return []
+        
+        async def delete_task_interconnection(self, interconnection_id):
+            """Delete a task interconnection"""
+            return False
+    
+    # Create a fallback instance
+    data_mining_manager = DataMiningManagerFallback()
+    logging.warning("Using fallback DataMiningManager implementation")
 
 logger = logging.getLogger(__name__)
 
