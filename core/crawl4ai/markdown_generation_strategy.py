@@ -1,9 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
+import logging
+import re
+import traceback
+from urllib.parse import urljoin
+
 from .models import MarkdownGenerationResult
 from .html2text import CustomHTML2Text
-import re
-from urllib.parse import urljoin
+from .errors import ParsingError
 
 # Pre-compile the regex pattern
 LINK_PATTERN = re.compile(r'!?\[([^]]+)]\(([^)]+?)(?:\s+"([^"]*)")?\)')
@@ -11,6 +15,9 @@ LINK_PATTERN = re.compile(r'!?\[([^]]+)]\(([^)]+?)(?:\s+"([^"]*)")?\)')
 
 def fast_urljoin(base: str, url: str) -> str:
     """Fast URL joining for common cases."""
+    if not url:
+        return base
+        
     if url.startswith(("http://", "https://", "mailto:", "//")):
         return url
     if url.startswith("/"):
@@ -26,13 +33,13 @@ class MarkdownGenerationStrategy(ABC):
 
     def __init__(
         self,
-        # content_filter: Optional[RelevantContentFilter] = None,
         options: Optional[Dict[str, Any]] = None,
         verbose: bool = False,
+        logger: Optional[logging.Logger] = None,
     ):
-        # self.content_filter = content_filter
         self.options = options or {}
         self.verbose = verbose
+        self.logger = logger or logging.getLogger(__name__)
 
     @abstractmethod
     def generate_markdown(
@@ -40,7 +47,6 @@ class MarkdownGenerationStrategy(ABC):
         cleaned_html: str,
         base_url: str = "",
         html2text_options: Optional[Dict[str, Any]] = None,
-        # content_filter: Optional[RelevantContentFilter] = None,
         citations: bool = False,
         **kwargs,
     ) -> MarkdownGenerationResult:
@@ -60,6 +66,8 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
 
     Args:
         options (Optional[Dict[str, Any]]): Additional options for markdown generation. Defaults to None.
+        verbose (bool): Whether to enable verbose logging. Defaults to False.
+        logger (Optional[logging.Logger]): Logger instance. Defaults to None.
 
     Returns:
         MarkdownGenerationResult: Result containing raw markdown, fit markdown, fit HTML, and references markdown.
@@ -67,10 +75,11 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
 
     def __init__(
         self,
-        # content_filter: Optional[RelevantContentFilter] = None,
         options: Optional[Dict[str, Any]] = None,
+        verbose: bool = False,
+        logger: Optional[logging.Logger] = None,
     ):
-        super().__init__(options)
+        super().__init__(options, verbose, logger)
 
     def convert_links_to_citations(
         self, markdown: str, base_url: str = ""
@@ -92,51 +101,67 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
 
         Returns:
             Tuple[str, str]: Converted markdown and references markdown.
+            
+        Raises:
+            ParsingError: If there's an error converting links to citations.
         """
-        link_map = {}
-        url_cache = {}  # Cache for URL joins
-        parts = []
-        last_end = 0
-        counter = 1
+        if not markdown:
+            return "", ""
+            
+        try:
+            link_map = {}
+            url_cache = {}  # Cache for URL joins
+            parts = []
+            last_end = 0
+            counter = 1
 
-        for match in LINK_PATTERN.finditer(markdown):
-            parts.append(markdown[last_end : match.start()])
-            text, url, title = match.groups()
+            for match in LINK_PATTERN.finditer(markdown):
+                parts.append(markdown[last_end : match.start()])
+                text, url, title = match.groups()
+                
+                # Handle None values
+                text = text or ""
+                url = url or ""
+                title = title or ""
 
-            # Use cached URL if available, otherwise compute and cache
-            if base_url and not url.startswith(("http://", "https://", "mailto:")):
-                if url not in url_cache:
-                    url_cache[url] = fast_urljoin(base_url, url)
-                url = url_cache[url]
+                # Use cached URL if available, otherwise compute and cache
+                if base_url and not url.startswith(("http://", "https://", "mailto:")):
+                    if url not in url_cache:
+                        url_cache[url] = fast_urljoin(base_url, url)
+                    url = url_cache[url]
 
-            if url not in link_map:
-                desc = []
-                if title:
-                    desc.append(title)
-                if text and text != title:
-                    desc.append(text)
-                link_map[url] = (counter, ": " + " - ".join(desc) if desc else "")
-                counter += 1
+                if url not in link_map:
+                    desc = []
+                    if title:
+                        desc.append(title)
+                    if text and text != title:
+                        desc.append(text)
+                    link_map[url] = (counter, ": " + " - ".join(desc) if desc else "")
+                    counter += 1
 
-            num = link_map[url][0]
-            parts.append(
-                f"{text}⟨{num}⟩"
-                if not match.group(0).startswith("!")
-                else f"![{text}⟨{num}⟩]"
+                num = link_map[url][0]
+                parts.append(
+                    f"{text}⟨{num}⟩"
+                    if not match.group(0).startswith("!")
+                    else f"![{text}⟨{num}⟩]"
+                )
+                last_end = match.end()
+
+            parts.append(markdown[last_end:])
+            converted_text = "".join(parts)
+
+            # Pre-build reference strings
+            references = ["## References\n\n"] if link_map else []
+            references.extend(
+                f"⟨{num}⟩ {url}{desc}\n"
+                for url, (num, desc) in sorted(link_map.items(), key=lambda x: x[1][0])
             )
-            last_end = match.end()
 
-        parts.append(markdown[last_end:])
-        converted_text = "".join(parts)
-
-        # Pre-build reference strings
-        references = ["\n\n## References\n\n"]
-        references.extend(
-            f"⟨{num}⟩ {url}{desc}\n"
-            for url, (num, desc) in sorted(link_map.items(), key=lambda x: x[1][0])
-        )
-
-        return converted_text, "".join(references)
+            return converted_text, "".join(references)
+        except Exception as e:
+            self.logger.error(f"Error converting links to citations: {e}")
+            traceback.print_exc()
+            raise ParsingError("Failed to convert links to citations", original_error=e)
 
     def generate_markdown(
         self,
@@ -144,7 +169,6 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
         base_url: str = "",
         html2text_options: Optional[Dict[str, Any]] = None,
         options: Optional[Dict[str, Any]] = None,
-        # content_filter: Optional[RelevantContentFilter] = None,
         citations: bool = False,
         **kwargs,
     ) -> MarkdownGenerationResult:
@@ -162,11 +186,14 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
             base_url (str): Base URL for URL joins.
             html2text_options (Optional[Dict[str, Any]]): HTML2Text options.
             options (Optional[Dict[str, Any]]): Additional options for markdown generation.
-            content_filter (Optional[RelevantContentFilter]): Content filter for generating fit markdown.
             citations (bool): Whether to generate citations.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             MarkdownGenerationResult: Result containing raw markdown, fit markdown, fit HTML, and references markdown.
+            
+        Raises:
+            ParsingError: If there's an error generating markdown.
         """
         try:
             # Initialize HTML2Text with default options for better conversion
@@ -202,8 +229,11 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
             try:
                 raw_markdown = h.handle(cleaned_html)
             except Exception as e:
-                raw_markdown = f"Error converting HTML to markdown: {str(e)}"
+                self.logger.error(f"Error converting HTML to markdown: {e}")
+                traceback.print_exc()
+                raise ParsingError("Failed to convert HTML to markdown", original_error=e)
 
+            # Clean up code blocks
             raw_markdown = raw_markdown.replace("    ```", "```")
 
             # Convert links to citations
@@ -215,7 +245,13 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
                         markdown_with_citations,
                         references_markdown,
                     ) = self.convert_links_to_citations(raw_markdown, base_url)
+                except ParsingError as e:
+                    self.logger.error(f"Error generating citations: {e}")
+                    markdown_with_citations = raw_markdown
+                    references_markdown = f"Error generating citations: {str(e)}"
                 except Exception as e:
+                    self.logger.error(f"Unexpected error generating citations: {e}")
+                    traceback.print_exc()
                     markdown_with_citations = raw_markdown
                     references_markdown = f"Error generating citations: {str(e)}"
 
@@ -230,13 +266,12 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
                 fit_markdown=fit_markdown or "",
                 fit_html=filtered_html or "",
             )
+        except ParsingError as e:
+            # Re-raise parsing errors
+            raise e
         except Exception as e:
             # If anything fails, return empty strings with error message
             error_msg = f"Error in markdown generation: {str(e)}"
-            return MarkdownGenerationResult(
-                raw_markdown=error_msg,
-                markdown_with_citations=error_msg,
-                references_markdown="",
-                fit_markdown="",
-                fit_html="",
-            )
+            self.logger.error(error_msg)
+            traceback.print_exc()
+            raise ParsingError("Failed to generate markdown", original_error=e)
