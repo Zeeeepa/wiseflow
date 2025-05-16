@@ -13,6 +13,8 @@ import shutil
 from datetime import datetime
 import requests
 from urllib.parse import urlparse
+import threading
+import contextlib
 
 from .reference_extractor import ReferenceExtractor
 from .reference_indexer import ReferenceIndexer
@@ -95,6 +97,7 @@ class ReferenceManager:
         self.storage_path = storage_path
         os.makedirs(storage_path, exist_ok=True)
         self.references: Dict[str, Reference] = {}
+        self._lock = threading.RLock()  # Add a lock for thread safety
         
         # Initialize components
         self.extractor = ReferenceExtractor()
@@ -109,7 +112,7 @@ class ReferenceManager:
         index_path = os.path.join(self.storage_path, "index.json")
         if os.path.exists(index_path):
             try:
-                with open(index_path, 'r') as f:
+                with open(index_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     for ref_data in data:
                         ref = Reference.from_dict(ref_data)
@@ -120,13 +123,14 @@ class ReferenceManager:
         
     def save_references(self) -> None:
         """Save references to storage."""
-        index_path = os.path.join(self.storage_path, "index.json")
-        try:
-            with open(index_path, 'w') as f:
-                json.dump([ref.to_dict() for ref in self.references.values()], f, indent=2)
-            logger.info(f"Saved {len(self.references)} references to storage")
-        except Exception as e:
-            logger.error(f"Error saving references: {e}")
+        with self._lock:
+            index_path = os.path.join(self.storage_path, "index.json")
+            try:
+                with open(index_path, 'w', encoding='utf-8') as f:
+                    json.dump([ref.to_dict() for ref in self.references.values()], f, indent=2)
+                logger.info(f"Saved {len(self.references)} references to storage")
+            except Exception as e:
+                logger.error(f"Error saving references: {e}")
     
     def add_file_reference(self, focus_id: str, file_path: str, extract_content: bool = True, index_content: bool = True) -> Optional[Reference]:
         """
@@ -162,8 +166,12 @@ class ReferenceManager:
             }
             
             if extract_content:
-                content, extracted_metadata = self.extractor.extract_content(dest_path)
-                metadata.update(extracted_metadata)
+                try:
+                    content, extracted_metadata = self.extractor.extract_content(dest_path)
+                    metadata.update(extracted_metadata)
+                except Exception as e:
+                    logger.error(f"Content extraction failed: {e}")
+                    # Continue with empty content
             
             # Create the reference
             reference = Reference(
@@ -175,9 +183,10 @@ class ReferenceManager:
                 metadata=metadata
             )
             
-            # Add to references
-            self.references[reference_id] = reference
-            self.save_references()
+            # Add to references with thread safety
+            with self._lock:
+                self.references[reference_id] = reference
+                self.save_references()
             
             # Index the content if requested
             if index_content and content:
@@ -226,17 +235,32 @@ class ReferenceManager:
             }
             
             if extract_content:
-                content, extracted_metadata = self.extractor.extract_web_content(url)
-                metadata.update(extracted_metadata)
-                
-                # Save the content
-                with open(dest_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
+                try:
+                    content, extracted_metadata = self.extractor.extract_web_content(url)
+                    metadata.update(extracted_metadata)
+                    
+                    # Save the content
+                    with open(dest_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                except Exception as e:
+                    logger.error(f"Web content extraction failed: {e}")
+                    # Try to download without extraction
+                    try:
+                        with contextlib.suppress(requests.exceptions.RequestException):
+                            response = requests.get(url, timeout=30)
+                            with open(dest_path, 'w', encoding='utf-8') as f:
+                                f.write(response.text)
+                    except Exception as download_error:
+                        logger.error(f"Web content download failed: {download_error}")
             else:
                 # Download the content without extraction
-                response = requests.get(url)
-                with open(dest_path, 'w', encoding='utf-8') as f:
-                    f.write(response.text)
+                try:
+                    with contextlib.suppress(requests.exceptions.RequestException):
+                        response = requests.get(url, timeout=30)
+                        with open(dest_path, 'w', encoding='utf-8') as f:
+                            f.write(response.text)
+                except Exception as e:
+                    logger.error(f"Web content download failed: {e}")
             
             # Create the reference
             reference = Reference(
@@ -248,9 +272,10 @@ class ReferenceManager:
                 metadata=metadata
             )
             
-            # Add to references
-            self.references[reference_id] = reference
-            self.save_references()
+            # Add to references with thread safety
+            with self._lock:
+                self.references[reference_id] = reference
+                self.save_references()
             
             # Index the content if requested
             if index_content and content:
@@ -303,9 +328,10 @@ class ReferenceManager:
                 }
             )
             
-            # Add to references
-            self.references[reference_id] = reference
-            self.save_references()
+            # Add to references with thread safety
+            with self._lock:
+                self.references[reference_id] = reference
+                self.save_references()
             
             # Index the content if requested
             if index_content and content:
@@ -326,28 +352,29 @@ class ReferenceManager:
     
     def delete_reference(self, reference_id: str) -> bool:
         """Delete a reference."""
-        if reference_id in self.references:
-            reference = self.references[reference_id]
-            
-            # Delete the file
-            try:
-                if os.path.exists(reference.path):
-                    os.remove(reference.path)
-            except Exception as e:
-                logger.error(f"Error deleting reference file: {e}")
-            
-            # Remove from index
-            try:
-                self.indexer.remove_document(reference_id)
-            except Exception as e:
-                logger.error(f"Error removing reference from index: {e}")
-            
-            # Remove from references
-            del self.references[reference_id]
-            self.save_references()
-            
-            return True
-        return False
+        with self._lock:
+            if reference_id in self.references:
+                reference = self.references[reference_id]
+                
+                # Delete the file
+                try:
+                    if os.path.exists(reference.path):
+                        os.remove(reference.path)
+                except Exception as e:
+                    logger.error(f"Error deleting reference file: {e}")
+                
+                # Remove from index
+                try:
+                    self.indexer.remove_document(reference_id)
+                except Exception as e:
+                    logger.error(f"Error removing reference from index: {e}")
+                
+                # Remove from references
+                del self.references[reference_id]
+                self.save_references()
+                
+                return True
+            return False
     
     def search_references(self, query: str, focus_id: Optional[str] = None, max_results: int = 10) -> List[Dict[str, Any]]:
         """
@@ -452,9 +479,10 @@ class ReferenceManager:
         keywords = []
         
         # Update the reference with extracted entities and keywords
-        reference.entities = entities
-        reference.keywords = keywords
-        self.save_references()
+        with self._lock:
+            reference.entities = entities
+            reference.keywords = keywords
+            self.save_references()
         
         return entities, keywords
     
@@ -486,8 +514,9 @@ class ReferenceManager:
             )
             
             if success:
-                reference.indexed = True
-                self.save_references()
+                with self._lock:
+                    reference.indexed = True
+                    self.save_references()
                 logger.info(f"Successfully indexed reference {reference.reference_id}")
             
             return success
