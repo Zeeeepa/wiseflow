@@ -1,8 +1,13 @@
 version: '3.8'
 
+# WiseFlow Docker Compose Configuration
+# This file defines the services required to run WiseFlow in a containerized environment.
+
 services:
+  # PocketBase service - Provides database and authentication
   pocketbase:
     image: ghcr.io/muchobien/pocketbase:latest
+    container_name: wiseflow-pocketbase
     ports:
       - '8090:8090'
     volumes:
@@ -10,32 +15,70 @@ services:
     restart: unless-stopped
     entrypoint: sh -c '/usr/local/bin/pocketbase superuser upsert $PB_SUPERUSER_EMAIL $PB_SUPERUSER_PASSWORD --dev --dir=/pb/pb_data && /usr/local/bin/pocketbase serve --dev --http=0.0.0.0:8090 --dir=/pb/pb_data --publicDir=/pb_public --hooksDir=/pb_hooks --migrationsDir=/pb/pb_migrations'
     environment:
-      - PB_SUPERUSER_EMAIL=${PB_SUPERUSER_EMAIL}
-      - PB_SUPERUSER_PASSWORD=${PB_SUPERUSER_PASSWORD}
+      - PB_SUPERUSER_EMAIL=${PB_SUPERUSER_EMAIL:-admin@example.com}
+      - PB_SUPERUSER_PASSWORD=${PB_SUPERUSER_PASSWORD:-changeme123}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
+  # Core service - Main WiseFlow application
   core:
     image: mcr.microsoft.com/playwright/python:v1.50.0-jammy
+    container_name: wiseflow-core
     volumes:
       - ./core:/app
       - ./docker/pip_cache:/root/.cache/pip
-      - ${PROJECT_DIR}:/work_dir
+      - ${PROJECT_DIR:-work_dir}:/work_dir
     working_dir: /app
     command: sh -c 'pip install -r requirements.txt && python run_task.py'
     environment:
       - PB_API_BASE=http://pocketbase:8090
-      - PB_API_AUTH=${PB_SUPERUSER_EMAIL}|${PB_SUPERUSER_PASSWORD}
-      - VL_MODEL=${VL_MODEL}
+      - PB_API_AUTH=${PB_SUPERUSER_EMAIL:-admin@example.com}|${PB_SUPERUSER_PASSWORD:-changeme123}
+      - VL_MODEL=${VL_MODEL:-gpt-4o}
       - PROJECT_DIR=/work_dir
       - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_API_BASE=${LLM_API_BASE}
+      - LLM_API_BASE=${LLM_API_BASE:-https://api.openai.com/v1}
       - ZHIPU_API_KEY=${ZHIPU_API_KEY}
-      - PRIMARY_MODEL=${PRIMARY_MODEL}
-      - SECONDARY_MODEL=${SECONDARY_MODEL}
+      - PRIMARY_MODEL=${PRIMARY_MODEL:-gpt-4o}
+      - SECONDARY_MODEL=${SECONDARY_MODEL:-gpt-4o-mini}
       - LLM_CONCURRENT_NUMBER=${LLM_CONCURRENT_NUMBER:-1}
-      - VERBOSE=${VERBOSE:-""}
-      # - CRAWL4_AI_BASE_DIRECTORY=/work_dir
+      - VERBOSE=${VERBOSE:-false}
+      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-4}
+      - AUTO_SHUTDOWN_ENABLED=${AUTO_SHUTDOWN_ENABLED:-false}
+      - AUTO_SHUTDOWN_IDLE_TIME=${AUTO_SHUTDOWN_IDLE_TIME:-3600}
+      - AUTO_SHUTDOWN_CHECK_INTERVAL=${AUTO_SHUTDOWN_CHECK_INTERVAL:-300}
+      - ENABLE_MULTIMODAL=${ENABLE_MULTIMODAL:-false}
+      - ENABLE_KNOWLEDGE_GRAPH=${ENABLE_KNOWLEDGE_GRAPH:-false}
+      - ENABLE_INSIGHTS=${ENABLE_INSIGHTS:-true}
+      - ENABLE_REFERENCES=${ENABLE_REFERENCES:-true}
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Dashboard service (optional) - Web interface for WiseFlow
+  dashboard:
+    image: python:3.12-slim
+    container_name: wiseflow-dashboard
+    volumes:
+      - ./dashboard:/app
+    working_dir: /app
+    command: sh -c 'pip install -r requirements.txt && python main.py'
+    ports:
+      - '7777:7777'
+    environment:
+      - PB_API_BASE=http://pocketbase:8090
+      - PB_API_AUTH=${PB_SUPERUSER_EMAIL:-admin@example.com}|${PB_SUPERUSER_PASSWORD:-changeme123}
     depends_on:
       - pocketbase
+      - core
+    restart: unless-stopped
+    profiles:
+      - dashboard
 
 volumes:
   work_dir:
+    driver: local
