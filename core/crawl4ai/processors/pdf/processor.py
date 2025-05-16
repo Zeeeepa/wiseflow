@@ -87,8 +87,12 @@ class NaivePDFProcessorStrategy(PDFProcessorStrategy):
 
         try:
             with pdf_path.open('rb') as file:
-                reader = PdfReader(file)
-                result.metadata = self._extract_metadata(pdf_path, reader)
+                try:
+                    reader = PdfReader(file)
+                    result.metadata = self._extract_metadata(pdf_path, reader)
+                except Exception as e:
+                    logger.error(f"Failed to read PDF file: {str(e)}")
+                    raise ValueError(f"Invalid or corrupted PDF file: {str(e)}")
                 
                 # Handle image directory
                 image_dir = None
@@ -101,9 +105,19 @@ class NaivePDFProcessorStrategy(PDFProcessorStrategy):
                         image_dir = Path(self._temp_dir)
 
                 for page_num, page in enumerate(reader.pages):
-                    self.current_page_number = page_num + 1
-                    pdf_page = self._process_page(page, image_dir)
-                    result.pages.append(pdf_page)
+                    try:
+                        self.current_page_number = page_num + 1
+                        pdf_page = self._process_page(page, image_dir)
+                        result.pages.append(pdf_page)
+                    except Exception as e:
+                        logger.error(f"Error processing page {page_num + 1}: {str(e)}")
+                        # Add an empty page with error information
+                        result.pages.append(PDFPage(
+                            page_number=page_num + 1,
+                            raw_text=f"Error processing page: {str(e)}",
+                            markdown=f"**Error processing page {page_num + 1}**: {str(e)}",
+                            html=f"<p><strong>Error processing page {page_num + 1}</strong>: {str(e)}</p>"
+                        ))
 
         except Exception as e:
             logger.error(f"Failed to process PDF: {str(e)}")
@@ -114,6 +128,7 @@ class NaivePDFProcessorStrategy(PDFProcessorStrategy):
                 import shutil
                 try:
                     shutil.rmtree(self._temp_dir)
+                    self._temp_dir = None
                 except Exception as e:
                     logger.error(f"Failed to cleanup temp directory: {str(e)}")
 
@@ -146,9 +161,13 @@ class NaivePDFProcessorStrategy(PDFProcessorStrategy):
         try:
             # Get metadata and page count from main thread
             with pdf_path.open('rb') as file:
-                reader = PdfReader(file)
-                result.metadata = self._extract_metadata(pdf_path, reader)
-                total_pages = len(reader.pages)
+                try:
+                    reader = PdfReader(file)
+                    result.metadata = self._extract_metadata(pdf_path, reader)
+                    total_pages = len(reader.pages)
+                except Exception as e:
+                    logger.error(f"Failed to read PDF file: {str(e)}")
+                    raise ValueError(f"Invalid or corrupted PDF file: {str(e)}")
 
             # Handle image directory setup
             image_dir = None
@@ -162,11 +181,21 @@ class NaivePDFProcessorStrategy(PDFProcessorStrategy):
 
             def process_page_safely(page_num: int):
                 # Each thread opens its own file handle
-                with pdf_path.open('rb') as file:
-                    thread_reader = PdfReader(file)
-                    page = thread_reader.pages[page_num]
-                    self.current_page_number = page_num + 1
-                    return self._process_page(page, image_dir)
+                try:
+                    with pdf_path.open('rb') as file:
+                        thread_reader = PdfReader(file)
+                        page = thread_reader.pages[page_num]
+                        self.current_page_number = page_num + 1
+                        return self._process_page(page, image_dir)
+                except Exception as e:
+                    logger.error(f"Error processing page {page_num + 1}: {str(e)}")
+                    # Return an empty page with error information
+                    return PDFPage(
+                        page_number=page_num + 1,
+                        raw_text=f"Error processing page: {str(e)}",
+                        markdown=f"**Error processing page {page_num + 1}**: {str(e)}",
+                        html=f"<p><strong>Error processing page {page_num + 1}</strong>: {str(e)}</p>"
+                    )
 
             # Process pages in parallel batches
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.batch_size) as executor:
@@ -183,7 +212,13 @@ class NaivePDFProcessorStrategy(PDFProcessorStrategy):
                         result.pages[page_num - 1] = pdf_page
                     except Exception as e:
                         logger.error(f"Failed to process page {page_num}: {str(e)}")
-                        raise
+                        # Add an empty page with error information
+                        result.pages[page_num - 1] = PDFPage(
+                            page_number=page_num,
+                            raw_text=f"Error processing page: {str(e)}",
+                            markdown=f"**Error processing page {page_num}**: {str(e)}",
+                            html=f"<p><strong>Error processing page {page_num}</strong>: {str(e)}</p>"
+                        )
 
         except Exception as e:
             logger.error(f"Failed to process PDF: {str(e)}")

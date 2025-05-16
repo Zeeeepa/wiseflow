@@ -109,17 +109,20 @@ class AsyncDatabaseManager:
 
         await self.connection_semaphore.acquire()
         task_id = id(asyncio.current_task())
+        connection = None
 
         try:
             async with self.pool_lock:
                 if task_id not in self.connection_pool:
                     try:
-                        conn = await aiosqlite.connect(self.db_path, timeout=30.0)
-                        await conn.execute("PRAGMA journal_mode = WAL")
-                        await conn.execute("PRAGMA busy_timeout = 5000")
+                        connection = await aiosqlite.connect(self.db_path, timeout=30.0)
+                        await connection.execute("PRAGMA journal_mode = WAL")
+                        await connection.execute("PRAGMA busy_timeout = 5000")
+                        await connection.execute("PRAGMA synchronous = NORMAL")  # Improve performance
+                        await connection.execute("PRAGMA cache_size = 10000")    # Increase cache size
 
                         # Verify database structure
-                        async with conn.execute(
+                        async with connection.execute(
                             "PRAGMA table_info(crawled_data)"
                         ) as cursor:
                             columns = await cursor.fetchall()
@@ -140,14 +143,19 @@ class AsyncDatabaseManager:
                             }
                             missing_columns = expected_columns - set(column_names)
                             if missing_columns:
-                                raise ValueError(
-                                    f"Database missing columns: {missing_columns}"
+                                self.logger.warning(
+                                    f"Database missing columns: {missing_columns}. Will attempt to update schema."
                                 )
+                                await self.update_db_schema()
 
-                        self.connection_pool[task_id] = conn
+                        self.connection_pool[task_id] = connection
                     except Exception as e:
                         import sys
 
+                        # Make sure to release the connection if it was created
+                        if connection:
+                            await connection.close()
+                            
                         error_context = get_error_context(sys.exc_info())
                         error_message = (
                             f"Unexpected error in db get_connection at line {error_context['line_no']} "
@@ -180,28 +188,73 @@ class AsyncDatabaseManager:
         finally:
             async with self.pool_lock:
                 if task_id in self.connection_pool:
-                    await self.connection_pool[task_id].close()
+                    try:
+                        await self.connection_pool[task_id].close()
+                    except Exception as e:
+                        self.logger.error(f"Error closing database connection: {str(e)}")
                     del self.connection_pool[task_id]
             self.connection_semaphore.release()
 
     async def execute_with_retry(self, operation, *args):
         """Execute database operations with retry logic"""
+        last_error = None
         for attempt in range(self.max_retries):
             try:
                 async with self.get_connection() as db:
                     result = await operation(db, *args)
                     await db.commit()
                     return result
-            except Exception as e:
-                if attempt == self.max_retries - 1:
-                    self.logger.error(
-                        message="Operation failed after {retries} attempts: {error}",
-                        tag="ERROR",
-                        force_verbose=True,
-                        params={"retries": self.max_retries, "error": str(e)},
+            except aiosqlite.OperationalError as e:
+                # Handle database locked errors with specific retry logic
+                last_error = e
+                if "database is locked" in str(e).lower():
+                    self.logger.warning(
+                        message="Database locked, retrying in {delay} seconds (attempt {attempt}/{max_retries})",
+                        tag="RETRY",
+                        params={
+                            "delay": (attempt + 1) * 2,
+                            "attempt": attempt + 1,
+                            "max_retries": self.max_retries
+                        }
                     )
-                    raise
-                await asyncio.sleep(1 * (attempt + 1))  # Exponential backoff
+                    # Use longer delays for database locks
+                    await asyncio.sleep((attempt + 1) * 2)
+                else:
+                    # Other operational errors
+                    self.logger.warning(
+                        message="Database operation error: {error}, retrying in {delay} seconds (attempt {attempt}/{max_retries})",
+                        tag="RETRY",
+                        params={
+                            "error": str(e),
+                            "delay": (attempt + 1),
+                            "attempt": attempt + 1,
+                            "max_retries": self.max_retries
+                        }
+                    )
+                    await asyncio.sleep(attempt + 1)
+            except Exception as e:
+                # Handle other exceptions
+                last_error = e
+                self.logger.warning(
+                    message="Database operation failed: {error}, retrying in {delay} seconds (attempt {attempt}/{max_retries})",
+                    tag="RETRY",
+                    params={
+                        "error": str(e),
+                        "delay": (attempt + 1),
+                        "attempt": attempt + 1,
+                        "max_retries": self.max_retries
+                    }
+                )
+                await asyncio.sleep(attempt + 1)
+                
+        # If we get here, all retries failed
+        self.logger.error(
+            message="Operation failed after {retries} attempts: {error}",
+            tag="ERROR",
+            force_verbose=True,
+            params={"retries": self.max_retries, "error": str(last_error)},
+        )
+        raise last_error or Exception("Database operation failed after all retries")
 
     async def ainit_db(self):
         """Initialize database schema"""
