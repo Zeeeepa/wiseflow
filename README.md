@@ -178,17 +178,76 @@ python scripts/dependency_check.py --all
 
 ### Running the System
 
-1. Start the API server:
+#### Quick Start (Recommended)
+
+The easiest way to run WiseFlow is to use the unified launcher script:
+
+1. On Linux/macOS:
+   ```bash
+   # Make the script executable
+   chmod +x wiseflow.sh
+   
+   # Run WiseFlow
+   ./wiseflow.sh
+   ```
+
+2. On Windows:
+   ```cmd
+   wiseflow.bat
+   ```
+
+The launcher script will:
+- Create a virtual environment if it doesn't exist
+- Install all required dependencies
+- Create a `.env` file from `.env.example` if it doesn't exist
+- Start all required components (PocketBase, API server, task processor, and dashboard)
+- Open the dashboard in your default web browser
+
+#### Command-line Options
+
+The launcher script supports several command-line options:
+
+```bash
+# Don't start the PocketBase database (if you're using an external database)
+./wiseflow.sh --no-db
+
+# Don't start the API server
+./wiseflow.sh --no-api
+
+# Don't start the task processor
+./wiseflow.sh --no-task
+
+# Don't start the dashboard
+./wiseflow.sh --no-dashboard
+
+# Don't open the dashboard in a browser
+./wiseflow.sh --no-browser
+
+# Specify a custom environment file
+./wiseflow.sh --env-file /path/to/.env
+```
+
+#### Manual Startup (Advanced)
+
+If you prefer to start the components manually:
+
+1. Start the PocketBase database:
+   ```bash
+   cd pb
+   ./pocketbase serve --http=0.0.0.0:8090 --dir=./pb_data
+   ```
+
+2. Start the API server:
    ```bash
    python api_server.py
    ```
 
-2. Start the task processor:
+3. Start the task processor:
    ```bash
    python core/run_task.py
    ```
 
-3. Start the dashboard:
+4. Start the dashboard:
    ```bash
    python dashboard/main.py
    ```
@@ -363,4 +422,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
