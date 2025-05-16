@@ -2,11 +2,13 @@ import os
 import time
 import psutil
 from colorama import Fore
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Tuple, Set
 import asyncio
 import gc
 import logging
 import traceback
+import weakref
+import signal
 
 # from contextlib import nullcontext, asynccontextmanager
 from contextlib import asynccontextmanager
@@ -41,6 +43,10 @@ class AsyncWebCrawler:
     _max_memory_history_size = 10
     # Domain-specific cooldown tracking
     _domain_cooldowns: Dict[str, float] = {}
+    # Track active crawlers for global resource management
+    _active_crawlers: Set["AsyncWebCrawler"] = set()
+    # Class-level lock for managing shared resources
+    _class_lock = asyncio.Lock()
 
     def __init__(
         self,
@@ -106,6 +112,7 @@ class AsyncWebCrawler:
         # Thread safety setup
         self._lock = asyncio.Lock() if thread_safe else None
         self._memory_monitor_task = None
+        self._resource_monitor_task = None
 
         # Initialize directories
         self.crawl4ai_folder = os.path.join(base_directory, ".craw4ai-de")
@@ -122,6 +129,56 @@ class AsyncWebCrawler:
         # Track active crawl tasks
         self._active_tasks = set()
         self._task_lock = asyncio.Lock()
+        
+        # Track resource usage
+        self.resource_stats = {
+            "peak_memory_percent": 0.0,
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "cached_requests": 0,
+            "total_processing_time": 0.0,
+            "browser_restarts": 0,
+            "last_gc_time": time.time(),
+        }
+        
+        # Set up signal handlers for graceful shutdown
+        self._setup_signal_handlers()
+        
+        # Register this crawler instance
+        asyncio.create_task(self._register_crawler())
+    
+    async def _register_crawler(self):
+        """Register this crawler instance in the class-level set."""
+        async with self._class_lock:
+            self._active_crawlers.add(self)
+    
+    async def _unregister_crawler(self):
+        """Unregister this crawler instance from the class-level set."""
+        async with self._class_lock:
+            if self in self._active_crawlers:
+                self._active_crawlers.remove(self)
+    
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for graceful shutdown."""
+        # Use a weak reference to avoid reference cycles
+        weak_self = weakref.ref(self)
+        
+        def handle_signal(signum, frame):
+            # Get the actual instance from the weak reference
+            instance = weak_self()
+            if instance:
+                # Create a task to close the crawler
+                loop = asyncio.get_event_loop()
+                loop.create_task(instance.close())
+        
+        # Register signal handlers
+        try:
+            signal.signal(signal.SIGINT, handle_signal)
+            signal.signal(signal.SIGTERM, handle_signal)
+        except (ValueError, AttributeError):
+            # Signal handling might not be available in all environments
+            pass
 
     async def _monitor_memory_usage(self):
         """
@@ -138,6 +195,11 @@ class AsyncWebCrawler:
                 self._memory_history.append(memory_percent)
                 if len(self._memory_history) > self._max_memory_history_size:
                     self._memory_history.pop(0)
+                
+                # Update peak memory usage
+                self.resource_stats["peak_memory_percent"] = max(
+                    self.resource_stats["peak_memory_percent"], memory_percent
+                )
                 
                 # Calculate average memory usage
                 avg_memory = sum(self._memory_history) / len(self._memory_history)
@@ -157,10 +219,67 @@ class AsyncWebCrawler:
                 if avg_memory > self.memory_warning_percent:
                     self.logger.warning("Triggering garbage collection due to high memory usage")
                     gc.collect()
+                    self.resource_stats["last_gc_time"] = time.time()
+                
+                # If memory usage is extremely high, take more aggressive action
+                if memory_percent > self.memory_threshold_percent:
+                    self.logger.error(f"Memory usage critical at {memory_percent:.1f}%, restarting browser")
+                    await self._restart_browser()
+                    self.resource_stats["browser_restarts"] += 1
         except asyncio.CancelledError:
             self.logger.info("Memory monitor task cancelled")
         except Exception as e:
             self.logger.error(f"Error in memory monitor: {e}")
+            traceback.print_exc()
+    
+    async def _monitor_resources(self):
+        """Monitor and manage system resources."""
+        try:
+            while True:
+                await asyncio.sleep(30)  # Check every 30 seconds
+                
+                # Check if we need to perform garbage collection
+                time_since_last_gc = time.time() - self.resource_stats["last_gc_time"]
+                if time_since_last_gc > 300:  # 5 minutes
+                    self.logger.info("Performing routine garbage collection")
+                    gc.collect()
+                    self.resource_stats["last_gc_time"] = time.time()
+                
+                # Log resource statistics
+                self.logger.info(
+                    f"Resource stats: "
+                    f"Requests: {self.resource_stats['total_requests']}, "
+                    f"Success: {self.resource_stats['successful_requests']}, "
+                    f"Failed: {self.resource_stats['failed_requests']}, "
+                    f"Cached: {self.resource_stats['cached_requests']}, "
+                    f"Browser restarts: {self.resource_stats['browser_restarts']}"
+                )
+        except asyncio.CancelledError:
+            self.logger.info("Resource monitor task cancelled")
+        except Exception as e:
+            self.logger.error(f"Error in resource monitor: {e}")
+            traceback.print_exc()
+    
+    async def _restart_browser(self):
+        """Restart the browser to free up resources."""
+        try:
+            self.logger.warning("Restarting browser to free up resources")
+            
+            # Close the current browser
+            await self.crawler_strategy.__aexit__(None, None, None)
+            
+            # Force garbage collection
+            gc.collect()
+            
+            # Wait a moment for resources to be released
+            await asyncio.sleep(2)
+            
+            # Start a new browser
+            await self.crawler_strategy.__aenter__()
+            
+            self.logger.info("Browser successfully restarted")
+        except Exception as e:
+            self.logger.error(f"Error restarting browser: {e}")
             traceback.print_exc()
 
     async def start(self):
@@ -178,6 +297,10 @@ class AsyncWebCrawler:
         # Start memory monitoring
         if self._memory_monitor_task is None or self._memory_monitor_task.done():
             self._memory_monitor_task = asyncio.create_task(self._monitor_memory_usage())
+        
+        # Start resource monitoring
+        if self._resource_monitor_task is None or self._resource_monitor_task.done():
+            self._resource_monitor_task = asyncio.create_task(self._monitor_resources())
             
         return self
 
@@ -191,13 +314,15 @@ class AsyncWebCrawler:
         1. Clean up browser resources
         2. Close any open pages and contexts
         """
-        # Cancel memory monitor task
-        if self._memory_monitor_task and not self._memory_monitor_task.done():
-            self._memory_monitor_task.cancel()
-            try:
-                await self._memory_monitor_task
-            except asyncio.CancelledError:
-                pass
+        # Cancel monitoring tasks
+        for task_name in ["_memory_monitor_task", "_resource_monitor_task"]:
+            task = getattr(self, task_name, None)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         
         # Cancel any active tasks
         async with self._task_lock:
@@ -212,6 +337,9 @@ class AsyncWebCrawler:
         
         # Close crawler strategy
         await self.crawler_strategy.__aexit__(None, None, None)
+        
+        # Unregister this crawler
+        await self._unregister_crawler()
         
         # Force garbage collection
         gc.collect()
@@ -274,13 +402,13 @@ class AsyncWebCrawler:
             
             # Try to free memory
             gc.collect()
+            self.resource_stats["last_gc_time"] = time.time()
             
             # Restart crawler if memory is still high
             if psutil.virtual_memory().percent >= self.memory_threshold_percent:
                 self.logger.warning("Memory still high after garbage collection, restarting crawler")
-                await self.close()
-                await asyncio.sleep(5)  # Short delay before restart
-                await self.start()
+                await self._restart_browser()
+                self.resource_stats["browser_restarts"] += 1
                 
             return False
             
@@ -308,6 +436,7 @@ class AsyncWebCrawler:
         if not isinstance(url, str) or not url:
             error_msg = "Invalid URL, make sure the URL is a non-empty string"
             self.logger.error(error_msg)
+            self.resource_stats["failed_requests"] += 1
             return CrawlResult(
                 url=url, 
                 html="", 
@@ -317,8 +446,12 @@ class AsyncWebCrawler:
 
         # Use lock if thread safety is enabled
         async with self._lock or self.nullcontext():
+            # Update request statistics
+            self.resource_stats["total_requests"] += 1
+            
             # Check memory usage and handle high memory situations
             if not await self._check_and_handle_memory(url):
+                self.resource_stats["failed_requests"] += 1
                 return CrawlResult(
                     url=url,
                     html="",
@@ -361,6 +494,9 @@ class AsyncWebCrawler:
                         # if config.screenshot and not screenshot or config.pdf and not pdf:
                         if crawler_config.screenshot and not screenshot_data:
                             cached_result = None
+                        else:
+                            # Update cache statistics
+                            self.resource_stats["cached_requests"] += 1
                 
                 # Fetch fresh content if needed
                 if not cached_result or not html:
@@ -372,6 +508,7 @@ class AsyncWebCrawler:
                             self.logger.warning(
                                 f"URL {url} is disallowed by robots.txt"
                             )
+                            self.resource_stats["failed_requests"] += 1
                             return CrawlResult(
                                 url=url,
                                 html="",
@@ -420,6 +557,7 @@ class AsyncWebCrawler:
                     if not async_response:
                         error_msg = f"Failed to crawl {url} after {self.max_retries} retries"
                         self.logger.error(error_msg)
+                        self.resource_stats["failed_requests"] += 1
                         return CrawlResult(
                             url=url,
                             html="",
@@ -443,6 +581,7 @@ class AsyncWebCrawler:
                         metadata=async_response.metadata,
                         redirected_url=async_response.redirected_url or url,
                         timing=time.perf_counter() - t1,
+                        status_code=async_response.status_code,
                     )
 
                     # Add SSL certificate
@@ -453,11 +592,19 @@ class AsyncWebCrawler:
                     crawl_result.success = bool(html)
                     crawl_result.session_id = getattr(crawler_config, "session_id", None)
 
+                    # Update resource statistics
+                    processing_time = time.perf_counter() - start_time
+                    self.resource_stats["total_processing_time"] += processing_time
+                    if crawl_result.success:
+                        self.resource_stats["successful_requests"] += 1
+                    else:
+                        self.resource_stats["failed_requests"] += 1
+
                     self.logger.success(
                         message="{url:.50}... | Status: {status} | Total: {timing}",
                         url=url,
                         status=crawl_result.success,
-                        timing=time.perf_counter() - start_time,
+                        timing=processing_time,
                         tag="CRAWL",
                     )
 
@@ -475,11 +622,12 @@ class AsyncWebCrawler:
 
                 else:
                     # Use cached result
+                    processing_time = time.perf_counter() - start_time
                     self.logger.success(
                         message="{url:.50}... | Status: {status} | Total: {timing}",
                         url=url,
                         status=bool(html),
-                        timing=time.perf_counter() - start_time,
+                        timing=processing_time,
                         tag="CACHE",
                     )
 
@@ -504,6 +652,9 @@ class AsyncWebCrawler:
                     tag="ERROR",
                 )
                 
+                # Update statistics
+                self.resource_stats["failed_requests"] += 1
+                
                 # Remove this task from active tasks
                 task = asyncio.current_task()
                 if task:
@@ -513,3 +664,70 @@ class AsyncWebCrawler:
                 return CrawlResult(
                     url=url, html="", success=False, error_message=error_message
                 )
+    
+    async def get_resource_stats(self) -> Dict[str, Any]:
+        """Get resource statistics."""
+        stats = self.resource_stats.copy()
+        
+        # Calculate derived statistics
+        if stats["total_requests"] > 0:
+            stats["success_rate"] = (stats["successful_requests"] / stats["total_requests"]) * 100
+            stats["cache_hit_rate"] = (stats["cached_requests"] / stats["total_requests"]) * 100
+        else:
+            stats["success_rate"] = 0
+            stats["cache_hit_rate"] = 0
+            
+        if stats["successful_requests"] > 0:
+            stats["avg_processing_time"] = stats["total_processing_time"] / stats["successful_requests"]
+        else:
+            stats["avg_processing_time"] = 0
+            
+        # Add current memory usage
+        stats["current_memory_percent"] = psutil.virtual_memory().percent
+        
+        # Add active tasks count
+        stats["active_tasks"] = len(self._active_tasks)
+        
+        return stats
+    
+    @classmethod
+    async def get_global_stats(cls) -> Dict[str, Any]:
+        """Get global statistics for all active crawlers."""
+        async with cls._class_lock:
+            active_count = len(cls._active_crawlers)
+            
+            # Aggregate statistics from all active crawlers
+            total_requests = 0
+            successful_requests = 0
+            failed_requests = 0
+            cached_requests = 0
+            browser_restarts = 0
+            
+            for crawler in cls._active_crawlers:
+                stats = crawler.resource_stats
+                total_requests += stats["total_requests"]
+                successful_requests += stats["successful_requests"]
+                failed_requests += stats["failed_requests"]
+                cached_requests += stats["cached_requests"]
+                browser_restarts += stats["browser_restarts"]
+            
+            return {
+                "active_crawlers": active_count,
+                "total_requests": total_requests,
+                "successful_requests": successful_requests,
+                "failed_requests": failed_requests,
+                "cached_requests": cached_requests,
+                "browser_restarts": browser_restarts,
+                "current_memory_percent": psutil.virtual_memory().percent,
+            }
+    
+    @classmethod
+    async def shutdown_all(cls):
+        """Shutdown all active crawlers."""
+        async with cls._class_lock:
+            shutdown_tasks = []
+            for crawler in list(cls._active_crawlers):
+                shutdown_tasks.append(crawler.close())
+            
+            if shutdown_tasks:
+                await asyncio.gather(*shutdown_tasks, return_exceptions=True)
