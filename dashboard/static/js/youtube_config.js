@@ -177,15 +177,29 @@ function getYouTubeConfigData() {
         transcribeAudio: document.getElementById('youtube-transcribe').checked,
         extractKeyPoints: document.getElementById('youtube-extract-key-points').checked,
         downloadVideos: document.getElementById('youtube-download-videos').checked,
-        analyzeComments: document.getElementById('youtube-analyze-comments').checked
+        analyzeComments: document.getElementById('youtube-analyze-comments').checked,
+        transcriptFormat: document.getElementById('youtube-transcript-format').value
     };
     
     // Get advanced options
     const advancedOptions = {
         followRecommended: document.getElementById('youtube-follow-recommended').checked,
         saveToDatabase: document.getElementById('youtube-save-to-db').checked,
+        cacheEnabled: document.getElementById('youtube-cache-enabled').checked,
         useApiKey: document.getElementById('youtube-use-api-key').checked,
         apiKey: document.getElementById('youtube-api-key').value.trim()
+    };
+    
+    // Get rate limiting options
+    const rateLimiting = {
+        rateLimitPerSecond: parseFloat(document.getElementById('youtube-rate-limit-per-second').value),
+        rateLimitPerDay: parseInt(document.getElementById('youtube-rate-limit-per-day').value)
+    };
+    
+    // Get retry settings
+    const retrySettings = {
+        maxRetries: parseInt(document.getElementById('youtube-max-retries').value),
+        retryBackoffFactor: parseFloat(document.getElementById('youtube-retry-backoff-factor').value)
     };
     
     // Return configuration data
@@ -199,7 +213,9 @@ function getYouTubeConfigData() {
         maxResults: parseInt(document.getElementById('youtube-max-results').value),
         processingOptions: processingOptions,
         parallelWorkers: parseInt(document.getElementById('youtube-workers').value),
-        advancedOptions: advancedOptions
+        advancedOptions: advancedOptions,
+        rateLimiting: rateLimiting,
+        retrySettings: retrySettings
     };
 }
 
@@ -274,6 +290,10 @@ function loadYouTubeConfigFromTemplate(templateConfig) {
         document.getElementById('youtube-extract-key-points').checked = templateConfig.processingOptions.extractKeyPoints !== false;
         document.getElementById('youtube-download-videos').checked = templateConfig.processingOptions.downloadVideos === true;
         document.getElementById('youtube-analyze-comments').checked = templateConfig.processingOptions.analyzeComments !== false;
+        
+        if (templateConfig.processingOptions.transcriptFormat) {
+            document.getElementById('youtube-transcript-format').value = templateConfig.processingOptions.transcriptFormat;
+        }
     }
     
     // Set parallel workers
@@ -287,11 +307,24 @@ function loadYouTubeConfigFromTemplate(templateConfig) {
     if (templateConfig.advancedOptions) {
         document.getElementById('youtube-follow-recommended').checked = templateConfig.advancedOptions.followRecommended !== false;
         document.getElementById('youtube-save-to-db').checked = templateConfig.advancedOptions.saveToDatabase !== false;
+        document.getElementById('youtube-cache-enabled').checked = templateConfig.advancedOptions.cacheEnabled !== false;
         document.getElementById('youtube-use-api-key').checked = templateConfig.advancedOptions.useApiKey === true;
         
         const apiKeyInput = document.getElementById('youtube-api-key');
         apiKeyInput.value = templateConfig.advancedOptions.apiKey || '';
         apiKeyInput.disabled = !templateConfig.advancedOptions.useApiKey;
+    }
+    
+    // Set rate limiting
+    if (templateConfig.rateLimiting) {
+        document.getElementById('youtube-rate-limit-per-second').value = templateConfig.rateLimiting.rateLimitPerSecond || 1;
+        document.getElementById('youtube-rate-limit-per-day').value = templateConfig.rateLimiting.rateLimitPerDay || 10000;
+    }
+    
+    // Set retry settings
+    if (templateConfig.retrySettings) {
+        document.getElementById('youtube-max-retries').value = templateConfig.retrySettings.maxRetries || 3;
+        document.getElementById('youtube-retry-backoff-factor').value = templateConfig.retrySettings.retryBackoffFactor || 2;
     }
 }
 
@@ -347,6 +380,12 @@ function showYouTubeConfigDialog(templateConfig = null) {
                     <input type="text" class="form-control youtube-reference" placeholder="Enter file path or URL...">
                 </div>
             `;
+            
+            // Reset rate limiting and retry settings
+            document.getElementById('youtube-rate-limit-per-second').value = '1';
+            document.getElementById('youtube-rate-limit-per-day').value = '10000';
+            document.getElementById('youtube-max-retries').value = '3';
+            document.getElementById('youtube-retry-backoff-factor').value = '2';
         }
         
         // Show modal
@@ -357,4 +396,3 @@ function showYouTubeConfigDialog(templateConfig = null) {
 
 // Export functions
 window.showYouTubeConfigDialog = showYouTubeConfigDialog;
-

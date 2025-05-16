@@ -115,6 +115,17 @@
             </div>
           </div>
           
+          <!-- Transcript Format -->
+          <div class="mb-3">
+            <label for="youtube-transcript-format" class="form-label">Transcript Format:</label>
+            <select class="form-select" id="youtube-transcript-format">
+              <option value="plain" selected>Plain Text</option>
+              <option value="timestamped">Timestamped</option>
+              <option value="srt">SRT Format</option>
+              <option value="vtt">VTT Format</option>
+            </select>
+          </div>
+          
           <!-- Parallel Workers -->
           <div class="mb-3">
             <label for="youtube-workers" class="form-label">Parallel workers: <span id="youtube-workers-value">2</span></label>
@@ -134,9 +145,39 @@
               <label class="form-check-label" for="youtube-save-to-db">Save findings to database</label>
             </div>
             <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="youtube-cache-enabled" checked>
+              <label class="form-check-label" for="youtube-cache-enabled">Enable caching</label>
+            </div>
+            <div class="form-check">
               <input class="form-check-input" type="checkbox" id="youtube-use-api-key">
               <label class="form-check-label" for="youtube-use-api-key">Use API key:</label>
               <input type="text" class="form-control mt-2" id="youtube-api-key" placeholder="Enter YouTube API key..." disabled>
+            </div>
+          </div>
+          
+          <!-- Rate Limiting -->
+          <div class="mb-3">
+            <label class="form-label">Rate Limiting:</label>
+            <div class="input-group mb-2">
+              <span class="input-group-text">Requests per second:</span>
+              <input type="number" class="form-control" id="youtube-rate-limit-per-second" min="0.1" max="10" step="0.1" value="1">
+            </div>
+            <div class="input-group">
+              <span class="input-group-text">Max requests per day:</span>
+              <input type="number" class="form-control" id="youtube-rate-limit-per-day" min="100" max="50000" step="100" value="10000">
+            </div>
+          </div>
+          
+          <!-- Retry Settings -->
+          <div class="mb-3">
+            <label class="form-label">Retry Settings:</label>
+            <div class="input-group mb-2">
+              <span class="input-group-text">Max retries:</span>
+              <input type="number" class="form-control" id="youtube-max-retries" min="0" max="10" step="1" value="3">
+            </div>
+            <div class="input-group">
+              <span class="input-group-text">Backoff factor:</span>
+              <input type="number" class="form-control" id="youtube-retry-backoff-factor" min="1" max="5" step="0.5" value="2">
             </div>
           </div>
         </form>
@@ -149,4 +190,3 @@
     </div>
   </div>
 </div>
-
