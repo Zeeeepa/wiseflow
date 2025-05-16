@@ -4,14 +4,15 @@ GitHub connector for Wiseflow.
 This module provides a connector for GitHub repositories.
 """
 
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 import logging
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import re
 import base64
+import json
 from urllib.parse import urlparse
 
 import aiohttp
@@ -20,6 +21,26 @@ from core.plugins import PluginBase
 from core.connectors import ConnectorBase, DataItem
 
 logger = logging.getLogger(__name__)
+
+
+class GitHubRateLimitExceeded(Exception):
+    """Exception raised when GitHub API rate limit is exceeded."""
+    
+    def __init__(self, reset_time: Optional[datetime] = None, message: str = "GitHub API rate limit exceeded"):
+        self.reset_time = reset_time
+        self.message = message
+        super().__init__(self.message)
+
+
+class GitHubAPIError(Exception):
+    """Exception raised for GitHub API errors."""
+    
+    def __init__(self, status_code: int, message: str, errors: Optional[List[Dict[str, Any]]] = None):
+        self.status_code = status_code
+        self.message = message
+        self.errors = errors or []
+        super().__init__(f"GitHub API error: {status_code} - {message}")
+
 
 class GitHubConnector(ConnectorBase):
     """Connector for GitHub repositories."""
@@ -36,11 +57,37 @@ class GitHubConnector(ConnectorBase):
         self.semaphore = asyncio.Semaphore(self.config.get("concurrency", 5))
         self.session = None
         
+        # Rate limiting state
+        self.rate_limit_remaining = None
+        self.rate_limit_reset = None
+        self.rate_limit_limit = None
+        
+        # Caching configuration
+        self.cache_enabled = self.config.get('cache_enabled', True)
+        self.cache_ttl = self.config.get('cache_ttl', 300)  # 5 minutes default
+        self.cache_dir = self.config.get('cache_dir', '.github_cache')
+        self.etags = {}  # Store ETags for conditional requests
+        
+        # User agent
+        self.user_agent = self.config.get('user_agent', 'Wiseflow-GitHub-Connector')
+        
+        # Create cache directory if it doesn't exist
+        if self.cache_enabled and not os.path.exists(self.cache_dir):
+            try:
+                os.makedirs(self.cache_dir)
+                logger.info(f"Created GitHub cache directory: {self.cache_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to create GitHub cache directory: {e}")
+                self.cache_enabled = False
+        
     def initialize(self) -> bool:
         """Initialize the connector."""
         try:
             if not self.api_token:
                 logger.warning("No GitHub API token provided. Rate limits will be restricted.")
+            
+            # Load ETags from cache if available
+            self._load_etags()
             
             logger.info("Initialized GitHub connector")
             return True
@@ -51,26 +98,448 @@ class GitHubConnector(ConnectorBase):
     async def _create_session(self):
         """Create an aiohttp session if it doesn't exist."""
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(headers={
+            headers = {
                 "Accept": "application/vnd.github.v3+json",
-                "Authorization": f"token {self.api_token}" if self.api_token else ""
-            })
+                "User-Agent": self.user_agent
+            }
+            
+            if self.api_token:
+                # Check if token is a JWT (GitHub App)
+                if self._is_jwt_token(self.api_token):
+                    headers["Authorization"] = f"Bearer {self.api_token}"
+                else:
+                    headers["Authorization"] = f"token {self.api_token}"
+            
+            self.session = aiohttp.ClientSession(headers=headers)
         return self.session
+    
+    def _is_jwt_token(self, token: str) -> bool:
+        """Check if a token is a JWT token.
+        
+        Args:
+            token: Token to check
+            
+        Returns:
+            bool: True if token is a JWT token, False otherwise
+        """
+        # Simple check: JWT tokens typically have 3 parts separated by dots
+        return token.count('.') == 2 and all(self._is_base64(part) for part in token.split('.'))
+    
+    def _is_base64(self, s: str) -> bool:
+        """Check if a string is base64 encoded.
+        
+        Args:
+            s: String to check
+            
+        Returns:
+            bool: True if string is base64 encoded, False otherwise
+        """
+        try:
+            # Add padding if necessary
+            padding = 4 - (len(s) % 4) if len(s) % 4 else 0
+            s = s + "=" * padding
+            base64.b64decode(s)
+            return True
+        except Exception:
+            return False
     
     async def _close_session(self):
         """Close the aiohttp session."""
         if self.session and not self.session.closed:
             await self.session.close()
             self.session = None
+            
+            # Save ETags to cache
+            self._save_etags()
+    
+    def _update_rate_limit_info(self, headers: Dict[str, str]) -> None:
+        """Update rate limit information from response headers.
+        
+        Args:
+            headers: Response headers from GitHub API
+        """
+        # Extract rate limit information from headers
+        if 'X-RateLimit-Remaining' in headers:
+            self.rate_limit_remaining = int(headers['X-RateLimit-Remaining'])
+        
+        if 'X-RateLimit-Reset' in headers:
+            reset_timestamp = int(headers['X-RateLimit-Reset'])
+            self.rate_limit_reset = datetime.fromtimestamp(reset_timestamp)
+        
+        if 'X-RateLimit-Limit' in headers:
+            self.rate_limit_limit = int(headers['X-RateLimit-Limit'])
+        
+        # Log rate limit information
+        if all(x is not None for x in [self.rate_limit_remaining, self.rate_limit_reset, self.rate_limit_limit]):
+            reset_in = (self.rate_limit_reset - datetime.now()).total_seconds()
+            logger.debug(f"GitHub API rate limit: {self.rate_limit_remaining}/{self.rate_limit_limit}, resets in {reset_in:.0f} seconds")
+    
+    async def _should_wait_for_rate_limit(self) -> Tuple[bool, float]:
+        """Check if we should wait for rate limit to reset.
+        
+        Returns:
+            Tuple[bool, float]: (should_wait, wait_time_seconds)
+        """
+        if self.rate_limit_remaining is not None and self.rate_limit_remaining < 5:
+            if self.rate_limit_reset is not None:
+                now = datetime.now()
+                if now < self.rate_limit_reset:
+                    wait_time = (self.rate_limit_reset - now).total_seconds() + 5  # Add 5 seconds buffer
+                    return True, wait_time
+        
+        return False, 0
+    
+    def _get_cache_key(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> str:
+        """Generate a cache key for the request.
+        
+        Args:
+            endpoint: API endpoint
+            params: Query parameters
+            
+        Returns:
+            str: Cache key
+        """
+        import hashlib
+        
+        # Normalize endpoint
+        endpoint = endpoint.lstrip('/')
+        
+        # Create a string representation of the request
+        request_str = endpoint
+        if params:
+            # Sort params to ensure consistent cache keys
+            sorted_params = sorted(params.items())
+            param_str = '&'.join(f"{k}={v}" for k, v in sorted_params)
+            request_str += '?' + param_str
+        
+        # Hash the request string
+        return hashlib.md5(request_str.encode()).hexdigest()
+    
+    def _get_cache_path(self, cache_key: str) -> str:
+        """Get the file path for a cache item.
+        
+        Args:
+            cache_key: Cache key
+            
+        Returns:
+            str: Cache file path
+        """
+        return os.path.join(self.cache_dir, f"{cache_key}.json")
+    
+    async def _get_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """Get data from cache.
+        
+        Args:
+            cache_key: Cache key
+            
+        Returns:
+            Optional[Dict[str, Any]]: Cached data or None if not found or expired
+        """
+        if not self.cache_enabled:
+            return None
+        
+        cache_path = self._get_cache_path(cache_key)
+        
+        try:
+            if os.path.exists(cache_path):
+                with open(cache_path, 'r') as f:
+                    cache_data = json.load(f)
+                
+                # Check if cache is expired
+                cache_time = datetime.fromisoformat(cache_data.get('_cache_time', '2000-01-01T00:00:00'))
+                if datetime.now() - cache_time < timedelta(seconds=self.cache_ttl):
+                    logger.debug(f"Cache hit for {cache_key}")
+                    return cache_data.get('data')
+                else:
+                    logger.debug(f"Cache expired for {cache_key}")
+        except Exception as e:
+            logger.warning(f"Error reading from cache: {e}")
+        
+        return None
+    
+    async def _save_to_cache(self, cache_key: str, data: Dict[str, Any], etag: Optional[str] = None) -> None:
+        """Save data to cache.
+        
+        Args:
+            cache_key: Cache key
+            data: Data to cache
+            etag: ETag for the response
+        """
+        if not self.cache_enabled:
+            return
+        
+        cache_path = self._get_cache_path(cache_key)
+        
+        try:
+            cache_data = {
+                '_cache_time': datetime.now().isoformat(),
+                'data': data
+            }
+            
+            with open(cache_path, 'w') as f:
+                json.dump(cache_data, f)
+            
+            # Store ETag for conditional requests
+            if etag:
+                self.etags[cache_key] = etag
+            
+            logger.debug(f"Saved to cache: {cache_key}")
+        except Exception as e:
+            logger.warning(f"Error saving to cache: {e}")
+    
+    def _load_etags(self) -> None:
+        """Load ETags from cache."""
+        if not self.cache_enabled:
+            return
+        
+        etags_path = os.path.join(self.cache_dir, 'etags.json')
+        
+        try:
+            if os.path.exists(etags_path):
+                with open(etags_path, 'r') as f:
+                    self.etags = json.load(f)
+                logger.debug(f"Loaded {len(self.etags)} ETags from cache")
+        except Exception as e:
+            logger.warning(f"Error loading ETags: {e}")
+            self.etags = {}
+    
+    def _save_etags(self) -> None:
+        """Save ETags to cache."""
+        if not self.cache_enabled or not self.etags:
+            return
+        
+        etags_path = os.path.join(self.cache_dir, 'etags.json')
+        
+        try:
+            with open(etags_path, 'w') as f:
+                json.dump(self.etags, f)
+            logger.debug(f"Saved {len(self.etags)} ETags to cache")
+        except Exception as e:
+            logger.warning(f"Error saving ETags: {e}")
+    
+    async def _make_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None, method: str = 'GET') -> Dict[str, Any]:
+        """Make a request to the GitHub API with retry logic and caching.
+        
+        Args:
+            endpoint: API endpoint to call
+            params: Query parameters for the request
+            method: HTTP method (GET, POST, etc.)
+            
+        Returns:
+            Dict[str, Any]: Response data
+            
+        Raises:
+            GitHubRateLimitExceeded: If rate limit is exceeded
+            GitHubAPIError: If the API returns an error
+            Exception: For other errors
+        """
+        # Create session if it doesn't exist
+        await self._create_session()
+            
+        url = f"{self.api_base_url}/{endpoint.lstrip('/')}"
+        retries = 0
+        cache_key = None
+        max_retries = self.config.get('max_retries', 3)
+        
+        # Check if we should wait for rate limit to reset
+        should_wait, wait_time = await self._should_wait_for_rate_limit()
+        if should_wait:
+            logger.warning(f"Approaching rate limit, waiting for {wait_time:.0f} seconds before making request")
+            await asyncio.sleep(wait_time)
+        
+        # For GET requests, try to use cache
+        if method.upper() == 'GET' and self.cache_enabled:
+            cache_key = self._get_cache_key(endpoint, params)
+            cached_data = await self._get_from_cache(cache_key)
+            
+            if cached_data:
+                return cached_data
+        
+        # Prepare headers for conditional request
+        headers = {}
+        if method.upper() == 'GET' and cache_key and cache_key in self.etags:
+            headers['If-None-Match'] = self.etags[cache_key]
+        
+        while retries < max_retries:
+            try:
+                async with self.semaphore:
+                    if method.upper() == 'GET':
+                        async with self.session.get(url, params=params, headers=headers) as response:
+                            # Update rate limit information
+                            self._update_rate_limit_info(response.headers)
+                            
+                            # Handle 304 Not Modified (cached response is still valid)
+                            if response.status == 304 and cache_key:
+                                cached_data = await self._get_from_cache(cache_key)
+                                if cached_data:
+                                    logger.debug(f"Using cached data for {endpoint} (304 Not Modified)")
+                                    return cached_data
+                            
+                            # Handle successful response
+                            if response.status == 200:
+                                data = await response.json()
+                                
+                                # Cache the response for GET requests
+                                if self.cache_enabled and cache_key:
+                                    etag = response.headers.get('ETag')
+                                    await self._save_to_cache(cache_key, data, etag)
+                                
+                                return data
+                            
+                            # Handle rate limiting
+                            elif response.status == 403 and 'rate limit exceeded' in (await response.text()).lower():
+                                reset_time = None
+                                if 'X-RateLimit-Reset' in response.headers:
+                                    reset_timestamp = int(response.headers['X-RateLimit-Reset'])
+                                    reset_time = datetime.fromtimestamp(reset_timestamp)
+                                
+                                wait_time = self.config.get('rate_limit_pause', 60)
+                                if reset_time:
+                                    wait_time = max(1, (reset_time - datetime.now()).total_seconds() + 5)  # Add 5 seconds buffer
+                                
+                                logger.warning(f"Rate limit exceeded. Waiting for {wait_time:.0f} seconds.")
+                                await asyncio.sleep(wait_time)
+                                retries += 1
+                            
+                            # Handle other errors
+                            else:
+                                error_message = f"GitHub API error: {response.status}"
+                                errors = []
+                                
+                                try:
+                                    error_data = await response.json()
+                                    if 'message' in error_data:
+                                        error_message = f"GitHub API error: {response.status} - {error_data['message']}"
+                                    if 'errors' in error_data:
+                                        errors = error_data['errors']
+                                except Exception:
+                                    error_message = f"GitHub API error: {response.status} - {await response.text()}"
+                                
+                                # Determine if we should retry based on status code
+                                if response.status in [500, 502, 503, 504]:
+                                    # Server errors - retry with exponential backoff
+                                    retry_after = int(response.headers.get('Retry-After', 2 ** retries))
+                                    logger.warning(f"{error_message}. Retrying in {retry_after} seconds.")
+                                    await asyncio.sleep(retry_after)
+                                    retries += 1
+                                else:
+                                    # Client errors - don't retry
+                                    raise GitHubAPIError(response.status, error_message, errors)
+                    
+                    elif method.upper() == 'POST':
+                        async with self.session.post(url, json=params, headers=headers) as response:
+                            # Update rate limit information
+                            self._update_rate_limit_info(response.headers)
+                            
+                            if response.status in [200, 201]:
+                                return await response.json()
+                            else:
+                                # Handle errors
+                                await self._handle_error_response(response, retries)
+                                retries += 1
+                    
+                    elif method.upper() == 'PUT':
+                        async with self.session.put(url, json=params, headers=headers) as response:
+                            # Update rate limit information
+                            self._update_rate_limit_info(response.headers)
+                            
+                            if response.status in [200, 201]:
+                                return await response.json()
+                            else:
+                                # Handle errors
+                                await self._handle_error_response(response, retries)
+                                retries += 1
+                    
+                    elif method.upper() == 'DELETE':
+                        async with self.session.delete(url, headers=headers) as response:
+                            # Update rate limit information
+                            self._update_rate_limit_info(response.headers)
+                            
+                            if response.status in [200, 204]:
+                                return {}
+                            else:
+                                # Handle errors
+                                await self._handle_error_response(response, retries)
+                                retries += 1
+                    
+                    else:
+                        raise ValueError(f"Unsupported HTTP method: {method}")
+                
+            except GitHubAPIError:
+                # Re-raise GitHubAPIError exceptions
+                raise
+            except GitHubRateLimitExceeded:
+                # Re-raise GitHubRateLimitExceeded exceptions
+                raise
+            except Exception as e:
+                logger.error(f"Error making GitHub API request: {str(e)}")
+                retries += 1
+                if retries >= max_retries:
+                    raise
+                await asyncio.sleep(2 ** retries)  # Exponential backoff
+                
+        raise Exception(f"Failed to make GitHub API request after {max_retries} retries")
+    
+    async def _handle_error_response(self, response, retries):
+        """Handle error responses from GitHub API.
+        
+        Args:
+            response: Response object
+            retries: Current retry count
+            
+        Raises:
+            GitHubRateLimitExceeded: If rate limit is exceeded
+            GitHubAPIError: If the API returns an error
+        """
+        error_message = f"GitHub API error: {response.status}"
+        errors = []
+        
+        try:
+            error_data = await response.json()
+            if 'message' in error_data:
+                error_message = f"GitHub API error: {response.status} - {error_data['message']}"
+            if 'errors' in error_data:
+                errors = error_data['errors']
+        except Exception:
+            error_message = f"GitHub API error: {response.status} - {await response.text()}"
+        
+        # Handle rate limiting
+        if response.status == 403 and 'rate limit exceeded' in (await response.text()).lower():
+            reset_time = None
+            if 'X-RateLimit-Reset' in response.headers:
+                reset_timestamp = int(response.headers['X-RateLimit-Reset'])
+                reset_time = datetime.fromtimestamp(reset_timestamp)
+            
+            raise GitHubRateLimitExceeded(reset_time)
+        
+        # Determine if we should retry based on status code
+        if response.status in [500, 502, 503, 504]:
+            # Server errors - retry with exponential backoff
+            retry_after = int(response.headers.get('Retry-After', 2 ** retries))
+            logger.warning(f"{error_message}. Retrying in {retry_after} seconds.")
+            await asyncio.sleep(retry_after)
+        else:
+            # Client errors - don't retry
+            raise GitHubAPIError(response.status, error_message, errors)
+    
+    async def get_rate_limit_info(self) -> Dict[str, Any]:
+        """Get current rate limit information.
+        
+        Returns:
+            Dict[str, Any]: Rate limit information
+        """
+        try:
+            data = await self._make_request('rate_limit')
+            return data.get('resources', {})
+        except Exception as e:
+            logger.error(f"Error getting rate limit info: {e}")
+            return {}
     
     async def collect(self, params: Optional[Dict[str, Any]] = None) -> List[DataItem]:
         """Collect data from GitHub repositories."""
         params = params or {}
         
         try:
-            # Create session
-            await self._create_session()
-            
             # Determine what to collect
             if "repo" in params:
                 # Collect data from a specific repository
@@ -102,6 +571,42 @@ class GitHubConnector(ConnectorBase):
             else:
                 logger.error("No repo, search, or user parameter provided for GitHub connector")
                 return []
+        except GitHubRateLimitExceeded as e:
+            logger.error(f"Rate limit exceeded: {e}")
+            # Create an error data item
+            error_item = DataItem(
+                source_id=f"github_error_{uuid.uuid4()}",
+                content=f"GitHub API rate limit exceeded. Reset time: {e.reset_time.isoformat() if e.reset_time else 'unknown'}",
+                metadata={"error": "rate_limit_exceeded", "reset_time": e.reset_time.isoformat() if e.reset_time else None},
+                url="",
+                content_type="text/plain",
+                raw_data={"error": "rate_limit_exceeded", "reset_time": e.reset_time.isoformat() if e.reset_time else None}
+            )
+            return [error_item]
+        except GitHubAPIError as e:
+            logger.error(f"GitHub API error: {e}")
+            # Create an error data item
+            error_item = DataItem(
+                source_id=f"github_error_{uuid.uuid4()}",
+                content=f"GitHub API error: {e.status_code} - {e.message}",
+                metadata={"error": "api_error", "status_code": e.status_code, "message": e.message, "errors": e.errors},
+                url="",
+                content_type="text/plain",
+                raw_data={"error": "api_error", "status_code": e.status_code, "message": e.message, "errors": e.errors}
+            )
+            return [error_item]
+        except Exception as e:
+            logger.error(f"Error collecting data from GitHub: {e}")
+            # Create an error data item
+            error_item = DataItem(
+                source_id=f"github_error_{uuid.uuid4()}",
+                content=f"Error collecting data from GitHub: {str(e)}",
+                metadata={"error": "general_error", "message": str(e)},
+                url="",
+                content_type="text/plain",
+                raw_data={"error": "general_error", "message": str(e)}
+            )
+            return [error_item]
         finally:
             # Close session
             await self._close_session()
@@ -110,14 +615,7 @@ class GitHubConnector(ConnectorBase):
         """Collect information about a GitHub repository."""
         try:
             # Get repository information
-            url = f"{self.api_base_url}/repos/{repo}"
-            async with self.semaphore:
-                async with self.session.get(url) as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to get repository info for {repo}: {response.status}")
-                        return []
-                    
-                    repo_data = await response.json()
+            repo_data = await self._make_request(f'repos/{repo}')
             
             # Get repository README
             readme_content = await self._get_repo_readme(repo)
@@ -163,25 +661,25 @@ class GitHubConnector(ConnectorBase):
             return [item]
         except Exception as e:
             logger.error(f"Error collecting repository info for {repo}: {e}")
-            return []
+            raise
     
     async def _get_repo_readme(self, repo: str) -> Optional[str]:
         """Get the README content of a repository."""
         try:
-            url = f"{self.api_base_url}/repos/{repo}/readme"
-            async with self.session.get(url) as response:
-                if response.status != 200:
-                    logger.warning(f"Failed to get README for {repo}: {response.status}")
-                    return None
-                
-                readme_data = await response.json()
+            try:
+                readme_data = await self._make_request(f'repos/{repo}/readme')
                 
                 # Decode content
                 if readme_data.get("content"):
                     content = base64.b64decode(readme_data["content"]).decode("utf-8")
                     return content
+            except GitHubAPIError as e:
+                if e.status_code == 404:
+                    logger.warning(f"No README found for {repo}")
+                else:
+                    raise
                 
-                return None
+            return None
         except Exception as e:
             logger.error(f"Error getting README for {repo}: {e}")
             return None
