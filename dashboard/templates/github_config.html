@@ -50,19 +50,21 @@
                 <form id="github-config-form">
                     <div class="mb-3">
                         <label for="focus" class="form-label">Focus</label>
-                        <input type="text" class="form-control" id="focus" placeholder="e.g., Python RAG implementations">
+                        <input type="text" class="form-control" id="focus" name="focus" placeholder="e.g., Python RAG implementations" required>
+                        <div class="form-text">Define the main focus of your data mining task</div>
                     </div>
                     
                     <div class="mb-3">
                         <label for="description" class="form-label">Description</label>
-                        <textarea class="form-control" id="description" rows="2" placeholder="Describe what you're looking for in more detail"></textarea>
+                        <textarea class="form-control" id="description" name="description" rows="2" placeholder="Describe what you're looking for in more detail"></textarea>
+                        <div class="form-text">Provide additional context to guide the mining process</div>
                     </div>
                     
                     <div class="mb-3">
-                        <label for="reference-context" class="form-label">Add Reference Context Files/URLs</label>
+                        <label class="form-label">Reference Contexts</label>
                         <div id="reference-contexts">
                             <div class="input-group mb-2">
-                                <input type="text" class="form-control" placeholder="File path or URL">
+                                <input type="text" class="form-control" placeholder="Enter file path or URL" aria-label="Reference context">
                                 <button class="btn btn-outline-danger remove-reference" type="button">
                                     <i class="bi bi-trash"></i>
                                 </button>
@@ -71,39 +73,41 @@
                         <button type="button" class="btn btn-outline-primary btn-sm" id="add-reference-btn">
                             <i class="bi bi-plus-circle"></i> Add More
                         </button>
+                        <div class="form-text">Add reference files or URLs to provide additional context</div>
                     </div>
                     
                     <div class="mb-3">
                         <label for="search-scheme" class="form-label">Search Scheme</label>
-                        <select class="form-select" id="search-scheme">
+                        <select class="form-select" id="search-scheme" name="search-scheme">
                             <option value="basic">Basic Search</option>
                             <option value="advanced">Advanced Search</option>
                             <option value="semantic">Semantic Search</option>
                         </select>
+                        <div class="form-text">Select the search methodology to use</div>
                     </div>
                     
                     <div class="mb-3">
-                        <label class="form-label">Options</label>
+                        <label class="form-label">Search Options</label>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="search-repositories" checked>
+                            <input class="form-check-input" type="checkbox" id="search-repositories" name="search-repositories" checked>
                             <label class="form-check-label" for="search-repositories">
                                 Search Repositories
                             </label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="search-code" checked>
+                            <input class="form-check-input" type="checkbox" id="search-code" name="search-code" checked>
                             <label class="form-check-label" for="search-code">
                                 Search Code
                             </label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="search-issues">
+                            <input class="form-check-input" type="checkbox" id="search-issues" name="search-issues">
                             <label class="form-check-label" for="search-issues">
                                 Search Issues
                             </label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="search-pull-requests">
+                            <input class="form-check-input" type="checkbox" id="search-pull-requests" name="search-pull-requests">
                             <label class="form-check-label" for="search-pull-requests">
                                 Search Pull Requests
                             </label>
@@ -112,39 +116,99 @@
                     
                     <div class="mb-3">
                         <label for="goal" class="form-label">Goal</label>
-                        <input type="text" class="form-control" id="goal" placeholder="What do you want to achieve with this search?">
+                        <input type="text" class="form-control" id="goal" name="goal" placeholder="What do you want to achieve with this search?">
+                        <div class="form-text">Define the specific outcome you're looking for</div>
                     </div>
                     
                     <div class="mb-3">
-                        <label for="parallel-workers" class="form-label">Parallel workers (1-10)</label>
-                        <input type="number" class="form-control" id="parallel-workers" min="1" max="10" value="4">
+                        <label for="parallel-workers" class="form-label">Parallel Workers</label>
+                        <input type="number" class="form-control" id="parallel-workers" name="parallel-workers" min="1" max="10" value="4">
+                        <div class="form-text">Number of parallel workers (1-10)</div>
                     </div>
                     
                     <div class="mb-3">
-                        <label class="form-label">Advanced Options</label>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="clone-repositories" checked>
-                            <label class="form-check-label" for="clone-repositories">
-                                Clone repositories locally
-                            </label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="follow-repository-links" checked>
-                            <label class="form-check-label" for="follow-repository-links">
-                                Follow repository links
-                            </label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="include-forks">
-                            <label class="form-check-label" for="include-forks">
-                                Include forks
-                            </label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="save-findings" checked>
-                            <label class="form-check-label" for="save-findings">
-                                Save findings to database
-                            </label>
+                        <button class="btn btn-outline-secondary w-100" type="button" id="advanced-options-toggle" aria-expanded="false" aria-controls="advanced-options-panel">
+                            <i class="bi bi-chevron-down"></i> Advanced Options
+                        </button>
+                        
+                        <div class="collapse mt-3" id="advanced-options-panel">
+                            <div class="card card-body">
+                                <div class="mb-3">
+                                    <h5>GitHub API Configuration</h5>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="cache-ttl" class="form-label">Cache TTL (seconds)</label>
+                                            <input type="number" class="form-control" id="cache-ttl" name="cache-ttl" min="0" max="86400" value="300" 
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Time-to-live for cached API responses">
+                                            <div class="form-text">Time to keep cached responses (0-86400)</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="rate-limit-pause" class="form-label">Rate Limit Pause (seconds)</label>
+                                            <input type="number" class="form-control" id="rate-limit-pause" name="rate-limit-pause" min="0" max="3600" value="60"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Time to pause when rate limited">
+                                            <div class="form-text">Pause time when rate limited (0-3600)</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="max-retries" class="form-label">Max Retries</label>
+                                            <input type="number" class="form-control" id="max-retries" name="max-retries" min="0" max="10" value="3"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Maximum number of retries for failed requests">
+                                            <div class="form-text">Maximum retry attempts (0-10)</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="timeout" class="form-label">Timeout (seconds)</label>
+                                            <input type="number" class="form-control" id="timeout" name="timeout" min="1" max="300" value="30"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Request timeout in seconds">
+                                            <div class="form-text">Request timeout (1-300)</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="pool-connections" class="form-label">Pool Connections</label>
+                                            <input type="number" class="form-control" id="pool-connections" name="pool-connections" min="1" max="100" value="10"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Number of connection pool connections">
+                                            <div class="form-text">Connection pool size (1-100)</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="pool-maxsize" class="form-label">Pool Max Size</label>
+                                            <input type="number" class="form-control" id="pool-maxsize" name="pool-maxsize" min="1" max="100" value="10"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Maximum size of the connection pool">
+                                            <div class="form-text">Max pool size (1-100)</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="page-size" class="form-label">Page Size</label>
+                                            <input type="number" class="form-control" id="page-size" name="page-size" min="1" max="100" value="30"
+                                                data-bs-toggle="tooltip" data-bs-placement="top" title="Number of items per page for paginated results">
+                                            <div class="form-text">Items per page (1-100)</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <h5>Processing Options</h5>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="clone-repositories" name="clone-repositories" checked>
+                                        <label class="form-check-label" for="clone-repositories">
+                                            Clone repositories locally
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="follow-repository-links" name="follow-repository-links" checked>
+                                        <label class="form-check-label" for="follow-repository-links">
+                                            Follow repository links
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="include-forks" name="include-forks">
+                                        <label class="form-check-label" for="include-forks">
+                                            Include forks
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="save-findings" name="save-findings" checked>
+                                        <label class="form-check-label" for="save-findings">
+                                            Save findings to database
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </form>
@@ -192,8 +256,50 @@
     <script src="/static/js/shared/event_bus.js"></script>
     <script src="/static/js/shared/api_service.js"></script>
     
+    <!-- Form validation utilities -->
+    <script>
+        // Form validation utilities
+        const validators = {
+            required: function(value) {
+                return value && value.trim().length > 0;
+            },
+            numberRange: function(value, min, max) {
+                const num = parseInt(value, 10);
+                return !isNaN(num) && num >= min && num <= max;
+            }
+        };
+        
+        // Function to validate a form
+        function validateForm(form, customValidators = {}) {
+            let isValid = true;
+            
+            // Get all required inputs
+            const requiredInputs = form.querySelectorAll('[required]');
+            requiredInputs.forEach(input => {
+                if (!validators.required(input.value)) {
+                    isValid = false;
+                    input.classList.add('is-invalid');
+                } else {
+                    input.classList.remove('is-invalid');
+                }
+            });
+            
+            // Apply custom validators
+            for (const [selector, validator] of Object.entries(customValidators)) {
+                const element = form.querySelector(`#${selector}`);
+                if (element && !validator(element.value)) {
+                    isValid = false;
+                    element.classList.add('is-invalid');
+                } else if (element) {
+                    element.classList.remove('is-invalid');
+                }
+            }
+            
+            return isValid;
+        }
+    </script>
+    
     <!-- Application scripts -->
     <script src="/static/js/github_config.js"></script>
 </body>
 </html>
-

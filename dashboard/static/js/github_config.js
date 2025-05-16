@@ -36,6 +36,30 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
+    // Advanced options toggle
+    const advancedOptionsToggle = document.getElementById('advanced-options-toggle');
+    const advancedOptionsPanel = document.getElementById('advanced-options-panel');
+    
+    if (advancedOptionsToggle && advancedOptionsPanel) {
+        advancedOptionsToggle.addEventListener('click', function() {
+            const isExpanded = advancedOptionsToggle.getAttribute('aria-expanded') === 'true';
+            advancedOptionsToggle.setAttribute('aria-expanded', !isExpanded);
+            advancedOptionsPanel.classList.toggle('show');
+            
+            // Update the icon
+            const icon = advancedOptionsToggle.querySelector('i');
+            if (icon) {
+                if (isExpanded) {
+                    icon.classList.remove('bi-chevron-up');
+                    icon.classList.add('bi-chevron-down');
+                } else {
+                    icon.classList.remove('bi-chevron-down');
+                    icon.classList.add('bi-chevron-up');
+                }
+            }
+        });
+    }
+    
     // Save template button handler
     const saveTemplateBtn = document.getElementById('save-template-btn');
     if (saveTemplateBtn) {
@@ -78,7 +102,14 @@ document.addEventListener('DOMContentLoaded', function() {
             // Validate form
             const customValidators = {
                 'focus': validators.required,
-                'parallel-workers': (value) => validators.numberRange(value, 1, 10)
+                'parallel-workers': (value) => validators.numberRange(value, 1, 10),
+                'cache-ttl': (value) => validators.numberRange(value, 0, 86400),
+                'rate-limit-pause': (value) => validators.numberRange(value, 0, 3600),
+                'max-retries': (value) => validators.numberRange(value, 0, 10),
+                'timeout': (value) => validators.numberRange(value, 1, 300),
+                'pool-connections': (value) => validators.numberRange(value, 1, 100),
+                'pool-maxsize': (value) => validators.numberRange(value, 1, 100),
+                'page-size': (value) => validators.numberRange(value, 1, 100)
             };
             
             if (!validateForm(githubConfigForm, customValidators)) {
@@ -125,6 +156,12 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     }
+    
+    // Initialize tooltips
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
 });
 
 // Function to get all form data
@@ -147,6 +184,15 @@ function getFormData() {
             followRepositoryLinks: document.getElementById('follow-repository-links').checked,
             includeForks: document.getElementById('include-forks').checked,
             saveFindings: document.getElementById('save-findings').checked
+        },
+        apiConfig: {
+            cacheTTL: parseInt(document.getElementById('cache-ttl').value),
+            rateLimitPause: parseInt(document.getElementById('rate-limit-pause').value),
+            maxRetries: parseInt(document.getElementById('max-retries').value),
+            timeout: parseInt(document.getElementById('timeout').value),
+            poolConnections: parseInt(document.getElementById('pool-connections').value),
+            poolMaxsize: parseInt(document.getElementById('pool-maxsize').value),
+            pageSize: parseInt(document.getElementById('page-size').value)
         }
     };
     
@@ -272,4 +318,3 @@ function hideLoading(buttonId) {
         button.innerHTML = button.getAttribute('data-bs-original-title') || 'Save as Template';
     }
 }
-
