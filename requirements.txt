@@ -18,10 +18,8 @@ redis==4.5.5
 
 # Web dashboard
 flask-cors==3.0.10
-chart.js==3.9.1
 bootstrap==5.2.3
 
 # Testing
 pytest==7.3.1
 pytest-asyncio==0.21.0
-
