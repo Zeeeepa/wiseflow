@@ -6,33 +6,25 @@ patterns, and relationships from collected information.
 """
 
 import os
-import re
 import json
 import asyncio
-import logging
-from typing import Dict, List, Any, Optional, Union, Tuple
-from datetime import datetime, timedelta
-import uuid
-from collections import Counter, defaultdict
+from typing import Dict, List, Any
+from datetime import timedelta
+from collections import defaultdict
 
 # Import necessary modules
 from ..llms.openai_wrapper import openai_llm as llm
-from ..utils.general_utils import get_logger, normalize_url
-from ..analysis import Entity, Relationship, KnowledgeGraph
-from ..utils.pb_api import PbTalker
+from ..utils.general_utils import get_logger
 
 # Setup logging
 project_dir = os.environ.get("PROJECT_DIR", "")
 if project_dir:
     os.makedirs(project_dir, exist_ok=True)
 insights_logger = get_logger('insights', project_dir)
-pb = PbTalker(insights_logger)
 
 model = os.environ.get("PRIMARY_MODEL", "")
 if not model:
     raise ValueError("PRIMARY_MODEL not set, please set it in environment variables or edit core/.env")
-
-# ... keep existing InsightExtractor class and other functions ...
 
 # Prompts for insights generation
 TREND_ANALYSIS_PROMPT = """You are an expert data analyst specializing in trend identification and pattern recognition. 
