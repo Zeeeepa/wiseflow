@@ -10,11 +10,14 @@ import json
 import time
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Tuple
 from datetime import datetime, timedelta
 import asyncio
 import aiofiles
 import pickle
+import shutil
+
+from .config import llm_config
 
 class LLMCache:
     """
@@ -27,9 +30,9 @@ class LLMCache:
     def __init__(
         self,
         cache_dir: Optional[str] = None,
-        ttl: int = 3600,
-        memory_cache_size: int = 1000,
-        disk_cache_size_mb: int = 100,
+        ttl: Optional[int] = None,
+        memory_cache_size: Optional[int] = None,
+        disk_cache_size_mb: Optional[int] = None,
         logger: Optional[logging.Logger] = None
     ):
         """
@@ -37,16 +40,19 @@ class LLMCache:
         
         Args:
             cache_dir: Directory for disk cache (default: PROJECT_DIR/llm_cache)
-            ttl: Time-to-live for cache entries in seconds (default: 1 hour)
+            ttl: Default time-to-live for cache entries in seconds (default: 1 hour)
             memory_cache_size: Maximum number of entries in memory cache
             disk_cache_size_mb: Maximum size of disk cache in MB
             logger: Optional logger for cache operations
         """
-        self.cache_dir = cache_dir or os.path.join(os.environ.get("PROJECT_DIR", ""), "llm_cache")
-        self.ttl = ttl
-        self.memory_cache_size = memory_cache_size
-        self.disk_cache_size_mb = disk_cache_size_mb
+        # Get configuration values, with constructor parameters taking precedence
+        config = llm_config.get_all()
+        self.cache_dir = cache_dir or config.get("CACHE_DIR") or os.path.join(os.environ.get("PROJECT_DIR", ""), "llm_cache")
+        self.ttl = ttl if ttl is not None else config.get("CACHE_TTL", 3600)
+        self.memory_cache_size = memory_cache_size if memory_cache_size is not None else config.get("MEMORY_CACHE_SIZE", 1000)
+        self.disk_cache_size_mb = disk_cache_size_mb if disk_cache_size_mb is not None else config.get("DISK_CACHE_SIZE_MB", 100)
         self.logger = logger
+        self.enabled = config.get("CACHE_ENABLED", True)
         
         # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -106,7 +112,7 @@ class LLMCache:
         """
         # Filter out parameters that don't affect the response
         filtered_kwargs = {k: v for k, v in kwargs.items() if k not in [
-            "stream", "logger", "timeout", "max_retries"
+            "stream", "logger", "timeout", "max_retries", "use_cache", "ttl"
         ]}
         
         # Create a dictionary of all parameters that affect the response
@@ -132,24 +138,29 @@ class LLMCache:
             if oldest_key in self.memory_cache:
                 del self.memory_cache[oldest_key]
     
-    async def get(self, messages: List[Dict[str, str]], model: str, **kwargs) -> Optional[str]:
+    async def get(self, messages: List[Dict[str, str]], model: str, ttl: Optional[int] = None, **kwargs) -> Optional[str]:
         """
         Get a cached response if available.
         
         Args:
             messages: List of message dictionaries
             model: Model name
+            ttl: Optional time-to-live override for this request
             **kwargs: Additional parameters that affect the response
             
         Returns:
             The cached response if available and not expired, None otherwise
         """
+        if not self.enabled:
+            return None
+        
         key = self._get_cache_key(messages, model, **kwargs)
+        entry_ttl = ttl if ttl is not None else self.ttl
         
         # Check memory cache first
         if key in self.memory_cache:
             entry = self.memory_cache[key]
-            if time.time() - entry["timestamp"] < self.ttl:
+            if time.time() - entry["timestamp"] < entry_ttl:
                 self._update_lru(key)
                 self.metadata["hit_count"] += 1
                 if self.logger:
@@ -169,7 +180,7 @@ class LLMCache:
                     content = await f.read()
                     entry = pickle.loads(content)
                 
-                if time.time() - entry["timestamp"] < self.ttl:
+                if time.time() - entry["timestamp"] < entry_ttl:
                     # Add to memory cache
                     self.memory_cache[key] = entry
                     self._update_lru(key)
@@ -191,7 +202,7 @@ class LLMCache:
             self.logger.debug(f"Cache miss: {key}")
         return None
     
-    async def set(self, messages: List[Dict[str, str]], model: str, response: str, **kwargs) -> None:
+    async def set(self, messages: List[Dict[str, str]], model: str, response: str, ttl: Optional[int] = None, **kwargs) -> None:
         """
         Cache a response.
         
@@ -199,17 +210,24 @@ class LLMCache:
             messages: List of message dictionaries
             model: Model name
             response: The response to cache
+            ttl: Optional time-to-live override for this entry
             **kwargs: Additional parameters that affect the response
         """
+        if not self.enabled:
+            return
+        
         key = self._get_cache_key(messages, model, **kwargs)
+        entry_ttl = ttl if ttl is not None else self.ttl
+        
         entry = {
             "timestamp": time.time(),
             "response": response,
             "model": model,
+            "ttl": entry_ttl,
             "metadata": {
                 "cached_at": datetime.now().isoformat(),
-                "ttl": self.ttl,
-                "expires_at": (datetime.now() + timedelta(seconds=self.ttl)).isoformat()
+                "ttl": entry_ttl,
+                "expires_at": (datetime.now() + timedelta(seconds=entry_ttl)).isoformat()
             }
         }
         
@@ -228,9 +246,10 @@ class LLMCache:
             file_size = len(content)
             self.metadata["entries"][key] = {
                 "created_at": datetime.now().isoformat(),
-                "expires_at": (datetime.now() + timedelta(seconds=self.ttl)).isoformat(),
+                "expires_at": (datetime.now() + timedelta(seconds=entry_ttl)).isoformat(),
                 "size_bytes": file_size,
-                "model": model
+                "model": model,
+                "ttl": entry_ttl
             }
             self.metadata["total_entries"] = len(self.metadata["entries"])
             self.metadata["total_size_bytes"] += file_size
@@ -248,6 +267,9 @@ class LLMCache:
         Args:
             key: Specific cache key to invalidate, or None to invalidate all
         """
+        if not self.enabled:
+            return
+        
         if key is None:
             # Invalidate all entries
             self.memory_cache.clear()
@@ -290,10 +312,36 @@ class LLMCache:
         # Save updated metadata
         self._save_metadata()
     
+    async def invalidate_by_model(self, model: str) -> None:
+        """
+        Invalidate all cache entries for a specific model.
+        
+        Args:
+            model: Model name to invalidate entries for
+        """
+        if not self.enabled:
+            return
+        
+        # Find all entries for the model
+        keys_to_invalidate = []
+        for key, entry in self.metadata["entries"].items():
+            if entry.get("model") == model:
+                keys_to_invalidate.append(key)
+        
+        # Invalidate each entry
+        for key in keys_to_invalidate:
+            await self.invalidate(key)
+        
+        if self.logger:
+            self.logger.info(f"Invalidated {len(keys_to_invalidate)} cache entries for model {model}")
+    
     async def cleanup(self) -> None:
         """
         Clean up expired cache entries and enforce size limits.
         """
+        if not self.enabled:
+            return
+        
         if self.logger:
             self.logger.info("Starting cache cleanup")
         
@@ -301,7 +349,7 @@ class LLMCache:
         
         # Clean up memory cache
         expired_keys = [key for key, entry in self.memory_cache.items() 
-                       if current_time - entry["timestamp"] >= self.ttl]
+                       if current_time - entry["timestamp"] >= entry.get("ttl", self.ttl)]
         for key in expired_keys:
             del self.memory_cache[key]
             if key in self.lru_list:
@@ -383,6 +431,7 @@ class LLMCache:
             hit_rate = self.metadata["hit_count"] / total_requests
         
         return {
+            "enabled": self.enabled,
             "total_entries": self.metadata["total_entries"],
             "memory_entries": len(self.memory_cache),
             "total_size_mb": self.metadata["total_size_bytes"] / (1024 * 1024),
@@ -390,8 +439,52 @@ class LLMCache:
             "miss_count": self.metadata["miss_count"],
             "hit_rate": hit_rate,
             "created_at": self.metadata["created_at"],
-            "last_cleanup": self.metadata["last_cleanup"]
+            "last_cleanup": self.metadata["last_cleanup"],
+            "default_ttl": self.ttl
         }
+    
+    def set_enabled(self, enabled: bool) -> None:
+        """
+        Enable or disable the cache.
+        
+        Args:
+            enabled: Whether the cache should be enabled
+        """
+        self.enabled = enabled
+        if self.logger:
+            self.logger.info(f"Cache {'enabled' if enabled else 'disabled'}")
+    
+    async def clear(self) -> None:
+        """
+        Clear the entire cache (both memory and disk).
+        """
+        # Clear memory cache
+        self.memory_cache.clear()
+        self.lru_list.clear()
+        
+        # Clear disk cache
+        try:
+            for filename in os.listdir(self.cache_dir):
+                if filename.endswith(".pickle"):
+                    os.remove(os.path.join(self.cache_dir, filename))
+            
+            # Reset metadata
+            self.metadata = {
+                "created_at": datetime.now().isoformat(),
+                "last_cleanup": datetime.now().isoformat(),
+                "total_entries": 0,
+                "total_size_bytes": 0,
+                "hit_count": 0,
+                "miss_count": 0,
+                "entries": {}
+            }
+            self._save_metadata()
+            
+            if self.logger:
+                self.logger.info("Cache cleared")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error clearing cache: {e}")
 
 # Create a singleton instance
 llm_cache = LLMCache()
@@ -401,6 +494,7 @@ async def cached_llm_call(
     messages: List[Dict[str, str]],
     model: str,
     use_cache: bool = True,
+    ttl: Optional[int] = None,
     **kwargs
 ) -> str:
     """
@@ -411,6 +505,7 @@ async def cached_llm_call(
         messages: List of message dictionaries
         model: Model name
         use_cache: Whether to use the cache
+        ttl: Optional time-to-live override for this request
         **kwargs: Additional parameters to pass to the LLM function
         
     Returns:
@@ -418,9 +513,9 @@ async def cached_llm_call(
     """
     logger = kwargs.get("logger")
     
-    if use_cache:
+    if use_cache and llm_cache.enabled:
         # Try to get from cache
-        cached_response = await llm_cache.get(messages, model, **kwargs)
+        cached_response = await llm_cache.get(messages, model, ttl=ttl, **kwargs)
         if cached_response is not None:
             return cached_response
     
@@ -428,8 +523,7 @@ async def cached_llm_call(
     response = await llm_func(messages, model, **kwargs)
     
     # Cache the response
-    if use_cache and response:
-        await llm_cache.set(messages, model, response, **kwargs)
+    if use_cache and llm_cache.enabled and response:
+        await llm_cache.set(messages, model, response, ttl=ttl, **kwargs)
     
     return response
-
