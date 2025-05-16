@@ -25,3 +25,7 @@ bootstrap==5.2.3
 pytest==7.3.1
 pytest-asyncio==0.21.0
 
+# For specific modules, see their respective requirements files:
+# - core/requirements.txt
+# - weixin_mp/requirements.txt
+
