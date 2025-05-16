@@ -102,6 +102,9 @@ class GitHubConnector(ConnectorBase):
             else:
                 logger.error("No repo, search, or user parameter provided for GitHub connector")
                 return []
+        except Exception as e:
+            logger.error(f"Error collecting data from GitHub: {e}")
+            return []
         finally:
             # Close session
             await self._close_session()
@@ -245,32 +248,33 @@ class GitHubConnector(ConnectorBase):
                         "sha": content_data["sha"]
                     },
                     url=content_data["html_url"],
-                    content_type=self._get_content_type(path),
+                    content_type=self._get_content_type(content_data["name"]),
                     raw_data=content_data
                 )
                 
                 return [data_item]
         except Exception as e:
-            logger.error(f"Error collecting content for {repo}/{path}: {e}")
+            logger.error(f"Error collecting repository content for {repo}/{path}: {e}")
             return []
     
     async def _get_file_content(self, repo: str, path: str) -> Optional[str]:
-        """Get the content of a file in a repository."""
+        """Get the content of a file from a repository."""
         try:
             url = f"{self.api_base_url}/repos/{repo}/contents/{path}"
-            async with self.session.get(url) as response:
-                if response.status != 200:
-                    logger.warning(f"Failed to get file content for {repo}/{path}: {response.status}")
+            async with self.semaphore:
+                async with self.session.get(url) as response:
+                    if response.status != 200:
+                        logger.warning(f"Failed to get file content for {repo}/{path}: {response.status}")
+                        return None
+                    
+                    file_data = await response.json()
+                    
+                    # Decode content
+                    if file_data.get("content"):
+                        content = base64.b64decode(file_data["content"]).decode("utf-8")
+                        return content
+                    
                     return None
-                
-                file_data = await response.json()
-                
-                # Decode content
-                if file_data.get("content"):
-                    content = base64.b64decode(file_data["content"]).decode("utf-8")
-                    return content
-                
-                return None
         except Exception as e:
             logger.error(f"Error getting file content for {repo}/{path}: {e}")
             return None
@@ -281,20 +285,40 @@ class GitHubConnector(ConnectorBase):
         
         if ext in [".md", ".markdown"]:
             return "text/markdown"
-        elif ext in [".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".cs", ".go", ".rb", ".php"]:
-            return "text/plain"
-        elif ext in [".json"]:
-            return "application/json"
-        elif ext in [".xml"]:
-            return "application/xml"
+        elif ext in [".py"]:
+            return "text/x-python"
+        elif ext in [".js"]:
+            return "text/javascript"
         elif ext in [".html", ".htm"]:
             return "text/html"
         elif ext in [".css"]:
             return "text/css"
+        elif ext in [".json"]:
+            return "application/json"
+        elif ext in [".xml"]:
+            return "application/xml"
         elif ext in [".txt"]:
             return "text/plain"
+        elif ext in [".yaml", ".yml"]:
+            return "text/yaml"
+        elif ext in [".csv"]:
+            return "text/csv"
+        elif ext in [".java"]:
+            return "text/x-java"
+        elif ext in [".c", ".cpp", ".h", ".hpp"]:
+            return "text/x-c"
+        elif ext in [".go"]:
+            return "text/x-go"
+        elif ext in [".rs"]:
+            return "text/x-rust"
+        elif ext in [".ts"]:
+            return "text/x-typescript"
+        elif ext in [".rb"]:
+            return "text/x-ruby"
+        elif ext in [".php"]:
+            return "text/x-php"
         else:
-            return "application/octet-stream"
+            return "text/plain"
     
     async def _collect_issue(self, repo: str, issue_number: int) -> List[DataItem]:
         """Collect information about a GitHub issue."""
@@ -322,7 +346,6 @@ class GitHubConnector(ConnectorBase):
             # Create content
             content = f"# {issue_data.get('title', '')}\n\n{issue_data.get('body', '')}"
             
-            # Add comments to content
             if comments:
                 content += "\n\n## Comments\n\n"
                 for comment in comments:
@@ -330,17 +353,17 @@ class GitHubConnector(ConnectorBase):
             
             # Create metadata
             metadata = {
-                "repo": repo,
-                "issue_number": issue_number,
+                "issue_number": issue_data.get("number", 0),
                 "title": issue_data.get("title", ""),
                 "state": issue_data.get("state", ""),
                 "user": issue_data.get("user", {}).get("login", ""),
-                "labels": [label.get("name", "") for label in issue_data.get("labels", [])],
-                "assignees": [assignee.get("login", "") for assignee in issue_data.get("assignees", [])],
                 "created_at": issue_data.get("created_at", ""),
                 "updated_at": issue_data.get("updated_at", ""),
                 "closed_at": issue_data.get("closed_at", ""),
-                "comment_count": issue_data.get("comments", 0),
+                "labels": [label.get("name", "") for label in issue_data.get("labels", [])],
+                "assignees": [assignee.get("login", "") for assignee in issue_data.get("assignees", [])],
+                "milestone": issue_data.get("milestone", {}).get("title", "") if issue_data.get("milestone") else "",
+                "comments_count": issue_data.get("comments", 0),
                 "is_pull_request": "pull_request" in issue_data
             }
             
@@ -396,13 +419,11 @@ class GitHubConnector(ConnectorBase):
             # Create content
             content = f"# {pr_data.get('title', '')}\n\n{pr_data.get('body', '')}"
             
-            # Add comments to content
             if comments:
                 content += "\n\n## Comments\n\n"
                 for comment in comments:
                     content += f"### {comment.get('user', {}).get('login', '')} - {comment.get('created_at', '')}\n\n{comment.get('body', '')}\n\n"
             
-            # Add review comments to content
             if review_comments:
                 content += "\n\n## Review Comments\n\n"
                 for comment in review_comments:
@@ -410,20 +431,21 @@ class GitHubConnector(ConnectorBase):
             
             # Create metadata
             metadata = {
-                "repo": repo,
-                "pr_number": pr_number,
+                "pr_number": pr_data.get("number", 0),
                 "title": pr_data.get("title", ""),
                 "state": pr_data.get("state", ""),
                 "user": pr_data.get("user", {}).get("login", ""),
-                "labels": [label.get("name", "") for label in pr_data.get("labels", [])],
-                "assignees": [assignee.get("login", "") for assignee in pr_data.get("assignees", [])],
                 "created_at": pr_data.get("created_at", ""),
                 "updated_at": pr_data.get("updated_at", ""),
                 "closed_at": pr_data.get("closed_at", ""),
                 "merged_at": pr_data.get("merged_at", ""),
-                "comment_count": pr_data.get("comments", 0),
-                "review_comment_count": pr_data.get("review_comments", 0),
-                "commits": pr_data.get("commits", 0),
+                "labels": [label.get("name", "") for label in pr_data.get("labels", [])],
+                "assignees": [assignee.get("login", "") for assignee in pr_data.get("assignees", [])],
+                "requested_reviewers": [reviewer.get("login", "") for reviewer in pr_data.get("requested_reviewers", [])],
+                "milestone": pr_data.get("milestone", {}).get("title", "") if pr_data.get("milestone") else "",
+                "comments_count": pr_data.get("comments", 0),
+                "review_comments_count": pr_data.get("review_comments", 0),
+                "commits_count": pr_data.get("commits", 0),
                 "additions": pr_data.get("additions", 0),
                 "deletions": pr_data.get("deletions", 0),
                 "changed_files": pr_data.get("changed_files", 0),

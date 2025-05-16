@@ -230,9 +230,8 @@ class YouTubeConnector(ConnectorBase):
                 "comment_count": statistics.get("commentCount", 0),
                 "privacy_status": status.get("privacyStatus", ""),
                 "upload_status": status.get("uploadStatus", ""),
-                "embeddable": status.get("embeddable", True),
-                "has_transcript": bool(transcript),
-                "comment_data": comments
+                "embeddable": status.get("embeddable", False),
+                "license": status.get("license", "")
             }
             
             # Create data item
@@ -243,12 +242,12 @@ class YouTubeConnector(ConnectorBase):
                 url=f"https://www.youtube.com/watch?v={video_id}",
                 timestamp=published_at,
                 content_type="text/markdown",
-                raw_data=video
+                raw_data={"video": video, "comments": comments, "transcript": transcript}
             )
             
             return [item]
         except Exception as e:
-            logger.error(f"Error collecting data from YouTube video {video_id}: {e}")
+            logger.error(f"Error collecting video {video_id}: {e}")
             return []
     
     async def _get_video_comments(self, video_id: str, max_comments: int = 10) -> List[Dict[str, Any]]:
@@ -268,44 +267,26 @@ class YouTubeConnector(ConnectorBase):
                 comment = item["snippet"]["topLevelComment"]["snippet"]
                 comments.append({
                     "author": comment.get("authorDisplayName", ""),
-                    "author_channel_id": comment.get("authorChannelId", {}).get("value", ""),
                     "text": comment.get("textDisplay", ""),
                     "like_count": comment.get("likeCount", 0),
-                    "published_at": comment.get("publishedAt", ""),
-                    "updated_at": comment.get("updatedAt", "")
+                    "published_at": comment.get("publishedAt", "")
                 })
             
             return comments
-        except HttpError as e:
-            if "commentsDisabled" in str(e):
-                logger.warning(f"Comments are disabled for video {video_id}")
-                return []
-            else:
-                logger.error(f"Error getting comments for YouTube video {video_id}: {e}")
-                return []
         except Exception as e:
-            logger.error(f"Error getting comments for YouTube video {video_id}: {e}")
+            logger.warning(f"Error getting comments for video {video_id}: {e}")
             return []
     
     async def _get_video_transcript(self, video_id: str) -> str:
         """Get transcript for a YouTube video."""
         try:
-            # YouTube doesn't provide a direct API for transcripts
-            # This would typically require a third-party library like youtube_transcript_api
-            # For demonstration purposes, we'll implement a basic approach
-            logger.warning("YouTube transcript extraction not fully implemented yet")
-            
-            # In a production environment, you would use a library like youtube_transcript_api:
-            # from youtube_transcript_api import YouTubeTranscriptApi
-            # transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            # return "\n".join([f"{item['start']:.1f} - {item['text']}" for item in transcript_list])
-            
-            # For now, we'll return a placeholder message
-            return "Transcript extraction is not fully implemented. In a production environment, use youtube_transcript_api or similar library."
+            # YouTube API doesn't provide direct access to transcripts
+            # This would typically require a third-party library or service
+            # For now, return a placeholder message
+            return "Transcript not available through the YouTube API."
         except Exception as e:
-            logger.error(f"Error getting transcript for YouTube video {video_id}: {e}")
-            # Re-raise the exception to prevent silent failure
-            raise
+            logger.warning(f"Error getting transcript for video {video_id}: {e}")
+            return ""
     
     async def _collect_channel(self, channel_id: str, params: Dict[str, Any]) -> List[DataItem]:
         """Collect data from a specific YouTube channel."""
@@ -334,7 +315,7 @@ class YouTubeConnector(ConnectorBase):
                 uploads_playlist_id = content_details.get("relatedPlaylists", {}).get("uploads", "")
                 if uploads_playlist_id:
                     videos = await self._get_playlist_videos(
-                        uploads_playlist_id,
+                        uploads_playlist_id, 
                         max_videos=params.get("max_videos", 10)
                     )
             
@@ -344,9 +325,11 @@ class YouTubeConnector(ConnectorBase):
             if videos:
                 content += "\n\n## Recent Videos\n\n"
                 for video in videos:
-                    video_snippet = video["snippet"]
-                    content += f"### [{video_snippet.get('title', '')}](https://www.youtube.com/watch?v={video['id']})\n\n"
+                    video_snippet = video.get("snippet", {})
+                    content += f"### {video_snippet.get('title', '')}\n\n"
+                    content += f"Published: {video_snippet.get('publishedAt', '')}\n\n"
                     content += f"{video_snippet.get('description', '')}\n\n"
+                    content += f"[Watch on YouTube](https://www.youtube.com/watch?v={video.get('id', '')})\n\n"
             
             # Parse published date
             published_at = None
@@ -361,20 +344,20 @@ class YouTubeConnector(ConnectorBase):
                 "channel_id": channel_id,
                 "title": snippet.get("title", ""),
                 "description": snippet.get("description", ""),
-                "custom_url": snippet.get("customUrl", ""),
                 "published_at": snippet.get("publishedAt", ""),
-                "thumbnail_url": snippet.get("thumbnails", {}).get("high", {}).get("url", ""),
                 "country": snippet.get("country", ""),
                 "view_count": statistics.get("viewCount", 0),
                 "subscriber_count": statistics.get("subscriberCount", 0),
                 "hidden_subscriber_count": statistics.get("hiddenSubscriberCount", False),
                 "video_count": statistics.get("videoCount", 0),
                 "keywords": branding_settings.get("channel", {}).get("keywords", ""),
+                "featured_channels": branding_settings.get("channel", {}).get("featuredChannelsUrls", []),
+                "uploads_playlist_id": content_details.get("relatedPlaylists", {}).get("uploads", ""),
                 "videos": [
                     {
-                        "id": video["id"],
-                        "title": video["snippet"].get("title", ""),
-                        "published_at": video["snippet"].get("publishedAt", "")
+                        "id": video.get("id", ""),
+                        "title": video.get("snippet", {}).get("title", ""),
+                        "published_at": video.get("snippet", {}).get("publishedAt", "")
                     }
                     for video in videos
                 ]
@@ -393,7 +376,7 @@ class YouTubeConnector(ConnectorBase):
             
             return [item]
         except Exception as e:
-            logger.error(f"Error collecting data from YouTube channel {channel_id}: {e}")
+            logger.error(f"Error collecting channel {channel_id}: {e}")
             return []
     
     async def _collect_playlist(self, playlist_id: str, params: Dict[str, Any]) -> List[DataItem]:
@@ -416,7 +399,7 @@ class YouTubeConnector(ConnectorBase):
             
             # Get playlist videos
             videos = await self._get_playlist_videos(
-                playlist_id,
+                playlist_id, 
                 max_videos=params.get("max_videos", 10)
             )
             
@@ -426,9 +409,11 @@ class YouTubeConnector(ConnectorBase):
             if videos:
                 content += "\n\n## Videos\n\n"
                 for video in videos:
-                    video_snippet = video["snippet"]
-                    content += f"### [{video_snippet.get('title', '')}](https://www.youtube.com/watch?v={video['id']})\n\n"
+                    video_snippet = video.get("snippet", {})
+                    content += f"### {video_snippet.get('title', '')}\n\n"
+                    content += f"Published: {video_snippet.get('publishedAt', '')}\n\n"
                     content += f"{video_snippet.get('description', '')}\n\n"
+                    content += f"[Watch on YouTube](https://www.youtube.com/watch?v={video.get('id', '')})\n\n"
             
             # Parse published date
             published_at = None
@@ -449,9 +434,9 @@ class YouTubeConnector(ConnectorBase):
                 "item_count": content_details.get("itemCount", 0),
                 "videos": [
                     {
-                        "id": video["id"],
-                        "title": video["snippet"].get("title", ""),
-                        "published_at": video["snippet"].get("publishedAt", "")
+                        "id": video.get("id", ""),
+                        "title": video.get("snippet", {}).get("title", ""),
+                        "published_at": video.get("snippet", {}).get("publishedAt", "")
                     }
                     for video in videos
                 ]
