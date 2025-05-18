@@ -30,8 +30,12 @@ from core.imports import (
     Event,
     EventType,
     publish,
-    publish_sync
+    publish_sync,
+    KnowledgeGraphBuilder
 )
+
+# Create a cross-source analyzer instance
+cross_source_analyzer = KnowledgeGraphBuilder()
 
 # Import system initialization
 from core.initialize import (

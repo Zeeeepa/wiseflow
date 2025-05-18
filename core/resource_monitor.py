@@ -240,42 +240,37 @@ class ResourceMonitor:
             self.disk_history = self.disk_history[-self.history_size:]
     
     def _update_process_history(self):
-        """Update per-process resource usage history."""
+        """Update process resource usage history."""
         try:
             # Get all processes
+            processes = {}
             for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
-                pid = proc.info['pid']
-                
-                # Skip processes with 0 CPU usage to reduce noise
-                if proc.info['cpu_percent'] < 0.1:
-                    continue
-                
-                # Initialize history for this process if needed
+                try:
+                    processes[proc.info['pid']] = {
+                        'name': proc.info['name'],
+                        'cpu_percent': proc.info['cpu_percent'],
+                        'memory_percent': proc.info['memory_percent'],
+                        'timestamp': time.time()
+                    }
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+            
+            # Update process history
+            for pid, info in processes.items():
                 if pid not in self.process_history:
                     self.process_history[pid] = []
                 
-                # Add current usage
-                self.process_history[pid].append({
-                    'name': proc.info['name'],
-                    'cpu_percent': proc.info['cpu_percent'],
-                    'memory_percent': proc.info['memory_percent'],
-                    'timestamp': time.time()
-                })
+                self.process_history[pid].append(info)
                 
                 # Trim history if needed
                 if len(self.process_history[pid]) > self.history_size:
                     self.process_history[pid] = self.process_history[pid][-self.history_size:]
-                
-                # Remove processes that no longer exist
-                for pid in list(self.process_history.keys()):
-                    if not psutil.pid_exists(pid):
-                        del self.process_history[pid]
         except Exception as e:
-            logger.warning(f"Error updating process history: {e}")
+            logger.error(f"Error updating process history: {e}")
     
     def _update_resource_trends(self):
         """Update resource usage trends."""
-        # Calculate CPU trend (positive = increasing, negative = decreasing)
+        # Calculate CPU trend
         if len(self.cpu_history) >= 2:
             # Use linear regression to calculate trend
             trend = self._calculate_trend(self.cpu_history)

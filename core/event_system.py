@@ -35,6 +35,8 @@ class EventType(Enum):
     TASK_COMPLETED = auto()
     TASK_FAILED = auto()
     TASK_CANCELLED = auto()
+    TASK_REGISTERED = auto()
+    TASK_READY = auto()
     
     # Focus point events
     FOCUS_POINT_CREATED = auto()
@@ -61,6 +63,12 @@ class EventType(Enum):
     # Resource events
     RESOURCE_WARNING = auto()
     RESOURCE_CRITICAL = auto()
+    
+    # Service events
+    SERVICE_AVAILABLE = auto()
+    SERVICE_UNAVAILABLE = auto()
+    SERVICE_DEGRADED = auto()
+    SERVICE_RATE_LIMITED = auto()
     
     # Custom event
     CUSTOM = auto()
@@ -513,3 +521,9 @@ def create_resource_event(event_type: EventType, resource_type: str, value: floa
     }
     return Event(event_type, data, "resource_monitor")
 
+def create_service_event(event_type: EventType, service_name: str, data: Optional[Dict[str, Any]] = None) -> Event:
+    """Create a service event."""
+    event_data = data or {}
+    event_data["service_name"] = service_name
+    event_data["timestamp"] = datetime.now().isoformat()
+    return Event(event_type, event_data, "connection_pool")
