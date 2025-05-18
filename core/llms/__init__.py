@@ -53,7 +53,6 @@ from .openai_wrapper import (
 from .litellm_wrapper import (
     LiteLLMWrapper,
     litellm_llm,
-    litellm_llm_async,
     litellm_llm_with_fallback
 )
 
@@ -361,4 +360,3 @@ class LLMManager:
 
 # Create a singleton instance
 llm_manager = LLMManager(default_model=primary_model)
-
