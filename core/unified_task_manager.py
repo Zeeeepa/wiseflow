@@ -407,7 +407,7 @@ class UnifiedTaskManager:
             task.error = e
             task.completed_at = datetime.now()
             self.running_tasks.discard(task.task_id)
-            self.failed_tasks.add(task.task_id)
+            self.failed_tasks.add(task_id)
             
             # Publish event
             try:
@@ -478,7 +478,7 @@ class UnifiedTaskManager:
             task.error = e
             task.completed_at = datetime.now()
             self.running_tasks.discard(task.task_id)
-            self.failed_tasks.add(task.task_id)
+            self.failed_tasks.add(task_id)
             
             # Publish event
             try:
@@ -720,4 +720,3 @@ unified_task_manager = UnifiedTaskManager()
 # For backward compatibility
 TaskManager = UnifiedTaskManager
 thread_pool_manager = unified_task_manager
-

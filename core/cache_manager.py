@@ -6,6 +6,7 @@ with support for different cache backends and invalidation strategies.
 """
 
 import os
+import sys
 import time
 import json
 import hashlib
@@ -691,5 +692,3 @@ cache_manager = CacheManager(
     redis_url=config.get("REDIS_URL"),
     cache_dir=config.get("CACHE_DIR")
 )
-"""
-

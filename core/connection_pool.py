@@ -11,6 +11,7 @@ import logging
 import asyncio
 import aiohttp
 import random
+import platform  # Add missing platform import
 from typing import Dict, Any, Optional, Callable, List, Set, Tuple, Union
 from datetime import datetime, timedelta
 import threading
@@ -618,5 +619,3 @@ class ConnectionPoolManager:
 
 # Create a singleton instance
 connection_pool_manager = ConnectionPoolManager()
-"""
-
