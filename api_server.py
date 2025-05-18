@@ -3,6 +3,20 @@
 API Server for WiseFlow.
 
 This module provides a FastAPI server for WiseFlow, enabling integration with other systems.
+
+The API server is the main entry point for external systems to interact with WiseFlow,
+providing endpoints for:
+- Content processing (single and batch)
+- Research task management
+- Webhook management
+- System status and health checks
+
+The server implements a ContentProcessorManager singleton that handles content processing
+requests, applying specialized prompting strategies based on content type. It also
+integrates with the webhook system to notify external systems of processing events.
+
+This module serves as the integration layer between WiseFlow's core functionality
+and external systems, enabling seamless incorporation into existing workflows.
 """
 
 import os

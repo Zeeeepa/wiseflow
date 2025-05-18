@@ -1,8 +1,20 @@
 """
-LiteLLM wrapper for Wiseflow.
+LiteLLM wrapper for WiseFlow.
 
 This module provides a wrapper for the LiteLLM library, enabling support for
 multiple LLM providers with consistent error handling, caching, and fallback mechanisms.
+
+The module offers several key functions:
+- litellm_llm_raw: Direct LLM calls without error handling (internal use only)
+- litellm_llm: Standard LLM calls with error handling and caching
+- litellm_llm_with_fallback: LLM calls with automatic model fallback
+
+These functions provide a unified interface for interacting with various LLM providers
+while ensuring robust error handling, efficient caching, and automatic fallback to
+alternative models when necessary.
+
+This module is a core component of WiseFlow's LLM integration system, providing
+the foundation for all LLM interactions throughout the application.
 """
 
 import os
@@ -26,7 +38,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 class LiteLLMWrapper:
-    """Wrapper for the LiteLLM library."""
+    """
+    Wrapper for the LiteLLM library.
+    
+    This class provides a unified interface for interacting with various LLM providers
+    through the LiteLLM library. It handles configuration, authentication, and
+    provides methods for making LLM calls with consistent error handling.
+    """
     
     def __init__(self, default_model: Optional[str] = None):
         """Initialize the LiteLLM wrapper."""

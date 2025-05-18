@@ -2,6 +2,20 @@
 Task manager for the unified task management system.
 
 This module provides the TaskManager class for managing and executing tasks.
+
+The task management system is a core component of WiseFlow that enables:
+- Asynchronous execution of tasks with different priorities
+- Dependency management between tasks
+- Resource allocation and monitoring
+- Task lifecycle management (creation, scheduling, execution, completion)
+- Error handling and recovery strategies
+
+The TaskManager implements a singleton pattern to ensure a single instance
+manages all tasks throughout the application. It supports different execution
+strategies including sequential, thread pool, and asynchronous execution.
+
+This module is used by various components in WiseFlow, including the parallel
+research system, content processing pipeline, and data analysis workflows.
 """
 
 import asyncio
@@ -28,7 +42,17 @@ class TaskManager:
     Task manager for the unified task management system.
     
     This class provides functionality to manage and execute tasks using different
-    execution strategies.
+    execution strategies. It handles task dependencies, priorities, and lifecycle
+    management while ensuring efficient resource utilization.
+    
+    The TaskManager is implemented as a singleton to ensure a single instance
+    manages all tasks throughout the application.
+    
+    Relationships:
+    - Uses Task objects to represent individual units of work
+    - Uses Executor implementations for different execution strategies
+    - Integrates with the event system for task lifecycle events
+    - Manages dependencies between tasks
     """
     
     _instance = None
@@ -850,4 +874,3 @@ class TaskManager:
 
 # Create a singleton instance
 task_manager = TaskManager()
-

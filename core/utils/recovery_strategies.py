@@ -2,6 +2,24 @@
 Recovery strategies for WiseFlow.
 
 This module provides recovery strategies for handling failures in the WiseFlow system.
+
+Recovery strategies are essential components that enable robust error handling and
+fault tolerance throughout the application. This module implements various strategies:
+
+- RetryStrategy: Retries failed operations with configurable backoff
+- FallbackStrategy: Provides alternative implementations when primary ones fail
+- CacheStrategy: Uses cached results when operations fail
+- CompositeStrategy: Combines multiple strategies for comprehensive recovery
+- CircuitBreakerStrategy: Prevents cascading failures by temporarily disabling failing operations
+
+The module also provides decorators for easy application of these strategies:
+- with_retries: Applies retry logic to functions
+- with_fallback: Provides alternative implementations
+- with_cache: Uses cached results when available
+- with_composite_recovery: Combines multiple strategies
+
+These strategies are used throughout WiseFlow to ensure reliable operation
+even in the presence of external service failures, network issues, or other errors.
 """
 
 import asyncio
@@ -25,7 +43,17 @@ from core.utils.logging_config import logger, with_context
 T = TypeVar('T')
 
 class RecoveryStrategy:
-    """Base class for recovery strategies."""
+    """
+    Base class for recovery strategies.
+    
+    This abstract class defines the interface for all recovery strategies.
+    Concrete implementations should override the execute method to provide
+    specific recovery behavior.
+    
+    Relationships:
+    - Extended by specific strategy implementations like RetryStrategy
+    - Used by recovery decorators to apply recovery logic to functions
+    """
     
     async def execute(self, func, *args, **kwargs):
         """
@@ -442,4 +470,3 @@ def with_composite_recovery(strategies: List[RecoveryStrategy]):
     strategy = CompositeStrategy(strategies=strategies)
     
     return with_recovery(strategy)
-

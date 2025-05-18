@@ -2,6 +2,18 @@
 Parallel research manager for WiseFlow.
 
 This module provides a manager for executing parallel research tasks.
+
+The ParallelResearchManager is responsible for:
+- Creating and managing research tasks that run in parallel
+- Coordinating multi-agent research workflows
+- Managing research state and configuration
+- Handling resource allocation for research tasks
+- Providing a unified interface for research operations
+
+This module is a key component of WiseFlow's research capabilities, enabling
+efficient and scalable information gathering from multiple sources simultaneously.
+It leverages the task management system for execution and the event system for
+communication between components.
 """
 
 import asyncio
@@ -28,9 +40,20 @@ logger = logging.getLogger(__name__)
 
 class ParallelResearchManager:
     """
-    Manager for parallel research tasks.
+    Manager for parallel research tasks in WiseFlow.
     
-    This class provides functionality to execute multiple research tasks in parallel.
+    This class implements the singleton pattern to provide a centralized manager
+    for all parallel research operations. It creates, configures, and monitors
+    research tasks that can run concurrently to gather information from multiple
+    sources.
+    
+    Relationships:
+    - Uses TaskManager for executing research tasks
+    - Uses Configuration for research task settings
+    - Uses ReportState for managing research state
+    - Integrates with the event system for task lifecycle events
+    - Uses resource_manager for resource allocation
+    - Uses cache_manager for caching research results
     """
     
     _instance = None
