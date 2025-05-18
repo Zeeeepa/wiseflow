@@ -137,7 +137,7 @@ from core.references import (
 )
 
 # Task management
-from core.task_manager import (
+from core.task_management.task_manager import (
     TaskManager,
     TaskDependencyError
 )
