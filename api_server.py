@@ -75,6 +75,7 @@ from core.utils.error_logging import (
     report_error,
     get_error_statistics
 )
+from core.utils.singleton import Singleton
 
 # Set up logging
 logging.basicConfig(
@@ -1156,17 +1157,8 @@ async def cancel_research_task(research_id: str):
             raise TaskError(f"Error cancelling research task {research_id}", cause=e)
         raise
 
-class ContentProcessorManager:
+class ContentProcessorManager(Singleton):
     """Manager for content processors."""
-    
-    _instance = None
-    
-    @classmethod
-    def get_instance(cls):
-        """Get the singleton instance."""
-        if cls._instance is None:
-            cls._instance = ContentProcessorManager()
-        return cls._instance
     
     def __init__(self):
         """Initialize the content processor manager."""

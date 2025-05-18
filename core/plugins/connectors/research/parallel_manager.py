@@ -23,24 +23,16 @@ from core.plugins.connectors.research.multi_agent import graph as multi_agent_gr
 from core.event_system import EventType, Event, publish_sync, create_task_event
 from core.resource_management import resource_manager, TaskPriority as ResourcePriority
 from core.cache_manager import cache_manager
+from core.utils.singleton import Singleton
 
 logger = logging.getLogger(__name__)
 
-class ParallelResearchManager:
+class ParallelResearchManager(Singleton):
     """
     Manager for parallel research tasks.
     
     This class provides functionality to execute multiple research tasks in parallel.
     """
-    
-    _instance = None
-    
-    def __new__(cls, *args, **kwargs):
-        """Create a singleton instance."""
-        if cls._instance is None:
-            cls._instance = super(ParallelResearchManager, cls).__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
     
     def __init__(self, max_concurrent_research: int = 3):
         """
@@ -49,9 +41,6 @@ class ParallelResearchManager:
         Args:
             max_concurrent_research: Maximum number of concurrent research tasks
         """
-        if self._initialized:
-            return
-            
         self.max_concurrent_research = max_concurrent_research
         self.task_manager = TaskManager()
         self.active_research: Dict[str, Dict[str, Any]] = {}
@@ -59,8 +48,6 @@ class ParallelResearchManager:
         
         # Initialize resource manager if not already running
         asyncio.create_task(self._ensure_resource_manager())
-        
-        self._initialized = True
         
         logger.info(f"Parallel research manager initialized with {max_concurrent_research} max concurrent research tasks")
     

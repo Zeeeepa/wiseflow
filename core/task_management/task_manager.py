@@ -20,25 +20,17 @@ from core.task_management.exceptions import (
     InvalidTaskStateError
 )
 from core.event_system import EventType, Event, publish_sync, create_task_event
+from core.utils.singleton import Singleton
 
 logger = logging.getLogger(__name__)
 
-class TaskManager:
+class TaskManager(Singleton):
     """
     Task manager for the unified task management system.
     
     This class provides functionality to manage and execute tasks using different
     execution strategies.
     """
-    
-    _instance = None
-    
-    def __new__(cls, *args, **kwargs):
-        """Create a singleton instance."""
-        if cls._instance is None:
-            cls._instance = super(TaskManager, cls).__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
     
     def __init__(
         self,
@@ -52,9 +44,6 @@ class TaskManager:
             max_concurrent_tasks: Maximum number of concurrent tasks
             default_executor_type: Default executor type (sequential, thread_pool, or async)
         """
-        if self._initialized:
-            return
-            
         self.max_concurrent_tasks = max_concurrent_tasks
         self.default_executor_type = default_executor_type
         
@@ -80,8 +69,6 @@ class TaskManager:
         self.is_running = False
         self.scheduler_task = None
         self.task_lock = asyncio.Lock()
-        
-        self._initialized = True
         
         logger.info(f"Task manager initialized with {max_concurrent_tasks} max concurrent tasks")
     
@@ -850,4 +837,3 @@ class TaskManager:
 
 # Create a singleton instance
 task_manager = TaskManager()
-
