@@ -44,6 +44,10 @@ class TaskManager(Singleton):
             max_concurrent_tasks: Maximum number of concurrent tasks
             default_executor_type: Default executor type (sequential, thread_pool, or async)
         """
+        # Skip initialization if already initialized
+        if hasattr(self, '_initialized') and self._initialized:
+            return
+            
         self.max_concurrent_tasks = max_concurrent_tasks
         self.default_executor_type = default_executor_type
         

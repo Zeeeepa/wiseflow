@@ -1162,6 +1162,10 @@ class ContentProcessorManager(Singleton):
     
     def __init__(self):
         """Initialize the content processor manager."""
+        # Skip initialization if already initialized
+        if hasattr(self, '_initialized') and self._initialized:
+            return
+            
         self.processor = SpecializedPromptProcessor(
             default_max_tokens=1000,
         )

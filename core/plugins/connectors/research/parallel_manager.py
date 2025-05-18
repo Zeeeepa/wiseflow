@@ -41,6 +41,10 @@ class ParallelResearchManager(Singleton):
         Args:
             max_concurrent_research: Maximum number of concurrent research tasks
         """
+        # Skip initialization if already initialized
+        if hasattr(self, '_initialized') and self._initialized:
+            return
+            
         self.max_concurrent_research = max_concurrent_research
         self.task_manager = TaskManager()
         self.active_research: Dict[str, Dict[str, Any]] = {}
