@@ -23,6 +23,8 @@ from core.plugins.connectors.research.multi_agent import graph as multi_agent_gr
 from core.event_system import EventType, Event, publish_sync, create_task_event
 from core.resource_management import resource_manager, TaskPriority as ResourcePriority
 from core.cache_manager import cache_manager
+from core.models.research_models import ResearchTaskParams
+from core.utils.validation import validate_input
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ class ParallelResearchManager:
         """Create a singleton instance."""
         if cls._instance is None:
             cls._instance = super(ParallelResearchManager, cls).__new__(cls)
-            cls._instance._initialized = False
+            cls._initialized = False
         return cls._instance
     
     def __init__(self, max_concurrent_research: int = 3):
@@ -92,12 +94,28 @@ class ParallelResearchManager:
         Returns:
             Task ID
         """
+        # Validate parameters using Pydantic model
+        params = ResearchTaskParams(
+            topic=topic,
+            config=config.dict() if config else None,
+            use_multi_agent=use_multi_agent,
+            priority=priority,
+            tags=tags or ["research"],
+            metadata=metadata or {}
+        )
+        
+        # Validate the parameters
+        validation_result = validate_input(params.dict(), ResearchTaskParams)
+        if not validation_result.is_valid:
+            logger.error(f"Parameter validation failed: {validation_result.errors}")
+            raise ValueError(f"Invalid parameters: {validation_result.errors}")
+        
         # Create a unique ID for the research
         research_id = f"research_{datetime.now().strftime('%Y%m%d%H%M%S')}_{len(self.active_research)}"
         
         # Create initial state
         state = ReportState(
-            topic=topic,
+            topic=params.topic,
             config=config or Configuration(),
             sections=None,
             queries=None,
@@ -106,33 +124,33 @@ class ParallelResearchManager:
         
         # Register the research task
         task_id = self.task_manager.register_task(
-            name=f"Research: {topic}",
+            name=f"Research: {params.topic}",
             func=self._execute_research,
             research_id=research_id,
             state=state,
-            use_multi_agent=use_multi_agent,
-            priority=priority,
-            tags=tags or ["research"],
-            metadata=metadata or {},
-            description=f"Research task for topic: {topic}"
+            use_multi_agent=params.use_multi_agent,
+            priority=params.priority,
+            tags=params.tags,
+            metadata=params.metadata,
+            description=f"Research task for topic: {params.topic}"
         )
         
         # Store research information
         self.active_research[research_id] = {
             "task_id": task_id,
-            "topic": topic,
+            "topic": params.topic,
             "state": state,
-            "use_multi_agent": use_multi_agent,
+            "use_multi_agent": params.use_multi_agent,
             "created_at": datetime.now(),
             "status": "pending"
         }
         
         # Set resource priority based on task priority
-        if priority == TaskPriority.HIGH:
+        if params.priority == TaskPriority.HIGH:
             resource_manager.set_task_priority(task_id, ResourcePriority.HIGH)
-        elif priority == TaskPriority.CRITICAL:
+        elif params.priority == TaskPriority.CRITICAL:
             resource_manager.set_task_priority(task_id, ResourcePriority.CRITICAL)
-        elif priority == TaskPriority.LOW:
+        elif params.priority == TaskPriority.LOW:
             resource_manager.set_task_priority(task_id, ResourcePriority.LOW)
         else:
             resource_manager.set_task_priority(task_id, ResourcePriority.NORMAL)
@@ -144,16 +162,16 @@ class ParallelResearchManager:
                 task_id,
                 {
                     "research_id": research_id,
-                    "topic": topic,
-                    "use_multi_agent": use_multi_agent
+                    "topic": params.topic,
+                    "use_multi_agent": params.use_multi_agent
                 }
             )
             publish_sync(event)
         except Exception as e:
             logger.warning(f"Failed to publish research created event: {e}")
         
-        logger.info(f"Research task created: {task_id} ({topic})")
-        return task_id
+        logger.info(f"Research task created: {task_id} ({params.topic})")
+        return research_id
     
     async def _execute_research(
         self,
