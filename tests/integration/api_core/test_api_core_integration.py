@@ -9,10 +9,13 @@ from unittest.mock import MagicMock, patch
 from api_server import app
 from core.llms.advanced.specialized_prompting import (
     SpecializedPromptProcessor,
+)
+from core.content_types import (
     CONTENT_TYPE_TEXT,
     CONTENT_TYPE_HTML,
     CONTENT_TYPE_MARKDOWN,
     TASK_EXTRACTION,
+    TASK_SUMMARIZATION,
     TASK_REASONING
 )
 
@@ -339,4 +342,3 @@ class TestAPICoreIntegration:
         # Check the response
         assert response.status_code == 400
         assert "References are required for contextual understanding" in response.json()["detail"]
-

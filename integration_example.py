@@ -13,14 +13,15 @@ from typing import Dict, Any, List, Optional
 
 from core.llms.advanced.specialized_prompting import (
     SpecializedPromptProcessor,
+)
+from core.content_types import (
     CONTENT_TYPE_TEXT,
     CONTENT_TYPE_HTML,
     CONTENT_TYPE_MARKDOWN,
     CONTENT_TYPE_CODE,
     CONTENT_TYPE_ACADEMIC,
-    CONTENT_TYPE_VIDEO,
-    CONTENT_TYPE_SOCIAL,
     TASK_EXTRACTION,
+    TASK_SUMMARIZATION,
     TASK_REASONING
 )
 

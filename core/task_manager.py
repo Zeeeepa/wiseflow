@@ -10,16 +10,23 @@ import time
 import asyncio
 import logging
 import uuid
+import warnings
 from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
 from datetime import datetime
 from enum import Enum, auto
+
+warnings.warn(
+    "core.task_manager is deprecated and will be removed in a future version. "
+    "Use core.task_management.task_manager instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 from core.config import config
 from core.event_system import (
     EventType, Event, publish_sync,
     create_task_event
 )
-from core.utils.error_handling import handle_exceptions, TaskError
 
 # Import the unified task management system
 from core.task_management import (
