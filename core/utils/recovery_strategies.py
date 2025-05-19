@@ -207,6 +207,17 @@ class CacheStrategy(RecoveryStrategy):
     Cache strategy for handling failures.
     
     This strategy uses cached results when the function fails.
+    
+    NOTE: This strategy is currently not actively used in the main codebase.
+    It's provided as an advanced recovery option for specific use cases where
+    returning stale data is preferable to failing completely. Consider using
+    a dedicated caching solution for production use cases that require robust caching.
+    
+    Example use case:
+    - When calling external APIs that might be temporarily unavailable
+    - When performing expensive computations that can be reused
+    
+    See the `with_cache` decorator for usage examples.
     """
     
     def __init__(
@@ -288,6 +299,17 @@ class CompositeStrategy(RecoveryStrategy):
     Composite strategy for combining multiple recovery strategies.
     
     This strategy applies multiple recovery strategies in sequence.
+    
+    NOTE: This strategy is currently not actively used in the main codebase.
+    It's provided as an advanced recovery option for complex scenarios where
+    multiple recovery strategies need to be combined. Consider using simpler
+    strategies for most use cases.
+    
+    Example use case:
+    - When you need to apply both retry and fallback strategies
+    - When you need to apply both cache and retry strategies
+    
+    See the `with_composite_recovery` decorator for usage examples.
     """
     
     def __init__(self, strategies: List[RecoveryStrategy]):
@@ -413,6 +435,23 @@ def with_cache(
     """
     Decorator for applying cache strategy to a function.
     
+    NOTE: This decorator is currently not actively used in the main codebase.
+    It's provided as an advanced recovery option for specific use cases where
+    returning stale data is preferable to failing completely.
+    
+    Example usage:
+    ```python
+    # Create a cache dictionary
+    my_cache = {}
+    
+    # Apply the cache decorator to a function
+    @with_cache(cache=my_cache, ttl=timedelta(minutes=10))
+    async def fetch_external_data(url):
+        # Fetch data from external API
+        response = await httpx.get(url)
+        return response.json()
+    ```
+    
     Args:
         cache: Cache dictionary mapping (func, args, kwargs) to (result, timestamp)
         ttl: Time-to-live for cached results
@@ -433,6 +472,27 @@ def with_composite_recovery(strategies: List[RecoveryStrategy]):
     """
     Decorator for applying composite recovery strategy to a function.
     
+    NOTE: This decorator is currently not actively used in the main codebase.
+    It's provided as an advanced recovery option for complex scenarios where
+    multiple recovery strategies need to be combined.
+    
+    Example usage:
+    ```python
+    # Create a cache dictionary
+    my_cache = {}
+    
+    # Create individual strategies
+    retry_strategy = RetryStrategy(max_retries=3)
+    cache_strategy = CacheStrategy(cache=my_cache)
+    
+    # Apply the composite strategy to a function
+    @with_composite_recovery(strategies=[retry_strategy, cache_strategy])
+    async def fetch_external_data(url):
+        # Fetch data from external API
+        response = await httpx.get(url)
+        return response.json()
+    ```
+    
     Args:
         strategies: List of recovery strategies to apply
         
@@ -442,4 +502,3 @@ def with_composite_recovery(strategies: List[RecoveryStrategy]):
     strategy = CompositeStrategy(strategies=strategies)
     
     return with_recovery(strategy)
-

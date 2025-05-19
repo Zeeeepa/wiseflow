@@ -8,6 +8,8 @@ import json
 import os
 from core.llms.advanced.specialized_prompting import (
     SpecializedPromptProcessor,
+)
+from core.content_types import (
     CONTENT_TYPE_TEXT,
     TASK_EXTRACTION,
     TASK_REASONING

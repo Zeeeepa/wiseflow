@@ -16,7 +16,7 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 import asyncio
 
-from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
+from core.llms.litellm_wrapper import litellm_llm
 
 logger = logging.getLogger(__name__)
 
@@ -541,7 +541,7 @@ class SpecializedPromptProcessor:
                 {"role": "user", "content": prompt}
             ]
             
-            response = await litellm_llm_async(messages, model, temperature, max_tokens)
+            response = await litellm_llm(messages, model, temperature, max_tokens)
             
             # Parse the response
             result = self._parse_llm_response(response)

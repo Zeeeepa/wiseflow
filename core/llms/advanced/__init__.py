@@ -12,7 +12,7 @@ import asyncio
 from datetime import datetime
 import re
 
-from core.llms.litellm_wrapper import litellm_llm, litellm_llm_async
+from core.llms.litellm_wrapper import litellm_llm
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +354,7 @@ class AdvancedLLMProcessor:
                 {"role": "user", "content": prompt}
             ]
             
-            response = await litellm_llm_async(messages, model, temperature, max_tokens)
+            response = await litellm_llm(messages, model, temperature, max_tokens)
             
             # Parse the response
             result = self._parse_llm_response(response)
@@ -489,7 +489,7 @@ class AdvancedLLMProcessor:
                 {"role": "user", "content": prompt}
             ]
             
-            response = await litellm_llm_async(messages, model, temperature, max_tokens)
+            response = await litellm_llm(messages, model, temperature, max_tokens)
             
             # Parse the response
             result = self._parse_llm_response(response)
