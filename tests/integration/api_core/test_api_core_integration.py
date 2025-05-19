@@ -15,6 +15,7 @@ from core.content_types import (
     CONTENT_TYPE_HTML,
     CONTENT_TYPE_MARKDOWN,
     TASK_EXTRACTION,
+    TASK_SUMMARIZATION,
     TASK_REASONING
 )
 
