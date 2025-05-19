@@ -3,6 +3,35 @@ LiteLLM wrapper for Wiseflow.
 
 This module provides a wrapper for the LiteLLM library, enabling support for
 multiple LLM providers with consistent error handling, caching, and fallback mechanisms.
+
+## LiteLLM Wrapper Functions
+
+This module provides several functions for interacting with LLMs through LiteLLM:
+
+- `litellm_llm_raw`: For direct calls without error handling (internal use only)
+  - Use this only when you need the raw response and will handle errors yourself
+  - No retries, caching, or fallback mechanisms
+  - Primarily used as a building block for other functions
+
+- `litellm_llm`: For standard calls with error handling and caching
+  - Recommended for most use cases
+  - Includes automatic retries, error handling, and caching
+  - Provides a consistent interface across different LLM providers
+
+- `litellm_llm_with_fallback`: For calls that need automatic model fallback
+  - Use when reliability is critical and you want automatic fallback to alternative models
+  - Includes all features of `litellm_llm` plus automatic model switching if the primary model fails
+  - Returns both the response and the model that was actually used
+
+Each function accepts a standardized set of parameters for consistency:
+- `messages`: List of message dictionaries (required)
+- `model`: Model name to use (required)
+- `temperature`: Controls randomness (default: 0.7)
+- `max_tokens`: Maximum tokens to generate (default: 1000)
+- `use_cache`: Whether to use caching (default: True)
+- `logger`: Optional logger instance
+
+For advanced use cases, additional parameters can be passed via **kwargs.
 """
 
 import os
@@ -75,7 +104,7 @@ class LiteLLMWrapper:
             {"role": "user", "content": prompt}
         ]
         
-        return await litellm_llm_async(
+        return await litellm_llm(
             messages=messages,
             model=model,
             temperature=temperature,
@@ -246,8 +275,8 @@ async def litellm_llm(
     model: str,
     temperature: float = 0.7,
     max_tokens: int = 1000,
-    logger=None,
     use_cache: bool = True,
+    logger=None,
     **kwargs
 ) -> str:
     """
@@ -258,8 +287,8 @@ async def litellm_llm(
         model: Model name
         temperature: Temperature for generation
         max_tokens: Maximum tokens to generate
-        logger: Optional logger
         use_cache: Whether to use the cache
+        logger: Optional logger
         **kwargs: Additional parameters
         
     Returns:
@@ -278,53 +307,14 @@ async def litellm_llm(
         messages, model, use_cache=use_cache, logger=logger, **kwargs
     )
 
-async def litellm_llm_async(
-    messages: List[Dict[str, str]],
-    model: str,
-    temperature: float = 0.7,
-    max_tokens: int = 1000,
-    logger=None,
-    use_cache: bool = True,
-    **kwargs
-) -> str:
-    """
-    Make an asynchronous call to LiteLLM with error handling, retries, and caching.
-    
-    This is an alias for litellm_llm for backward compatibility.
-    
-    Args:
-        messages: List of message dictionaries
-        model: Model name
-        temperature: Temperature for generation
-        max_tokens: Maximum tokens to generate
-        logger: Optional logger
-        use_cache: Whether to use the cache
-        **kwargs: Additional parameters
-        
-    Returns:
-        Generated text
-        
-    Raises:
-        Exception: If all retries fail
-    """
-    return await litellm_llm(
-        messages=messages,
-        model=model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        logger=logger,
-        use_cache=use_cache,
-        **kwargs
-    )
-
 async def litellm_llm_with_fallback(
     messages: List[Dict[str, str]],
     primary_model: str,
     task_type: str = "general",
     temperature: float = 0.7,
     max_tokens: int = 1000,
-    logger=None,
     use_cache: bool = True,
+    logger=None,
     **kwargs
 ) -> Tuple[str, str]:
     """
@@ -336,8 +326,8 @@ async def litellm_llm_with_fallback(
         task_type: Type of task (used for model selection)
         temperature: Temperature for generation
         max_tokens: Maximum tokens to generate
-        logger: Optional logger
         use_cache: Whether to use the cache
+        logger: Optional logger
         **kwargs: Additional parameters
         
     Returns:
