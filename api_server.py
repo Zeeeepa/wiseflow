@@ -29,7 +29,6 @@ from core.llms.advanced.specialized_prompting import (
     CONTENT_TYPE_VIDEO,
     CONTENT_TYPE_SOCIAL,
     TASK_EXTRACTION,
-    TASK_SUMMARIZATION,
     TASK_REASONING
 )
 from core.plugins.connectors.research.parallel_manager import ParallelResearchManager
@@ -43,7 +42,6 @@ from core.content_types import (
     CONTENT_TYPE_VIDEO,
     CONTENT_TYPE_SOCIAL,
     TASK_EXTRACTION,
-    TASK_SUMMARIZATION,
     TASK_REASONING
 )
 from core.middleware import (
@@ -77,8 +75,7 @@ from core.utils.error_logging import (
     report_error,
     get_error_statistics
 )
-from core.models.content_processor_models import ContentProcessingParams, BatchProcessingParams
-from core.utils.validation import validate_input
+from core.utils.singleton import Singleton
 
 # Set up logging
 logging.basicConfig(
@@ -1160,20 +1157,15 @@ async def cancel_research_task(research_id: str):
             raise TaskError(f"Error cancelling research task {research_id}", cause=e)
         raise
 
-class ContentProcessorManager:
+class ContentProcessorManager(Singleton):
     """Manager for content processors."""
-    
-    _instance = None
-    
-    @classmethod
-    def get_instance(cls):
-        """Get the singleton instance."""
-        if cls._instance is None:
-            cls._instance = ContentProcessorManager()
-        return cls._instance
     
     def __init__(self):
         """Initialize the content processor manager."""
+        # Skip initialization if already initialized
+        if hasattr(self, '_initialized') and self._initialized:
+            return
+            
         self.processor = SpecializedPromptProcessor(
             default_max_tokens=1000,
         )
@@ -1202,35 +1194,15 @@ class ContentProcessorManager:
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Process content using specialized prompting strategies."""
-        # Validate parameters using Pydantic model
-        params = ContentProcessingParams(
-            content=content,
-            focus_point=focus_point,
-            explanation=explanation,
-            content_type=content_type,
-            use_multi_step_reasoning=use_multi_step_reasoning,
-            references=references,
-            metadata=metadata or {}
-        )
-        
-        # Validate the parameters
-        validation_result = validate_input(params.dict(), ContentProcessingParams)
-        if not validation_result.is_valid:
-            logger.error(f"Parameter validation failed: {validation_result.errors}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid parameters: {validation_result.errors}"
-            )
-        
         try:
             result = await self.processor.process(
-                content=params.content,
-                focus_point=params.focus_point,
-                explanation=params.explanation,
-                content_type=params.content_type,
-                use_multi_step_reasoning=params.use_multi_step_reasoning,
-                references=params.references,
-                metadata=params.metadata
+                content=content,
+                focus_point=focus_point,
+                explanation=explanation,
+                content_type=content_type,
+                use_multi_step_reasoning=use_multi_step_reasoning,
+                references=references,
+                metadata=metadata
             )
             return result
         except Exception as e:
@@ -1263,33 +1235,14 @@ class ContentProcessorManager:
         metadata: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Process multiple items concurrently."""
-        # Validate parameters using Pydantic model
-        params = BatchProcessingParams(
-            items=items,
-            focus_point=focus_point,
-            explanation=explanation,
-            use_multi_step_reasoning=use_multi_step_reasoning,
-            max_concurrency=max_concurrency,
-            metadata=metadata or {}
-        )
-        
-        # Validate the parameters
-        validation_result = validate_input(params.dict(), BatchProcessingParams)
-        if not validation_result.is_valid:
-            logger.error(f"Parameter validation failed: {validation_result.errors}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid parameters: {validation_result.errors}"
-            )
-        
         try:
             results = await self.processor.batch_process(
-                items=params.items,
-                focus_point=params.focus_point,
-                explanation=params.explanation,
-                use_multi_step_reasoning=params.use_multi_step_reasoning,
-                max_concurrency=params.max_concurrency,
-                metadata=params.metadata
+                items=items,
+                focus_point=focus_point,
+                explanation=explanation,
+                use_multi_step_reasoning=use_multi_step_reasoning,
+                max_concurrency=max_concurrency,
+                metadata=metadata
             )
             return results
         except Exception as e:

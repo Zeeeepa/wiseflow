@@ -6,7 +6,7 @@ This module provides the TaskManager class for managing and executing tasks.
 
 import asyncio
 import logging
-import uuid
+import time
 from typing import Dict, Any, Optional, Callable, List, Union, Awaitable, Set, Tuple
 from datetime import datetime
 
@@ -20,27 +20,17 @@ from core.task_management.exceptions import (
     InvalidTaskStateError
 )
 from core.event_system import EventType, Event, publish_sync, create_task_event
-from core.models.task_models import TaskRegistrationParams
-from core.utils.validation import validate_input
+from core.utils.singleton import Singleton
 
 logger = logging.getLogger(__name__)
 
-class TaskManager:
+class TaskManager(Singleton):
     """
     Task manager for the unified task management system.
     
     This class provides functionality to manage and execute tasks using different
     execution strategies.
     """
-    
-    _instance = None
-    
-    def __new__(cls, *args, **kwargs):
-        """Create a singleton instance."""
-        if cls._instance is None:
-            cls._instance = super(TaskManager, cls).__new__(cls)
-            cls._initialized = False
-        return cls._instance
     
     def __init__(
         self,
@@ -54,7 +44,8 @@ class TaskManager:
             max_concurrent_tasks: Maximum number of concurrent tasks
             default_executor_type: Default executor type (sequential, thread_pool, or async)
         """
-        if self._initialized:
+        # Skip initialization if already initialized
+        if hasattr(self, '_initialized') and self._initialized:
             return
             
         self.max_concurrent_tasks = max_concurrent_tasks
@@ -82,8 +73,6 @@ class TaskManager:
         self.is_running = False
         self.scheduler_task = None
         self.task_lock = asyncio.Lock()
-        
-        self._initialized = True
         
         logger.info(f"Task manager initialized with {max_concurrent_tasks} max concurrent tasks")
     
@@ -129,11 +118,23 @@ class TaskManager:
         Raises:
             TaskDependencyError: If a dependency does not exist
         """
-        # Validate parameters using Pydantic model
-        params = TaskRegistrationParams(
+        task_id = task_id or create_task_id()
+        
+        # Check if dependencies exist
+        if dependencies:
+            for dep_id in dependencies:
+                if dep_id not in self.tasks:
+                    raise TaskDependencyError(
+                        f"Dependency {dep_id} does not exist",
+                        task_id=task_id
+                    )
+        
+        # Create task
+        task = Task(
+            task_id=task_id,
             name=name,
             func=func,
-            task_id=task_id,
+            args=args,
             kwargs=kwargs or {},
             priority=priority,
             dependencies=dependencies or [],
@@ -142,64 +143,20 @@ class TaskManager:
             timeout=timeout,
             description=description,
             tags=tags or [],
-            metadata=metadata or {},
-            executor_type=executor_type
+            metadata=metadata or {}
         )
         
-        # Validate the parameters
-        validation_result = validate_input(params.dict(exclude={"func"}), TaskRegistrationParams.schema(exclude={"func"}))
-        if not validation_result.is_valid:
-            logger.error(f"Parameter validation failed: {validation_result.errors}")
-            raise ValueError(f"Invalid parameters: {validation_result.errors}")
-        
-        # Generate a task ID if not provided
-        if params.task_id is None:
-            task_id = create_task_id()
-        else:
-            task_id = params.task_id
-            
-        # Check if task ID already exists
-        if task_id in self.tasks:
-            logger.warning(f"Task ID {task_id} already exists, generating a new one")
-            task_id = create_task_id()
-        
-        # Check if dependencies exist
-        if params.dependencies:
-            for dep_id in params.dependencies:
-                if dep_id not in self.tasks:
-                    raise TaskDependencyError(
-                        f"Dependency {dep_id} does not exist",
-                        task_id=task_id
-                    )
-        
-        # Create the task
-        task = Task(
-            task_id=task_id,
-            name=params.name,
-            func=params.func,
-            args=args,
-            kwargs=params.kwargs,
-            priority=params.priority,
-            dependencies=params.dependencies,
-            max_retries=params.max_retries,
-            retry_delay=params.retry_delay,
-            timeout=params.timeout,
-            description=params.description,
-            tags=params.tags,
-            metadata=params.metadata
-        )
-        
-        # Store the task
+        # Add task to manager
         self.tasks[task_id] = task
         
-        # Determine executor type
-        executor_type = params.executor_type or self.default_executor_type
-        if executor_type not in self.executors:
-            logger.warning(f"Executor type {executor_type} not found, using default")
-            executor_type = self.default_executor_type
-        
-        # Store executor type
-        self.task_executors[task_id] = executor_type
+        # Set executor type
+        if executor_type:
+            if executor_type not in self.executors:
+                logger.warning(f"Unknown executor type: {executor_type}, using default")
+                executor_type = self.default_executor_type
+            self.task_executors[task_id] = executor_type
+        else:
+            self.task_executors[task_id] = self.default_executor_type
         
         # Check if task has dependencies
         if task.dependencies:
