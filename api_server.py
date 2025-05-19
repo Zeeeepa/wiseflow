@@ -9,15 +9,28 @@ import os
 import json
 import logging
 import asyncio
+import time
 from typing import Dict, List, Any, Optional, Union
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, status, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
+from pydantic import BaseModel, Field, EmailStr
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+import orjson
 
+# Import WiseFlow modules
+from core.config import (
+    API_HOST, API_PORT, API_RELOAD, API_TIMEOUT, API_WORKERS,
+    WISEFLOW_API_KEY, ENABLE_RATE_LIMITING, ENABLE_METRICS,
+    ENABLE_TRACING, ENABLE_SECURITY, ENABLE_COMPRESSION,
+    JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_MINUTES,
+    VERSION
+)
 from core.export.webhook import WebhookManager, get_webhook_manager
 from core.llms.advanced.specialized_prompting import (
     SpecializedPromptProcessor,
@@ -76,6 +89,11 @@ from core.utils.error_logging import (
     get_error_statistics
 )
 from core.utils.singleton import Singleton
+from core.utils.metrics import (
+    setup_metrics,
+    record_request_metrics,
+    get_metrics
+)
 
 # Set up logging
 logging.basicConfig(
@@ -88,8 +106,10 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="WiseFlow API",
     description="API for WiseFlow - LLM-based information extraction and analysis",
-    version="0.1.0",
+    version=VERSION,
     openapi_url="/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # Add CORS middleware
@@ -100,6 +120,10 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
+
+# Add compression middleware if enabled
+if ENABLE_COMPRESSION:
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Add error handling middleware
 add_error_handling_middleware(
@@ -112,16 +136,72 @@ add_error_handling_middleware(
 # Initialize webhook manager
 webhook_manager = get_webhook_manager()
 
-# API key authentication
-API_KEY = os.environ.get("WISEFLOW_API_KEY", "dev-api-key")
+# Setup metrics if enabled
+if ENABLE_METRICS:
+    setup_metrics(app)
+
+# Security setup
+if ENABLE_SECURITY:
+    from jose import JWTError, jwt
+    from passlib.context import CryptContext
+    from datetime import datetime, timedelta
+    
+    # Password hashing
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    
+    # OAuth2 with Password flow
+    oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+    
+    # API key security
+    api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+else:
+    # Simple API key header without OAuth2
+    api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+# Rate limiting middleware
+if ENABLE_RATE_LIMITING:
+    class RateLimitMiddleware(BaseHTTPMiddleware):
+        def __init__(self, app, rate_limit_per_minute=60):
+            super().__init__(app)
+            self.rate_limit = rate_limit_per_minute
+            self.clients = {}
+            
+        async def dispatch(self, request: Request, call_next):
+            # Get client identifier (IP or API key)
+            client_id = request.headers.get("X-API-Key", request.client.host)
+            
+            # Check if client exists in tracking dict
+            now = time.time()
+            if client_id not in self.clients:
+                self.clients[client_id] = {"count": 0, "reset_at": now + 60}
+            
+            # Reset counter if minute has passed
+            if now > self.clients[client_id]["reset_at"]:
+                self.clients[client_id] = {"count": 0, "reset_at": now + 60}
+            
+            # Check rate limit
+            if self.clients[client_id]["count"] >= self.rate_limit:
+                return JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={"detail": "Rate limit exceeded. Try again later."}
+                )
+            
+            # Increment counter
+            self.clients[client_id]["count"] += 1
+            
+            # Process request
+            return await call_next(request)
+    
+    # Add rate limiting middleware
+    app.add_middleware(RateLimitMiddleware, rate_limit_per_minute=60)
 
 # Dependency for API key verification
-def verify_api_key(x_api_key: str = Header(None)):
+async def verify_api_key(api_key: str = Depends(api_key_header)):
     """
     Verify the API key.
     
     Args:
-        x_api_key: API key from header
+        api_key: API key from header
         
     Returns:
         bool: True if API key is valid
@@ -129,9 +209,112 @@ def verify_api_key(x_api_key: str = Header(None)):
     Raises:
         HTTPException: If API key is invalid
     """
-    if not x_api_key or x_api_key != API_KEY:
-        raise AuthenticationError("Invalid API key")
+    if not api_key or api_key != WISEFLOW_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return True
+
+# Security functions if enabled
+if ENABLE_SECURITY:
+    # User model
+    class User(BaseModel):
+        username: str
+        email: Optional[EmailStr] = None
+        full_name: Optional[str] = None
+        disabled: Optional[bool] = None
+        
+    class UserInDB(User):
+        hashed_password: str
+        
+    # Token models
+    class Token(BaseModel):
+        access_token: str
+        token_type: str
+        
+    class TokenData(BaseModel):
+        username: Optional[str] = None
+        
+    # Password functions
+    def verify_password(plain_password, hashed_password):
+        return pwd_context.verify(plain_password, hashed_password)
+        
+    def get_password_hash(password):
+        return pwd_context.hash(password)
+        
+    # Token functions
+    def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+        to_encode = data.copy()
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(minutes=JWT_EXPIRATION_MINUTES)
+        to_encode.update({"exp": expire})
+        encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        return encoded_jwt
+        
+    async def get_current_user(token: str = Depends(oauth2_scheme)):
+        credentials_exception = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        try:
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            username: str = payload.get("sub")
+            if username is None:
+                raise credentials_exception
+            token_data = TokenData(username=username)
+        except JWTError:
+            raise credentials_exception
+        user = get_user(username=token_data.username)
+        if user is None:
+            raise credentials_exception
+        return user
+        
+    async def get_current_active_user(current_user: User = Depends(get_current_user)):
+        if current_user.disabled:
+            raise HTTPException(status_code=400, detail="Inactive user")
+        return current_user
+        
+    # Mock user database - replace with actual database in production
+    def get_user(username: str):
+        # This is a mock function - replace with actual database lookup
+        if username == "admin":
+            return UserInDB(
+                username="admin",
+                email="admin@example.com",
+                full_name="Admin User",
+                disabled=False,
+                hashed_password=get_password_hash("password")
+            )
+        return None
+    
+    # Login endpoint
+    @app.post("/token", response_model=Token)
+    async def login_for_access_token(username: str = Form(...), password: str = Form(...)):
+        user = authenticate_user(username, password)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        access_token_expires = timedelta(minutes=JWT_EXPIRATION_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user.username}, expires_delta=access_token_expires
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+        
+    def authenticate_user(username: str, password: str):
+        user = get_user(username)
+        if not user:
+            return False
+        if not verify_password(password, user.hashed_password):
+            return False
+        return user
 
 # Pydantic models for request/response validation
 class ContentRequest(BaseModel):
@@ -143,6 +326,19 @@ class ContentRequest(BaseModel):
     use_multi_step_reasoning: bool = Field(False, description="Whether to use multi-step reasoning")
     references: Optional[str] = Field(None, description="Optional reference materials for contextual understanding")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "content": "The quick brown fox jumps over the lazy dog.",
+                "focus_point": "Extract animal names",
+                "explanation": "Find all animals mentioned in the text",
+                "content_type": "text",
+                "use_multi_step_reasoning": True,
+                "references": None,
+                "metadata": {"source": "example"}
+            }
+        }
 
 class BatchContentRequest(BaseModel):
     """Request model for batch content processing."""
@@ -151,6 +347,20 @@ class BatchContentRequest(BaseModel):
     explanation: str = Field("", description="Additional explanation or context")
     use_multi_step_reasoning: bool = Field(False, description="Whether to use multi-step reasoning")
     max_concurrency: int = Field(5, description="Maximum number of concurrent processes")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "items": [
+                    {"content": "The quick brown fox jumps over the lazy dog.", "content_type": "text"},
+                    {"content": "The early bird catches the worm.", "content_type": "text"}
+                ],
+                "focus_point": "Extract animal names",
+                "explanation": "Find all animals mentioned in the text",
+                "use_multi_step_reasoning": True,
+                "max_concurrency": 5
+            }
+        }
 
 class WebhookRequest(BaseModel):
     """Request model for webhook operations."""
@@ -196,8 +406,6 @@ class ContinuousResearchRequest(BaseModel):
     config: Optional[ResearchConfigRequest] = Field(None, description="Research configuration")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
-# Pydantic models for parallel research
-
 # URL extraction request model
 class URLExtractionRequest(BaseModel):
     """Request model for URL extraction."""
@@ -220,13 +428,23 @@ class ResearchRequest(BaseModel):
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {"message": "Welcome to WiseFlow API", "version": "0.1.0"}
+    return {
+        "message": "Welcome to WiseFlow API", 
+        "version": VERSION,
+        "documentation": "/docs",
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat()
+    }
 
 # Health check endpoint
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return {
+        "status": "healthy", 
+        "version": VERSION,
+        "timestamp": datetime.now().isoformat()
+    }
 
 # Error reporting endpoints
 @app.get("/api/v1/errors/statistics", dependencies=[Depends(verify_api_key)])
@@ -234,9 +452,16 @@ async def get_error_stats():
     """Get error statistics."""
     return get_error_statistics()
 
+# Metrics endpoint if enabled
+if ENABLE_METRICS:
+    @app.get("/metrics", dependencies=[Depends(verify_api_key)])
+    async def metrics():
+        """Get metrics."""
+        return get_metrics()
+
 # Content processing endpoints
 @app.post("/api/v1/process", dependencies=[Depends(verify_api_key)])
-async def process_content(request: ContentRequest):
+async def process_content(request: ContentRequest, background_tasks: BackgroundTasks):
     """
     Process content with specialized prompting.
     
@@ -261,40 +486,37 @@ async def process_content(request: ContentRequest):
         )
         
         # Trigger webhook for content processed event
-        background_tasks = BackgroundTasks()
         background_tasks.add_task(
-            webhook_manager.trigger_webhook,
+            webhook_manager.trigger_webhooks,
             "content.processed",
             {
-                "focus_point": request.focus_point,
-                "content_type": request.content_type,
-                "timestamp": datetime.now().isoformat(),
-                "metadata": request.metadata
+                "result": result,
+                "request": request.dict(),
+                "timestamp": datetime.now().isoformat()
             }
         )
         
         return result
     except Exception as e:
-        # Log the error with context
-        error_context = {
-            "focus_point": request.focus_point,
-            "content_type": request.content_type,
-            "use_multi_step_reasoning": request.use_multi_step_reasoning,
-            "has_references": request.references is not None
-        }
-        
+        logger.error(f"Error processing content: {e}")
         report_error(
             e,
             severity=ErrorSeverity.ERROR,
             category=ErrorCategory.APPLICATION,
-            context=error_context,
+            context={"request": request.dict()},
             save_to_file=True
         )
         
-        # Re-raise as a WiseflowError if it's not already one
-        if not isinstance(e, WiseflowError):
-            raise DataProcessingError("Error processing content", details=error_context, cause=e)
-        raise
+        if isinstance(e, WiseflowError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing content: {str(e)}"
+            )
 
 @app.post("/api/v1/batch-process", dependencies=[Depends(verify_api_key)])
 async def batch_process_content(request: BatchContentRequest):
@@ -1169,6 +1391,7 @@ class ContentProcessorManager(Singleton):
         self.processor = SpecializedPromptProcessor(
             default_max_tokens=1000,
         )
+        self._initialized = True
     
     @with_error_handling(
         error_types=[Exception],
@@ -1256,7 +1479,9 @@ if __name__ == "__main__":
     # Run the FastAPI app with uvicorn
     uvicorn.run(
         "api_server:app",
-        host=os.environ.get("API_HOST", "0.0.0.0"),
-        port=int(os.environ.get("API_PORT", 8000)),
-        reload=os.environ.get("API_RELOAD", "false").lower() == "true"
+        host=API_HOST,
+        port=API_PORT,
+        reload=API_RELOAD,
+        workers=API_WORKERS,
+        timeout_keep_alive=API_TIMEOUT
     )
