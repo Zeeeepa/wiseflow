@@ -1,0 +1,1333 @@
+{
+  "not_imported": [
+    "./integration_example.py",
+    "./test_auto_shutdown.py",
+    "./test_specialized_prompting.py",
+    "./api_server.py",
+    "./wiseflow.py",
+    "./deploy_wiseflow.py",
+    "./analyze_imports.py",
+    "./dashboard/search_api.py",
+    "./dashboard/data_mining_api.py",
+    "./dashboard/get_report.py",
+    "./dashboard/general_utils.py",
+    "./dashboard/parallel_research.py",
+    "./dashboard/get_search.py",
+    "./dashboard/research_api.py",
+    "./dashboard/tranlsation_volcengine.py",
+    "./dashboard/resource_monitor.py",
+    "./dashboard/__init__.py",
+    "./dashboard/main.py",
+    "./dashboard/backend.py",
+    "./dashboard/routes.py",
+    "./dashboard/notification/__init__.py",
+    "./dashboard/plugins/connector.py",
+    "./dashboard/plugins/__init__.py",
+    "./dashboard/visualization/__init__.py",
+    "./dashboard/visualization/trends/__init__.py",
+    "./dashboard/visualization/knowledge_graph/__init__.py",
+    "./dashboard/components/resource_metrics.py",
+    "./tests/test_export_utils.py",
+    "./tests/conftest.py",
+    "./tests/test_event_system.py",
+    "./tests/test_llm_integration.py",
+    "./tests/test_references.py",
+    "./tests/test_knowledge_graph.py",
+    "./tests/__init__.py",
+    "./tests/test_unified_task_manager.py",
+    "./tests/unit/api/test_api_server.py",
+    "./tests/unit/dashboard/test_dashboard.py",
+    "./tests/unit/core/test_event_system.py",
+    "./tests/unit/core/test_knowledge_graph.py",
+    "./tests/integration/dashboard_backend/test_dashboard_backend_integration.py",
+    "./tests/integration/plugins/test_plugin_system.py",
+    "./tests/integration/api_core/test_api_core_integration.py",
+    "./tests/validation/non_functional/test_non_functional_validation.py",
+    "./tests/validation/functional/test_functional_validation.py",
+    "./tests/core/__init__.py",
+    "./tests/core/connectors/test_connector_base.py",
+    "./tests/core/connectors/__init__.py",
+    "./tests/core/plugins/test_plugin_system.py",
+    "./tests/core/plugins/connectors/research/test_parallel_manager.py",
+    "./tests/core/api/controllers/test_parallel_research_controller.py",
+    "./tests/system/workflows/test_end_to_end_workflow.py",
+    "./tests/system/error_handling/test_error_handling.py",
+    "./tests/system/performance/test_performance.py",
+    "./core/general_process.py",
+    "./core/unified_task_manager.py",
+    "./core/windows_run.py",
+    "./core/connection_pool.py",
+    "./core/interface.py",
+    "./core/run_task.py",
+    "./core/task_manager.py",
+    "./core/resource_management.py",
+    "./core/event_system.py",
+    "./core/run_task_new.py",
+    "./core/initialize.py",
+    "./core/cache_manager.py",
+    "./core/imports.py",
+    "./core/resource_monitor.py",
+    "./core/thread_pool_manager.py",
+    "./core/di_container.py",
+    "./core/content_types.py",
+    "./core/utils/health_check.py",
+    "./core/utils/error_logging.py",
+    "./core/utils/recovery_strategies.py",
+    "./core/utils/exa_search.py",
+    "./core/utils/export_utils.py",
+    "./core/utils/pb_exporter.py",
+    "./core/utils/schema_update.py",
+    "./core/utils/validation.py",
+    "./core/utils/zhipu_search.py",
+    "./core/utils/__init__.py",
+    "./core/utils/export_infos.py",
+    "./core/utils/multimodal_cli.py",
+    "./core/utils/error_handling.py",
+    "./core/utils/logging_config.py",
+    "./core/utils/export_example.py",
+    "./core/utils/data_mining_cli.py",
+    "./core/domain/repositories/information_repository.py",
+    "./core/domain/models/information.py",
+    "./core/domain/services/llm_service.py",
+    "./core/domain/services/information_service.py",
+    "./core/analysis/multimodal_knowledge_integration.py",
+    "./core/task_management/task.py",
+    "./core/task_management/task_manager.py",
+    "./core/task_management/__init__.py",
+    "./core/task_management/executor.py",
+    "./core/task_management/exceptions.py",
+    "./core/plugins/base.py",
+    "./core/plugins/loader.py",
+    "./core/plugins/__init__.py",
+    "./core/plugins/lifecycle.py",
+    "./core/plugins/security.py",
+    "./core/plugins/utils.py",
+    "./core/plugins/resources.py",
+    "./core/plugins/isolation.py",
+    "./core/plugins/validation.py",
+    "./core/plugins/compatibility.py",
+    "./core/plugins/analyzers/entity_analyzer.py",
+    "./core/plugins/analyzers/trend_analyzer.py",
+    "./core/plugins/analyzers/__init__.py",
+    "./core/plugins/connectors/__init__.py",
+    "./core/plugins/connectors/code_search_connector.py",
+    "./core/plugins/connectors/github_connector.py",
+    "./core/plugins/connectors/research_connector.py",
+    "./core/plugins/connectors/youtube_connector.py",
+    "./core/plugins/connectors/research/prompts.py",
+    "./core/plugins/connectors/research/state.py",
+    "./core/plugins/connectors/research/graph_workflow.py",
+    "./core/plugins/connectors/research/parallel_manager.py",
+    "./core/plugins/connectors/research/graph.py",
+    "./core/plugins/connectors/research/configuration.py",
+    "./core/plugins/connectors/research/multi_agent.py",
+    "./core/plugins/connectors/research/utils.py",
+    "./core/plugins/connectors/research/__init__.py",
+    "./core/plugins/processors/text_processor.py",
+    "./core/plugins/processors/__init__.py",
+    "./core/plugins/processors/text/__init__.py",
+    "./core/plugins/processors/text/text_processor.py",
+    "./core/task/monitor.py",
+    "./core/task/__init__.py",
+    "./core/task/config.py",
+    "./core/task/async_task_manager.py",
+    "./core/task/data_mining_manager.py",
+    "./core/crawl4ai/migrations.py",
+    "./core/crawl4ai/install.py",
+    "./core/crawl4ai/crawlers/__init__.py",
+    "./core/crawl4ai/crawlers/google_search/crawler.py",
+    "./core/crawl4ai/crawlers/google_search/__init__.py",
+    "./core/crawl4ai/processors/__init__.py",
+    "./core/crawl4ai/processors/pdf/__init__.py",
+    "./core/crawl4ai/html2text/config.py",
+    "./core/connectors/__init__.py",
+    "./core/llms/__init__.py",
+    "./core/llms/advanced/specialized_prompting.py",
+    "./core/llms/advanced/__init__.py",
+    "./core/scrapers/__init__.py",
+    "./core/infrastructure/config/configuration_service.py",
+    "./core/infrastructure/services/openai_llm_service.py",
+    "./core/infrastructure/repositories/pocketbase_information_repository.py",
+    "./core/infrastructure/di/service_registration.py",
+    "./core/application/services/information_processing_service.py",
+    "./core/references/__init__.py",
+    "./core/middleware/error_handling_middleware.py",
+    "./core/middleware/__init__.py",
+    "./core/export/__init__.py",
+    "./core/export/webhook.py",
+    "./core/export/examples/export_example.py",
+    "./core/export/examples/webhook_test.py",
+    "./core/export/cli/export_cli.py",
+    "./core/export/cli/__init__.py",
+    "./core/export/formats/csv_exporter.py",
+    "./core/export/formats/xml_exporter.py",
+    "./core/export/formats/json_exporter.py",
+    "./core/export/formats/pdf_exporter.py",
+    "./core/export/formats/__init__.py",
+    "./core/agents/insights.py",
+    "./core/agents/get_info.py",
+    "./core/agents/__init__.py",
+    "./core/agents/action_dict_scraper.py",
+    "./core/api/main.py",
+    "./core/api/client.py",
+    "./core/api/__init__.py",
+    "./core/api/models/parallel_research_models.py",
+    "./core/api/controllers/information_controller.py",
+    "./core/api/controllers/research_controller.py",
+    "./core/api/controllers/parallel_research_controller.py",
+    "./core/api/controllers/error_controller.py",
+    "./core/knowledge/__init__.py",
+    "./core/experimental/__init__.py",
+    "./core/experimental/advanced_reasoning.py",
+    "./core/models/content_processor_models.py",
+    "./core/models/research_models.py",
+    "./core/models/task_models.py",
+    "./examples/api_integration_example.py",
+    "./examples/entity_linking_example.py",
+    "./examples/enhanced_plugin_example.py",
+    "./examples/research_connector_example.py",
+    "./examples/robust_error_handling_example.py",
+    "./examples/llm_integration_example.py",
+    "./examples/error_handling_logging_example.py",
+    "./examples/reference_support_example.py",
+    "./examples/plugin_example.py",
+    "./examples/advanced_llm_features_example.py",
+    "./examples/recovery_strategies_example.py",
+    "./test/get_visual_info_for_samples.py",
+    "./test/pre_process_test.py",
+    "./test/craw4ai_fetching.py",
+    "./test/crawlee_fetching.py",
+    "./test/get_info_test.py",
+    "./test/read_markdown.py",
+    "./test/vl_pic_test.py",
+    "./test/analysis/test_entity_linking.py",
+    "./test/reports/extract_info_from_pics_test_20241222_bigbrother666/vl_pic_test.py",
+    "./weixin_mp/__init__.py",
+    "./scripts/migrate_schema.py",
+    "./scripts/dependency_check.py",
+    "./scripts/run_tests.py"
+  ],
+  "duplicate_names": {
+    "general_utils.py": [
+      "./dashboard/general_utils.py",
+      "./core/utils/general_utils.py"
+    ],
+    "resource_monitor.py": [
+      "./dashboard/resource_monitor.py",
+      "./core/resource_monitor.py"
+    ],
+    "__init__.py": [
+      "./dashboard/__init__.py",
+      "./dashboard/notification/__init__.py",
+      "./dashboard/plugins/__init__.py",
+      "./dashboard/visualization/__init__.py",
+      "./dashboard/visualization/trends/__init__.py",
+      "./dashboard/visualization/knowledge_graph/__init__.py",
+      "./tests/__init__.py",
+      "./tests/core/__init__.py",
+      "./tests/core/connectors/__init__.py",
+      "./core/__init__.py",
+      "./core/utils/__init__.py",
+      "./core/analysis/__init__.py",
+      "./core/task_management/__init__.py",
+      "./core/plugins/__init__.py",
+      "./core/plugins/analyzers/__init__.py",
+      "./core/plugins/connectors/__init__.py",
+      "./core/plugins/connectors/research/__init__.py",
+      "./core/plugins/processors/__init__.py",
+      "./core/plugins/processors/text/__init__.py",
+      "./core/task/__init__.py",
+      "./core/crawl4ai/__init__.py",
+      "./core/crawl4ai/crawlers/__init__.py",
+      "./core/crawl4ai/crawlers/google_search/__init__.py",
+      "./core/crawl4ai/js_snippet/__init__.py",
+      "./core/crawl4ai/processors/__init__.py",
+      "./core/crawl4ai/processors/pdf/__init__.py",
+      "./core/crawl4ai/html2text/__init__.py",
+      "./core/connectors/__init__.py",
+      "./core/connectors/web/__init__.py",
+      "./core/connectors/github/__init__.py",
+      "./core/connectors/youtube/__init__.py",
+      "./core/connectors/code_search/__init__.py",
+      "./core/connectors/academic/__init__.py",
+      "./core/llms/__init__.py",
+      "./core/llms/advanced/__init__.py",
+      "./core/scrapers/__init__.py",
+      "./core/references/__init__.py",
+      "./core/middleware/__init__.py",
+      "./core/export/__init__.py",
+      "./core/export/cli/__init__.py",
+      "./core/export/formats/__init__.py",
+      "./core/agents/__init__.py",
+      "./core/api/__init__.py",
+      "./core/knowledge/__init__.py",
+      "./core/experimental/__init__.py",
+      "./weixin_mp/__init__.py"
+    ],
+    "main.py": [
+      "./dashboard/main.py",
+      "./core/api/main.py"
+    ],
+    "test_event_system.py": [
+      "./tests/test_event_system.py",
+      "./tests/unit/core/test_event_system.py"
+    ],
+    "test_knowledge_graph.py": [
+      "./tests/test_knowledge_graph.py",
+      "./tests/unit/core/test_knowledge_graph.py"
+    ],
+    "test_plugin_system.py": [
+      "./tests/integration/plugins/test_plugin_system.py",
+      "./tests/core/plugins/test_plugin_system.py"
+    ],
+    "config.py": [
+      "./core/config.py",
+      "./core/task/config.py",
+      "./core/crawl4ai/config.py",
+      "./core/crawl4ai/html2text/config.py"
+    ],
+    "task_manager.py": [
+      "./core/task_manager.py",
+      "./core/task_management/task_manager.py"
+    ],
+    "validation.py": [
+      "./core/utils/validation.py",
+      "./core/plugins/validation.py"
+    ],
+    "error_handling.py": [
+      "./core/utils/error_handling.py",
+      "./core/llms/error_handling.py"
+    ],
+    "export_example.py": [
+      "./core/utils/export_example.py",
+      "./core/export/examples/export_example.py"
+    ],
+    "utils.py": [
+      "./core/plugins/utils.py",
+      "./core/plugins/connectors/research/utils.py",
+      "./core/crawl4ai/utils.py",
+      "./core/crawl4ai/processors/pdf/utils.py",
+      "./core/crawl4ai/html2text/utils.py"
+    ],
+    "graph.py": [
+      "./core/plugins/connectors/research/graph.py",
+      "./core/knowledge/graph.py"
+    ],
+    "text_processor.py": [
+      "./core/plugins/processors/text_processor.py",
+      "./core/plugins/processors/text/text_processor.py"
+    ],
+    "vl_pic_test.py": [
+      "./test/vl_pic_test.py",
+      "./test/reports/extract_info_from_pics_test_20241222_bigbrother666/vl_pic_test.py"
+    ]
+  },
+  "usage_map": {
+    "core/llms/advanced/specialized_prompting.py": [
+      "./integration_example.py",
+      "./integration_example.py",
+      "./test_specialized_prompting.py",
+      "./test_specialized_prompting.py",
+      "./api_server.py",
+      "./api_server.py",
+      "./tests/integration/api_core/test_api_core_integration.py",
+      "./tests/integration/api_core/test_api_core_integration.py",
+      "./core/experimental/advanced_reasoning.py",
+      "./core/experimental/advanced_reasoning.py",
+      "./examples/llm_integration_example.py",
+      "./examples/advanced_llm_features_example.py",
+      "./examples/advanced_llm_features_example.py"
+    ],
+    "core/content_types.py": [
+      "./integration_example.py",
+      "./integration_example.py",
+      "./test_specialized_prompting.py",
+      "./test_specialized_prompting.py",
+      "./api_server.py",
+      "./api_server.py",
+      "./tests/integration/api_core/test_api_core_integration.py",
+      "./tests/integration/api_core/test_api_core_integration.py",
+      "./core/models/content_processor_models.py",
+      "./core/models/content_processor_models.py"
+    ],
+    "core/task/__init__.py": [
+      "./test_auto_shutdown.py",
+      "./dashboard/resource_monitor.py",
+      "./dashboard/resource_monitor.py",
+      "./core/run_task_new.py"
+    ],
+    "core/task/monitor.py": [
+      "./test_auto_shutdown.py",
+      "./dashboard/resource_monitor.py",
+      "./core/utils/data_mining_cli.py",
+      "./core/task/__init__.py"
+    ],
+    "core/export/webhook.py": [
+      "./api_server.py",
+      "./core/export/examples/export_example.py",
+      "./core/export/examples/webhook_test.py",
+      "./core/export/cli/export_cli.py"
+    ],
+    "core/plugins/connectors/research/parallel_manager.py": [
+      "./api_server.py",
+      "./dashboard/research_api.py",
+      "./tests/core/plugins/connectors/research/test_parallel_manager.py",
+      "./tests/core/plugins/connectors/research/test_parallel_manager.py",
+      "./tests/core/api/controllers/test_parallel_research_controller.py",
+      "./tests/core/api/controllers/test_parallel_research_controller.py",
+      "./core/utils/health_check.py",
+      "./core/api/controllers/research_controller.py",
+      "./core/api/controllers/parallel_research_controller.py",
+      "./core/api/controllers/parallel_research_controller.py"
+    ],
+    "core/plugins/connectors/research/configuration.py": [
+      "./api_server.py",
+      "./dashboard/research_api.py",
+      "./tests/core/plugins/connectors/research/test_parallel_manager.py",
+      "./core/plugins/connectors/research_connector.py",
+      "./core/plugins/connectors/research/state.py",
+      "./core/plugins/connectors/research/graph_workflow.py",
+      "./core/plugins/connectors/research/parallel_manager.py",
+      "./core/plugins/connectors/research/graph.py",
+      "./core/plugins/connectors/research/multi_agent.py",
+      "./core/plugins/connectors/research/utils.py",
+      "./core/plugins/connectors/research/__init__.py",
+      "./core/api/controllers/research_controller.py",
+      "./core/api/controllers/parallel_research_controller.py",
+      "./core/api/controllers/parallel_research_controller.py",
+      "./examples/research_connector_example.py"
+    ],
+    "core/middleware/__init__.py": [
+      "./api_server.py",
+      "./api_server.py",
+      "./core/api/main.py",
+      "./core/api/main.py",
+      "./examples/robust_error_handling_example.py",
+      "./examples/robust_error_handling_example.py"
+    ],
+    "core/utils/error_handling.py": [
+      "./api_server.py",
+      "./api_server.py",
+      "./core/unified_task_manager.py",
+      "./core/interface.py",
+      "./core/imports.py",
+      "./core/imports.py",
+      "./core/thread_pool_manager.py",
+      "./core/utils/error_logging.py",
+      "./core/utils/recovery_strategies.py",
+      "./core/utils/recovery_strategies.py",
+      "./core/plugins/base.py",
+      "./core/plugins/isolation.py",
+      "./core/connectors/__init__.py",
+      "./core/middleware/error_handling_middleware.py",
+      "./core/middleware/error_handling_middleware.py",
+      "./core/api/main.py",
+      "./core/api/main.py",
+      "./core/api/controllers/error_controller.py",
+      "./examples/robust_error_handling_example.py",
+      "./examples/robust_error_handling_example.py",
+      "./examples/error_handling_logging_example.py",
+      "./examples/error_handling_logging_example.py"
+    ],
+    "core/utils/recovery_strategies.py": [
+      "./api_server.py",
+      "./api_server.py",
+      "./core/api/main.py",
+      "./core/api/main.py",
+      "./examples/robust_error_handling_example.py",
+      "./examples/robust_error_handling_example.py",
+      "./examples/advanced_llm_features_example.py",
+      "./examples/advanced_llm_features_example.py",
+      "./examples/recovery_strategies_example.py",
+      "./examples/recovery_strategies_example.py"
+    ],
+    "core/utils/error_logging.py": [
+      "./api_server.py",
+      "./api_server.py",
+      "./core/api/main.py",
+      "./core/api/main.py",
+      "./core/api/controllers/error_controller.py",
+      "./examples/robust_error_handling_example.py",
+      "./examples/robust_error_handling_example.py"
+    ],
+    "core/models/content_processor_models.py": [
+      "./api_server.py"
+    ],
+    "core/utils/validation.py": [
+      "./api_server.py",
+      "./core/task_management/task_manager.py",
+      "./core/plugins/connectors/research/parallel_manager.py"
+    ],
+    "core/task/data_mining_manager.py": [
+      "./dashboard/data_mining_api.py"
+    ],
+    "core/utils/pb_api.py": [
+      "./dashboard/parallel_research.py",
+      "./dashboard/resource_monitor.py",
+      "./dashboard/main.py",
+      "./dashboard/notification/__init__.py",
+      "./dashboard/visualization/__init__.py",
+      "./core/interface.py",
+      "./core/run_task_new.py",
+      "./core/imports.py",
+      "./core/utils/schema_update.py",
+      "./core/analysis/entity_linking.py",
+      "./core/infrastructure/repositories/pocketbase_information_repository.py",
+      "./examples/entity_linking_example.py",
+      "./scripts/migrate_schema.py"
+    ],
+    "./dashboard/simple_crawler.py": [
+      "./dashboard/get_search.py"
+    ],
+    "./dashboard/mp_crawler.py": [
+      "./dashboard/get_search.py"
+    ],
+    "core/task_management/__init__.py": [
+      "./dashboard/research_api.py",
+      "./core/run_task.py",
+      "./core/run_task.py",
+      "./core/task_manager.py",
+      "./core/task_manager.py",
+      "./core/run_task_new.py",
+      "./core/run_task_new.py",
+      "./core/thread_pool_manager.py",
+      "./core/thread_pool_manager.py",
+      "./core/plugins/connectors/research/parallel_manager.py",
+      "./core/plugins/connectors/research/parallel_manager.py",
+      "./core/task/async_task_manager.py",
+      "./core/task/async_task_manager.py",
+      "./core/api/controllers/research_controller.py"
+    ],
+    "dashboard/visualization/knowledge_graph/__init__.py": [
+      "./dashboard/research_api.py",
+      "./dashboard/main.py"
+    ],
+    "dashboard/visualization/trends/__init__.py": [
+      "./dashboard/research_api.py",
+      "./dashboard/main.py"
+    ],
+    "dashboard/components/resource_metrics.py": [
+      "./dashboard/__init__.py"
+    ],
+    "dashboard/visualization/__init__.py": [
+      "./dashboard/main.py",
+      "./dashboard/visualization/trends/__init__.py",
+      "./dashboard/visualization/knowledge_graph/__init__.py",
+      "./tests/integration/dashboard_backend/test_dashboard_backend_integration.py"
+    ],
+    "dashboard/notification/__init__.py": [
+      "./dashboard/main.py",
+      "./tests/integration/dashboard_backend/test_dashboard_backend_integration.py"
+    ],
+    "dashboard/plugins/__init__.py": [
+      "./dashboard/main.py",
+      "./dashboard/routes.py",
+      "./dashboard/plugins/connector.py",
+      "./dashboard/visualization/trends/__init__.py",
+      "./dashboard/visualization/knowledge_graph/__init__.py"
+    ],
+    "dashboard/routes.py": [
+      "./dashboard/main.py"
+    ],
+    "dashboard/search_api.py": [
+      "./dashboard/main.py"
+    ],
+    "dashboard/data_mining_api.py": [
+      "./dashboard/main.py"
+    ],
+    "dashboard/parallel_research.py": [
+      "./dashboard/main.py"
+    ],
+    "core/plugins/base.py": [
+      "./dashboard/plugins/__init__.py",
+      "./tests/integration/plugins/test_plugin_system.py",
+      "./tests/core/plugins/test_plugin_system.py",
+      "./tests/core/plugins/test_plugin_system.py",
+      "./core/utils/data_mining_cli.py",
+      "./core/plugins/loader.py",
+      "./core/plugins/loader.py",
+      "./core/plugins/__init__.py",
+      "./core/plugins/__init__.py",
+      "./core/plugins/lifecycle.py",
+      "./core/plugins/validation.py",
+      "./core/plugins/analyzers/entity_analyzer.py",
+      "./core/plugins/analyzers/trend_analyzer.py",
+      "./core/plugins/analyzers/__init__.py",
+      "./core/plugins/connectors/__init__.py",
+      "./core/plugins/connectors/code_search_connector.py",
+      "./core/plugins/connectors/github_connector.py",
+      "./core/plugins/connectors/youtube_connector.py",
+      "./core/plugins/processors/text_processor.py",
+      "./core/plugins/processors/__init__.py"
+    ],
+    "core/plugins/analyzers/entity_analyzer.py": [
+      "./dashboard/plugins/__init__.py",
+      "./core/plugins/analyzers/__init__.py"
+    ],
+    "core/plugins/analyzers/trend_analyzer.py": [
+      "./dashboard/plugins/__init__.py",
+      "./core/plugins/analyzers/__init__.py"
+    ],
+    "core/analysis/__init__.py": [
+      "./dashboard/visualization/__init__.py",
+      "./tests/test_knowledge_graph.py",
+      "./tests/unit/core/test_knowledge_graph.py",
+      "./core/analysis/entity_linking.py",
+      "./examples/entity_linking_example.py",
+      "./test/analysis/test_entity_linking.py"
+    ],
+    "core/resource_management.py": [
+      "./dashboard/components/resource_metrics.py",
+      "./core/plugins/connectors/research/parallel_manager.py"
+    ],
+    "core/cache_manager.py": [
+      "./dashboard/components/resource_metrics.py",
+      "./core/plugins/connectors/research/parallel_manager.py"
+    ],
+    "core/connection_pool.py": [
+      "./dashboard/components/resource_metrics.py"
+    ],
+    "core/utils/export_utils.py": [
+      "./tests/test_export_utils.py",
+      "./tests/test_export_utils.py"
+    ],
+    "dashboard/main.py": [
+      "./tests/conftest.py",
+      "./tests/unit/dashboard/test_dashboard.py",
+      "./tests/integration/dashboard_backend/test_dashboard_backend_integration.py",
+      "./tests/validation/non_functional/test_non_functional_validation.py",
+      "./tests/validation/functional/test_functional_validation.py",
+      "./tests/system/workflows/test_end_to_end_workflow.py",
+      "./tests/system/error_handling/test_error_handling.py",
+      "./tests/system/performance/test_performance.py"
+    ],
+    "core/event_system.py": [
+      "./tests/conftest.py",
+      "./tests/conftest.py",
+      "./tests/test_event_system.py",
+      "./tests/test_event_system.py",
+      "./tests/unit/core/test_event_system.py",
+      "./tests/unit/core/test_event_system.py",
+      "./tests/core/plugins/test_plugin_system.py",
+      "./tests/core/plugins/test_plugin_system.py",
+      "./core/unified_task_manager.py",
+      "./core/unified_task_manager.py",
+      "./core/connection_pool.py",
+      "./core/connection_pool.py",
+      "./core/interface.py",
+      "./core/interface.py",
+      "./core/interface.py",
+      "./core/interface.py",
+      "./core/task_manager.py",
+      "./core/task_manager.py",
+      "./core/resource_management.py",
+      "./core/resource_management.py",
+      "./core/imports.py",
+      "./core/imports.py",
+      "./core/resource_monitor.py",
+      "./core/resource_monitor.py",
+      "./core/thread_pool_manager.py",
+      "./core/thread_pool_manager.py",
+      "./core/task_management/task_manager.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/lifecycle.py",
+      "./core/plugins/connectors/research/parallel_manager.py",
+      "./core/connectors/__init__.py",
+      "./core/connectors/__init__.py",
+      "./examples/enhanced_plugin_example.py"
+    ],
+    "core/llms/litellm_wrapper.py": [
+      "./tests/conftest.py",
+      "./core/imports.py",
+      "./core/plugins/processors/text/text_processor.py",
+      "./core/llms/advanced/specialized_prompting.py",
+      "./core/llms/advanced/__init__.py"
+    ],
+    "core/llms/openai_wrapper.py": [
+      "./tests/conftest.py",
+      "./core/imports.py",
+      "./test/get_visual_info_for_samples.py"
+    ],
+    "core/plugins/loader.py": [
+      "./tests/conftest.py",
+      "./tests/integration/plugins/test_plugin_system.py",
+      "./core/plugins/__init__.py",
+      "./core/plugins/__init__.py",
+      "./examples/plugin_example.py"
+    ],
+    "core/knowledge/graph.py": [
+      "./tests/conftest.py",
+      "./tests/test_knowledge_graph.py",
+      "./tests/test_knowledge_graph.py",
+      "./tests/unit/core/test_knowledge_graph.py",
+      "./tests/unit/core/test_knowledge_graph.py",
+      "./core/imports.py",
+      "./core/imports.py"
+    ],
+    "core/llms/error_handling.py": [
+      "./tests/test_llm_integration.py",
+      "./tests/test_llm_integration.py"
+    ],
+    "core/llms/caching.py": [
+      "./tests/test_llm_integration.py",
+      "./tests/test_llm_integration.py"
+    ],
+    "core/llms/token_management.py": [
+      "./tests/test_llm_integration.py",
+      "./tests/test_llm_integration.py"
+    ],
+    "core/llms/model_management.py": [
+      "./tests/test_llm_integration.py",
+      "./tests/test_llm_integration.py"
+    ],
+    "core/llms/__init__.py": [
+      "./tests/test_llm_integration.py",
+      "./examples/llm_integration_example.py"
+    ],
+    "core/references/__init__.py": [
+      "./tests/test_references.py",
+      "./core/imports.py",
+      "./core/imports.py",
+      "./examples/reference_support_example.py"
+    ],
+    "core/unified_task_manager.py": [
+      "./tests/test_unified_task_manager.py",
+      "./tests/test_unified_task_manager.py"
+    ],
+    "dashboard/backend.py": [
+      "./tests/integration/dashboard_backend/test_dashboard_backend_integration.py"
+    ],
+    "core/plugins/lifecycle.py": [
+      "./tests/integration/plugins/test_plugin_system.py",
+      "./tests/core/plugins/test_plugin_system.py",
+      "./core/initialize.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/__init__.py",
+      "./core/plugins/__init__.py"
+    ],
+    "core/plugins/validation.py": [
+      "./tests/integration/plugins/test_plugin_system.py",
+      "./tests/core/plugins/test_plugin_system.py",
+      "./core/plugins/base.py",
+      "./core/plugins/__init__.py"
+    ],
+    "core/plugins/compatibility.py": [
+      "./tests/integration/plugins/test_plugin_system.py",
+      "./tests/core/plugins/test_plugin_system.py",
+      "./core/initialize.py",
+      "./core/plugins/__init__.py"
+    ],
+    "core/plugins/isolation.py": [
+      "./tests/integration/plugins/test_plugin_system.py",
+      "./tests/core/plugins/test_plugin_system.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/__init__.py"
+    ],
+    "core/connectors/__init__.py": [
+      "./tests/core/connectors/test_connector_base.py",
+      "./core/imports.py",
+      "./core/imports.py",
+      "./core/plugins/processors/text/text_processor.py",
+      "./core/connectors/web/__init__.py",
+      "./core/connectors/github/__init__.py",
+      "./core/connectors/youtube/__init__.py",
+      "./core/connectors/code_search/__init__.py",
+      "./core/connectors/academic/__init__.py",
+      "./examples/plugin_example.py"
+    ],
+    "core/plugins/security.py": [
+      "./tests/core/plugins/test_plugin_system.py",
+      "./core/initialize.py",
+      "./core/plugins/__init__.py"
+    ],
+    "core/plugins/resources.py": [
+      "./tests/core/plugins/test_plugin_system.py",
+      "./core/initialize.py",
+      "./core/plugins/base.py",
+      "./core/plugins/base.py",
+      "./core/plugins/__init__.py",
+      "./core/plugins/__init__.py"
+    ],
+    "core/api/controllers/parallel_research_controller.py": [
+      "./tests/core/api/controllers/test_parallel_research_controller.py"
+    ],
+    "core/general_process.py": [
+      "./core/general_process.py",
+      "./core/run_task.py"
+    ],
+    "core/imports.py": [
+      "./core/general_process.py",
+      "./core/general_process.py",
+      "./core/run_task.py",
+      "./core/run_task.py",
+      "./core/initialize.py",
+      "./core/initialize.py"
+    ],
+    "core/plugins/__init__.py": [
+      "./core/general_process.py",
+      "./core/run_task_new.py",
+      "./core/imports.py",
+      "./core/imports.py",
+      "./core/connectors/__init__.py",
+      "./core/connectors/web/__init__.py",
+      "./core/connectors/github/__init__.py",
+      "./core/connectors/youtube/__init__.py",
+      "./core/connectors/code_search/__init__.py",
+      "./core/connectors/academic/__init__.py",
+      "./examples/enhanced_plugin_example.py",
+      "./examples/enhanced_plugin_example.py"
+    ],
+    "core/config.py": [
+      "./core/unified_task_manager.py",
+      "./core/config.py",
+      "./core/connection_pool.py",
+      "./core/interface.py",
+      "./core/task_manager.py",
+      "./core/resource_management.py",
+      "./core/event_system.py",
+      "./core/cache_manager.py",
+      "./core/imports.py",
+      "./core/resource_monitor.py",
+      "./core/thread_pool_manager.py",
+      "./core/utils/error_logging.py",
+      "./core/utils/error_handling.py",
+      "./core/utils/logging_config.py"
+    ],
+    "core/utils/general_utils.py": [
+      "./core/interface.py",
+      "./core/run_task_new.py",
+      "./core/imports.py",
+      "./core/imports.py",
+      "./core/connectors/web/__init__.py"
+    ],
+    "core/agents/get_info.py": [
+      "./core/interface.py",
+      "./core/imports.py",
+      "./core/imports.py"
+    ],
+    "core/crawl4ai/__init__.py": [
+      "./core/interface.py",
+      "./core/imports.py",
+      "./core/imports.py",
+      "./core/connectors/web/__init__.py"
+    ],
+    "core/agents/get_info_prompts.py": [
+      "./core/interface.py"
+    ],
+    "core/agents/insights.py": [
+      "./core/interface.py",
+      "./core/interface.py",
+      "./core/imports.py",
+      "./core/imports.py"
+    ],
+    "core/initialize.py": [
+      "./core/run_task.py",
+      "./core/run_task.py"
+    ],
+    "core/plugins/connectors/__init__.py": [
+      "./core/run_task_new.py",
+      "./core/utils/data_mining_cli.py"
+    ],
+    "core/plugins/processors/__init__.py": [
+      "./core/run_task_new.py",
+      "./core/utils/data_mining_cli.py",
+      "./core/plugins/processors/text/text_processor.py",
+      "./examples/plugin_example.py"
+    ],
+    "core/utils/logging_config.py": [
+      "./core/imports.py",
+      "./core/utils/error_logging.py",
+      "./core/utils/recovery_strategies.py",
+      "./core/utils/general_utils.py",
+      "./core/utils/error_handling.py",
+      "./core/middleware/error_handling_middleware.py",
+      "./examples/robust_error_handling_example.py",
+      "./examples/error_handling_logging_example.py"
+    ],
+    "core/analysis/entity_extraction.py": [
+      "./core/imports.py"
+    ],
+    "core/analysis/entity_linking.py": [
+      "./core/imports.py",
+      "./core/imports.py",
+      "./examples/entity_linking_example.py",
+      "./test/analysis/test_entity_linking.py"
+    ],
+    "core/analysis/multimodal_analysis.py": [
+      "./core/imports.py"
+    ],
+    "core/analysis/multimodal_knowledge_integration.py": [
+      "./core/imports.py"
+    ],
+    "core/task_management/task_manager.py": [
+      "./core/imports.py",
+      "./core/imports.py",
+      "./core/task_management/__init__.py",
+      "./core/models/research_models.py",
+      "./core/models/task_models.py"
+    ],
+    "core/thread_pool_manager.py": [
+      "./core/imports.py",
+      "./core/imports.py",
+      "./core/utils/health_check.py",
+      "./core/utils/data_mining_cli.py"
+    ],
+    "core/resource_monitor.py": [
+      "./core/imports.py",
+      "./core/utils/health_check.py",
+      "./core/utils/data_mining_cli.py",
+      "./core/task/monitor.py"
+    ],
+    "core/task_manager.py": [
+      "./core/thread_pool_manager.py"
+    ],
+    "./core/utils/pb_api.py": [
+      "./core/utils/schema_update.py",
+      "./core/analysis/data_mining.py",
+      "./core/analysis/trend_analysis.py",
+      "./core/analysis/pattern_recognition.py",
+      "./core/analysis/multimodal_analysis.py",
+      "./core/analysis/entity_extraction.py",
+      "./core/analysis/multimodal_knowledge_integration.py",
+      "./core/task/data_mining_manager.py",
+      "./core/agents/insights.py",
+      "./core/knowledge/graph.py"
+    ],
+    "core/utils/schema_update.py": [
+      "./core/utils/schema_update.py",
+      "./scripts/migrate_schema.py"
+    ],
+    "core/task/config.py": [
+      "./core/utils/data_mining_cli.py",
+      "./core/task/__init__.py"
+    ],
+    "core/plugins/analyzers/__init__.py": [
+      "./core/utils/data_mining_cli.py"
+    ],
+    "core/domain/models/information.py": [
+      "./core/domain/repositories/information_repository.py",
+      "./core/domain/services/information_service.py",
+      "./core/infrastructure/repositories/pocketbase_information_repository.py",
+      "./core/application/services/information_processing_service.py"
+    ],
+    "core/domain/repositories/information_repository.py": [
+      "./core/domain/services/information_service.py",
+      "./core/infrastructure/repositories/pocketbase_information_repository.py",
+      "./core/infrastructure/di/service_registration.py"
+    ],
+    "core/domain/services/llm_service.py": [
+      "./core/domain/services/information_service.py",
+      "./core/infrastructure/services/openai_llm_service.py",
+      "./core/infrastructure/di/service_registration.py",
+      "./core/application/services/information_processing_service.py"
+    ],
+    "./core/utils/general_utils.py": [
+      "./core/analysis/data_mining.py",
+      "./core/analysis/trend_analysis.py",
+      "./core/analysis/pattern_recognition.py",
+      "./core/analysis/multimodal_analysis.py",
+      "./core/analysis/entity_extraction.py",
+      "./core/analysis/multimodal_knowledge_integration.py",
+      "./core/task/data_mining_manager.py",
+      "./core/agents/insights.py",
+      "./core/knowledge/graph.py"
+    ],
+    "./core/llms/openai_wrapper.py": [
+      "./core/analysis/data_mining.py",
+      "./core/analysis/trend_analysis.py",
+      "./core/analysis/multimodal_analysis.py",
+      "./core/analysis/entity_extraction.py",
+      "./core/analysis/multimodal_knowledge_integration.py",
+      "./core/llms/__init__.py",
+      "./core/llms/__init__.py",
+      "./core/agents/insights.py",
+      "./core/knowledge/graph.py"
+    ],
+    "./core/analysis/data_mining.py": [
+      "./core/analysis/__init__.py",
+      "./core/analysis/__init__.py",
+      "./core/analysis/trend_analysis.py",
+      "./core/task/data_mining_manager.py"
+    ],
+    "./core/analysis/entity_extraction.py": [
+      "./core/analysis/__init__.py",
+      "./core/analysis/__init__.py",
+      "./core/analysis/multimodal_knowledge_integration.py",
+      "./core/analysis/multimodal_knowledge_integration.py",
+      "./core/analysis/multimodal_knowledge_integration.py"
+    ],
+    "./core/analysis/entity_linking.py": [
+      "./core/analysis/__init__.py",
+      "./core/analysis/__init__.py",
+      "./core/analysis/multimodal_knowledge_integration.py",
+      "./core/knowledge/graph.py",
+      "./core/knowledge/graph.py"
+    ],
+    "./core/analysis/pattern_recognition.py": [
+      "./core/analysis/__init__.py",
+      "./core/analysis/__init__.py"
+    ],
+    "./core/analysis/trend_analysis.py": [
+      "./core/analysis/__init__.py",
+      "./core/analysis/__init__.py"
+    ],
+    "./core/__init__.py": [
+      "./core/analysis/pattern_recognition.py"
+    ],
+    "./core/knowledge/graph.py": [
+      "./core/analysis/multimodal_knowledge_integration.py",
+      "./core/knowledge/__init__.py",
+      "./core/knowledge/__init__.py"
+    ],
+    "./core/analysis/multimodal_analysis.py": [
+      "./core/analysis/multimodal_knowledge_integration.py"
+    ],
+    "core/task_management/task.py": [
+      "./core/task_management/task_manager.py",
+      "./core/task_management/__init__.py",
+      "./core/task_management/executor.py"
+    ],
+    "core/task_management/executor.py": [
+      "./core/task_management/task_manager.py",
+      "./core/task_management/__init__.py",
+      "./core/task_management/__init__.py"
+    ],
+    "core/task_management/exceptions.py": [
+      "./core/task_management/task_manager.py",
+      "./core/task_management/task_manager.py",
+      "./core/task_management/__init__.py",
+      "./core/task_management/__init__.py",
+      "./core/task_management/executor.py",
+      "./core/middleware/error_handling_middleware.py",
+      "./core/middleware/error_handling_middleware.py"
+    ],
+    "core/models/task_models.py": [
+      "./core/task_management/task_manager.py"
+    ],
+    "core/plugins/connectors/github_connector.py": [
+      "./core/plugins/connectors/__init__.py"
+    ],
+    "core/plugins/connectors/youtube_connector.py": [
+      "./core/plugins/connectors/__init__.py"
+    ],
+    "core/plugins/connectors/code_search_connector.py": [
+      "./core/plugins/connectors/__init__.py"
+    ],
+    "core/plugins/connectors/research_connector.py": [
+      "./core/plugins/connectors/__init__.py",
+      "./examples/research_connector_example.py"
+    ],
+    "core/plugins/connectors/research/utils.py": [
+      "./core/plugins/connectors/research_connector.py",
+      "./core/plugins/connectors/research/graph_workflow.py",
+      "./core/plugins/connectors/research/graph_workflow.py",
+      "./core/plugins/connectors/research/graph.py",
+      "./core/plugins/connectors/research/graph.py",
+      "./core/plugins/connectors/research/multi_agent.py",
+      "./core/plugins/connectors/research/multi_agent.py"
+    ],
+    "core/plugins/connectors/research/state.py": [
+      "./core/plugins/connectors/research_connector.py",
+      "./core/plugins/connectors/research/graph_workflow.py",
+      "./core/plugins/connectors/research/graph_workflow.py",
+      "./core/plugins/connectors/research/parallel_manager.py",
+      "./core/plugins/connectors/research/graph.py",
+      "./core/plugins/connectors/research/graph.py",
+      "./core/plugins/connectors/research/multi_agent.py",
+      "./core/plugins/connectors/research/multi_agent.py",
+      "./core/plugins/connectors/research/utils.py"
+    ],
+    "core/plugins/connectors/research/__init__.py": [
+      "./core/plugins/connectors/research_connector.py",
+      "./core/plugins/connectors/research_connector.py"
+    ],
+    "core/plugins/connectors/research/graph_workflow.py": [
+      "./core/plugins/connectors/research/parallel_manager.py",
+      "./core/plugins/connectors/research/__init__.py"
+    ],
+    "core/plugins/connectors/research/multi_agent.py": [
+      "./core/plugins/connectors/research/parallel_manager.py",
+      "./core/plugins/connectors/research/__init__.py"
+    ],
+    "core/models/research_models.py": [
+      "./core/plugins/connectors/research/parallel_manager.py"
+    ],
+    "core/plugins/connectors/research/prompts.py": [
+      "./core/plugins/connectors/research/graph.py",
+      "./core/plugins/connectors/research/graph.py"
+    ],
+    "core/plugins/connectors/research/graph.py": [
+      "./core/plugins/connectors/research/__init__.py"
+    ],
+    "core/plugins/processors/text_processor.py": [
+      "./core/plugins/processors/__init__.py"
+    ],
+    "core/plugins/processors/text/text_processor.py": [
+      "./core/plugins/processors/text/__init__.py"
+    ],
+    "core/task/async_task_manager.py": [
+      "./core/task/__init__.py"
+    ],
+    "./core/connectors/github/__init__.py": [
+      "./core/task/data_mining_manager.py"
+    ],
+    "./core/connectors/academic/__init__.py": [
+      "./core/task/data_mining_manager.py"
+    ],
+    "./core/connectors/web/__init__.py": [
+      "./core/task/data_mining_manager.py"
+    ],
+    "./core/connectors/youtube/__init__.py": [
+      "./core/task/data_mining_manager.py"
+    ],
+    "./core/connectors/code_search/__init__.py": [
+      "./core/task/data_mining_manager.py"
+    ],
+    "./core/crawl4ai/async_webcrawler.py": [
+      "./core/crawl4ai/__init__.py",
+      "./core/crawl4ai/install.py",
+      "./core/crawl4ai/install.py"
+    ],
+    "./core/crawl4ai/async_configs.py": [
+      "./core/crawl4ai/__init__.py",
+      "./core/crawl4ai/async_crawler_strategy.py",
+      "./core/crawl4ai/install.py",
+      "./core/crawl4ai/async_webcrawler.py"
+    ],
+    "./core/crawl4ai/content_scraping_strategy.py": [
+      "./core/crawl4ai/__init__.py",
+      "./core/crawl4ai/__init__.py",
+      "./core/crawl4ai/async_configs.py"
+    ],
+    "./core/crawl4ai/markdown_generation_strategy.py": [
+      "./core/crawl4ai/__init__.py",
+      "./core/crawl4ai/async_configs.py"
+    ],
+    "./core/crawl4ai/models.py": [
+      "./core/crawl4ai/__init__.py",
+      "./core/crawl4ai/markdown_generation_strategy.py",
+      "./core/crawl4ai/async_database.py",
+      "./core/crawl4ai/async_crawler_strategy.py",
+      "./core/crawl4ai/async_webcrawler.py",
+      "./core/crawl4ai/content_scraping_strategy.py"
+    ],
+    "./core/crawl4ai/ssl_certificate.py": [
+      "./core/crawl4ai/models.py",
+      "./core/crawl4ai/async_crawler_strategy.py"
+    ],
+    "./core/crawl4ai/html2text/__init__.py": [
+      "./core/crawl4ai/utils.py",
+      "./core/crawl4ai/markdown_generation_strategy.py"
+    ],
+    "./core/crawl4ai/config.py": [
+      "./core/crawl4ai/utils.py",
+      "./core/crawl4ai/async_configs.py",
+      "./core/crawl4ai/async_configs.py",
+      "./core/crawl4ai/async_crawler_strategy.py",
+      "./core/crawl4ai/content_scraping_strategy.py",
+      "./core/crawl4ai/content_scraping_strategy.py"
+    ],
+    "./core/crawl4ai/__version__.py": [
+      "./core/crawl4ai/utils.py"
+    ],
+    "./core/crawl4ai/utils.py": [
+      "./core/crawl4ai/async_database.py",
+      "./core/crawl4ai/async_database.py",
+      "./core/crawl4ai/async_crawler_strategy.py",
+      "./core/crawl4ai/async_webcrawler.py",
+      "./core/crawl4ai/async_webcrawler.py",
+      "./core/crawl4ai/content_scraping_strategy.py",
+      "./core/crawl4ai/content_scraping_strategy.py"
+    ],
+    "./core/crawl4ai/async_logger.py": [
+      "./core/crawl4ai/async_database.py",
+      "./core/crawl4ai/migrations.py",
+      "./core/crawl4ai/async_crawler_strategy.py",
+      "./core/crawl4ai/install.py",
+      "./core/crawl4ai/async_webcrawler.py"
+    ],
+    "./core/crawl4ai/user_agent_generator.py": [
+      "./core/crawl4ai/async_configs.py",
+      "./core/crawl4ai/async_crawler_strategy.py"
+    ],
+    "./core/crawl4ai/cache_context.py": [
+      "./core/crawl4ai/async_configs.py",
+      "./core/crawl4ai/async_webcrawler.py"
+    ],
+    "./core/crawl4ai/js_snippet/__init__.py": [
+      "./core/crawl4ai/async_crawler_strategy.py"
+    ],
+    "./core/crawl4ai/async_crawler_strategy.py": [
+      "./core/crawl4ai/async_webcrawler.py"
+    ],
+    "./core/crawl4ai/async_database.py": [
+      "./core/crawl4ai/async_webcrawler.py"
+    ],
+    "./core/crawl4ai/processors/pdf/utils.py": [
+      "./core/crawl4ai/processors/pdf/processor.py",
+      "./core/crawl4ai/processors/pdf/processor.py",
+      "./core/crawl4ai/processors/pdf/processor.py"
+    ],
+    "./core/crawl4ai/processors/pdf/processor.py": [
+      "./core/crawl4ai/processors/pdf/__init__.py"
+    ],
+    "./core/crawl4ai/__init__.py": [
+      "./core/crawl4ai/html2text/__init__.py",
+      "./core/crawl4ai/html2text/utils.py"
+    ],
+    "./core/crawl4ai/html2text/_typing.py": [
+      "./core/crawl4ai/html2text/__init__.py"
+    ],
+    "./core/crawl4ai/html2text/elements.py": [
+      "./core/crawl4ai/html2text/__init__.py"
+    ],
+    "./core/crawl4ai/html2text/utils.py": [
+      "./core/crawl4ai/html2text/__init__.py",
+      "./core/crawl4ai/html2text/__init__.py"
+    ],
+    "core/crawl4ai/async_configs.py": [
+      "./core/connectors/web/__init__.py"
+    ],
+    "core/crawl4ai/processors/pdf/__init__.py": [
+      "./core/connectors/academic/__init__.py"
+    ],
+    "./core/llms/error_handling.py": [
+      "./core/llms/model_management.py",
+      "./core/llms/model_management.py",
+      "./core/llms/litellm_wrapper.py",
+      "./core/llms/openai_wrapper.py",
+      "./core/llms/__init__.py",
+      "./core/llms/__init__.py"
+    ],
+    "./core/llms/caching.py": [
+      "./core/llms/litellm_wrapper.py",
+      "./core/llms/openai_wrapper.py",
+      "./core/llms/__init__.py",
+      "./core/llms/__init__.py"
+    ],
+    "./core/llms/token_management.py": [
+      "./core/llms/litellm_wrapper.py",
+      "./core/llms/openai_wrapper.py",
+      "./core/llms/__init__.py",
+      "./core/llms/__init__.py"
+    ],
+    "./core/llms/model_management.py": [
+      "./core/llms/litellm_wrapper.py",
+      "./core/llms/openai_wrapper.py",
+      "./core/llms/__init__.py",
+      "./core/llms/__init__.py"
+    ],
+    "./core/config.py": [
+      "./core/llms/__init__.py"
+    ],
+    "./core/llms/litellm_wrapper.py": [
+      "./core/llms/__init__.py",
+      "./core/llms/__init__.py"
+    ],
+    "./core/scrapers/scraper_data.py": [
+      "./core/scrapers/mp_scraper.py"
+    ],
+    "./core/scrapers/mp_scraper.py": [
+      "./core/scrapers/__init__.py"
+    ],
+    "core/infrastructure/config/configuration_service.py": [
+      "./core/infrastructure/services/openai_llm_service.py",
+      "./core/infrastructure/repositories/pocketbase_information_repository.py",
+      "./core/infrastructure/di/service_registration.py",
+      "./core/application/services/information_processing_service.py",
+      "./core/api/main.py"
+    ],
+    "core/di_container.py": [
+      "./core/infrastructure/di/service_registration.py",
+      "./core/api/main.py",
+      "./core/api/controllers/information_controller.py"
+    ],
+    "core/domain/services/information_service.py": [
+      "./core/infrastructure/di/service_registration.py",
+      "./core/application/services/information_processing_service.py"
+    ],
+    "core/infrastructure/services/openai_llm_service.py": [
+      "./core/infrastructure/di/service_registration.py"
+    ],
+    "core/infrastructure/repositories/pocketbase_information_repository.py": [
+      "./core/infrastructure/di/service_registration.py"
+    ],
+    "./core/references/reference_extractor.py": [
+      "./core/references/__init__.py"
+    ],
+    "./core/references/reference_indexer.py": [
+      "./core/references/__init__.py"
+    ],
+    "./core/references/reference_linker.py": [
+      "./core/references/__init__.py"
+    ],
+    "core/middleware/error_handling_middleware.py": [
+      "./core/middleware/__init__.py",
+      "./core/middleware/__init__.py"
+    ],
+    "core/export/__init__.py": [
+      "./core/export/examples/export_example.py",
+      "./core/export/cli/export_cli.py"
+    ],
+    "core/export/formats/csv_exporter.py": [
+      "./core/export/formats/__init__.py"
+    ],
+    "core/export/formats/json_exporter.py": [
+      "./core/export/formats/__init__.py"
+    ],
+    "core/export/formats/xml_exporter.py": [
+      "./core/export/formats/__init__.py"
+    ],
+    "core/export/formats/pdf_exporter.py": [
+      "./core/export/formats/__init__.py"
+    ],
+    "./core/analysis/__init__.py": [
+      "./core/agents/insights.py",
+      "./core/knowledge/graph.py"
+    ],
+    "./core/agents/get_info_prompts.py": [
+      "./core/agents/get_info.py"
+    ],
+    "core/infrastructure/di/service_registration.py": [
+      "./core/api/main.py"
+    ],
+    "core/api/controllers/information_controller.py": [
+      "./core/api/main.py"
+    ],
+    "core/api/controllers/research_controller.py": [
+      "./core/api/main.py"
+    ],
+    "core/api/client.py": [
+      "./core/api/__init__.py",
+      "./examples/api_integration_example.py"
+    ],
+    "core/application/services/information_processing_service.py": [
+      "./core/api/controllers/information_controller.py"
+    ],
+    "core/api/models/parallel_research_models.py": [
+      "./core/api/controllers/parallel_research_controller.py",
+      "./core/api/controllers/parallel_research_controller.py"
+    ],
+    "core/experimental/advanced_reasoning.py": [
+      "./core/experimental/__init__.py"
+    ],
+    "core/llms/advanced/__init__.py": [
+      "./examples/llm_integration_example.py"
+    ],
+    "core/experimental/__init__.py": [
+      "./examples/advanced_llm_features_example.py",
+      "./examples/advanced_llm_features_example.py"
+    ]
+  }
+}
