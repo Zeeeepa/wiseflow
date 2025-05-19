@@ -9,7 +9,6 @@ multimodal analysis capabilities.
 
 import os
 import sys
-import json
 import asyncio
 import argparse
 from datetime import datetime
