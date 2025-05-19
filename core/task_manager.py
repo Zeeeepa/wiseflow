@@ -10,16 +10,23 @@ import time
 import asyncio
 import logging
 import uuid
+import warnings
 from typing import Dict, Any, Optional, Callable, List, Set, Union, Awaitable
 from datetime import datetime
 from enum import Enum, auto
+
+warnings.warn(
+    "core.task_manager is deprecated and will be removed in a future version. "
+    "Use core.task_management.task_manager instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 from core.config import config
 from core.event_system import (
     EventType, Event, publish_sync,
     create_task_event
 )
-from core.utils.error_handling import handle_exceptions, TaskError
 
 # Import the unified task management system
 from core.task_management import (
@@ -179,35 +186,42 @@ class TaskManager:
     
     def register_task(
         self,
-        name: str,
-        func: Callable,
-        args: tuple = (),
-        kwargs: dict = None,
+        func: Union[Callable[..., Any], Callable[..., Awaitable[Any]]],
+        args: Optional[List[Any]] = None,
+        kwargs: Optional[Dict[str, Any]] = None,
+        task_id: Optional[str] = None,
         priority: TaskPriority = TaskPriority.NORMAL,
-        dependencies: List[str] = None,
-        max_retries: int = 0,
-        retry_delay: float = 1.0,
+        dependencies: Optional[List[str]] = None,
         timeout: Optional[float] = None,
-        task_id: Optional[str] = None
-    ) -> str:
+        retry_count: int = 0,
+        retry_delay: float = 1.0,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Task:
         """
-        Register a task with the task manager.
+        Register a task to be executed.
         
         Args:
-            name: Name of the task
-            func: Function to execute
-            args: Arguments to pass to the function
+            func: The function to execute
+            args: Positional arguments to pass to the function
             kwargs: Keyword arguments to pass to the function
-            priority: Priority of the task
+            task_id: Optional task ID (will be generated if not provided)
+            priority: Task priority
             dependencies: List of task IDs that must complete before this task
-            max_retries: Maximum number of retries if the task fails
-            retry_delay: Delay in seconds between retries
-            timeout: Timeout in seconds for the task
-            task_id: Optional task ID, if not provided a new one will be generated
+            timeout: Maximum execution time in seconds
+            retry_count: Number of times to retry on failure
+            retry_delay: Delay between retries in seconds
+            metadata: Additional metadata for the task
             
         Returns:
-            Task ID
+            Task: The registered task
         """
+        warnings.warn(
+            "core.task_manager.register_task is deprecated and will be removed in a future version. "
+            "Use core.task_management.task_manager.register_task instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         task_id = task_id or create_task_id()
         
         # Map priority to unified priority
@@ -222,29 +236,29 @@ class TaskManager:
         try:
             # Register with unified task manager
             unified_task_id = self.unified_manager.register_task(
-                name=name,
+                name=None,
                 func=func,
                 *args,
                 task_id=task_id,
                 kwargs=kwargs,
                 priority=unified_priority,
                 dependencies=dependencies,
-                max_retries=max_retries,
+                max_retries=retry_count,
                 retry_delay=retry_delay,
                 timeout=timeout,
-                metadata={"legacy_task": True}
+                metadata=metadata
             )
             
             # Create legacy task object for compatibility
             task = Task(
                 task_id=task_id,
-                name=name,
+                name=None,
                 func=func,
                 args=args,
                 kwargs=kwargs,
                 priority=priority,
                 dependencies=dependencies,
-                max_retries=max_retries,
+                max_retries=retry_count,
                 retry_delay=retry_delay,
                 timeout=timeout
             )
@@ -253,8 +267,8 @@ class TaskManager:
             self.tasks[task_id] = task
             
             logger.info(f"Task registered: {task_id} ({name})")
-            return task_id
-            
+            return task
+        
         except UnifiedTaskDependencyError as e:
             # Convert to legacy exception
             raise TaskDependencyError(str(e))
@@ -264,11 +278,18 @@ class TaskManager:
         Cancel a task.
         
         Args:
-            task_id: ID of the task to cancel
+            task_id: The ID of the task to cancel
             
         Returns:
-            True if the task was cancelled, False otherwise
+            bool: True if the task was cancelled, False otherwise
         """
+        warnings.warn(
+            "core.task_manager.cancel_task is deprecated and will be removed in a future version. "
+            "Use core.task_management.task_manager.cancel_task instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         task = self.tasks.get(task_id)
         if not task:
             logger.warning(f"Task {task_id} not found")
@@ -307,11 +328,18 @@ class TaskManager:
         Get a task by ID.
         
         Args:
-            task_id: ID of the task to get
+            task_id: The ID of the task to get
             
         Returns:
-            Task object or None if not found
+            Optional[Task]: The task, or None if not found
         """
+        warnings.warn(
+            "core.task_manager.get_task is deprecated and will be removed in a future version. "
+            "Use core.task_management.task_manager.get_task instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         return self.tasks.get(task_id)
     
     def get_task_status(self, task_id: str) -> Optional[TaskStatus]:
@@ -319,11 +347,18 @@ class TaskManager:
         Get the status of a task.
         
         Args:
-            task_id: ID of the task to get status for
+            task_id: The ID of the task to get the status for
             
         Returns:
-            Task status or None if task not found
+            Optional[TaskStatus]: The task status, or None if the task is not found
         """
+        warnings.warn(
+            "core.task_manager.get_task_status is deprecated and will be removed in a future version. "
+            "Use core.task_management.task_manager.get_task_status instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         unified_status = self.unified_manager.get_task_status(task_id)
         if unified_status is None:
             return None
@@ -342,14 +377,21 @@ class TaskManager:
     
     def get_task_result(self, task_id: str) -> Any:
         """
-        Get the result of a task.
+        Get the result of a completed task.
         
         Args:
-            task_id: ID of the task to get result for
+            task_id: The ID of the task to get the result for
             
         Returns:
-            Task result or None if task not found or not completed
+            Any: The task result, or None if the task is not completed
         """
+        warnings.warn(
+            "core.task_manager.get_task_result is deprecated and will be removed in a future version. "
+            "Use core.task_management.task_manager.get_task_result instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         return self.unified_manager.get_task_result(task_id)
     
     def get_task_error(self, task_id: str) -> Optional[Exception]:
@@ -369,8 +411,15 @@ class TaskManager:
         Get all tasks.
         
         Returns:
-            Dictionary of all tasks
+            Dict[str, Task]: Dictionary of all tasks
         """
+        warnings.warn(
+            "core.task_manager.get_all_tasks is deprecated and will be removed in a future version. "
+            "Use core.task_management.task_manager.get_all_tasks instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         return self.tasks.copy()
     
     def get_pending_tasks(self) -> Dict[str, Task]:
@@ -378,7 +427,7 @@ class TaskManager:
         Get all pending tasks.
         
         Returns:
-            Dictionary of pending tasks
+            Dict[str, Task]: Dictionary of pending tasks
         """
         return {task_id: task for task_id, task in self.tasks.items() if task.status == TaskStatus.PENDING}
     
@@ -387,7 +436,7 @@ class TaskManager:
         Get all running tasks.
         
         Returns:
-            Dictionary of running tasks
+            Dict[str, Task]: Dictionary of running tasks
         """
         return {task_id: task for task_id, task in self.tasks.items() if task.status == TaskStatus.RUNNING}
     
@@ -396,7 +445,7 @@ class TaskManager:
         Get all completed tasks.
         
         Returns:
-            Dictionary of completed tasks
+            Dict[str, Task]: Dictionary of completed tasks
         """
         return {task_id: task for task_id, task in self.tasks.items() if task.status == TaskStatus.COMPLETED}
     
@@ -405,7 +454,7 @@ class TaskManager:
         Get all failed tasks.
         
         Returns:
-            Dictionary of failed tasks
+            Dict[str, Task]: Dictionary of failed tasks
         """
         return {task_id: task for task_id, task in self.tasks.items() if task.status == TaskStatus.FAILED}
     
@@ -414,7 +463,7 @@ class TaskManager:
         Get all cancelled tasks.
         
         Returns:
-            Dictionary of cancelled tasks
+            Dict[str, Task]: Dictionary of cancelled tasks
         """
         return {task_id: task for task_id, task in self.tasks.items() if task.status == TaskStatus.CANCELLED}
     
@@ -423,7 +472,7 @@ class TaskManager:
         Get all waiting tasks.
         
         Returns:
-            Dictionary of waiting tasks
+            Dict[str, Task]: Dictionary of waiting tasks
         """
         return {task_id: task for task_id, task in self.tasks.items() if task.status == TaskStatus.WAITING}
     
