@@ -11,6 +11,10 @@ class Singleton:
     Usage:
         class MyClass(Singleton):
             def __init__(self, *args, **kwargs):
+                # Skip initialization if already initialized
+                if hasattr(self, '_initialized') and self._initialized:
+                    return
+                    
                 # Your initialization code here
                 pass
                 
@@ -20,7 +24,7 @@ class Singleton:
         instance = MyClass(*args, **kwargs)  # This will call get_instance internally
     """
     _instances = {}
-    _lock = threading.Lock()
+    _lock = threading.RLock()  # Using RLock instead of Lock for reentrant safety
     
     def __new__(cls, *args, **kwargs):
         """
@@ -52,8 +56,27 @@ class Singleton:
         """
         with cls._lock:
             if cls not in cls._instances:
-                cls._instances[cls] = super(Singleton, cls).__new__(cls)
-                cls._instances[cls].__init__(*args, **kwargs)
+                instance = super(Singleton, cls).__new__(cls)
+                instance.__init__(*args, **kwargs)
                 # Set a flag to prevent __init__ from being called again
-                cls._instances[cls]._initialized = True
-        return cls._instances[cls]
+                instance._initialized = True
+                cls._instances[cls] = instance
+            return cls._instances[cls]
+    
+    @classmethod
+    def reset_instance(cls):
+        """
+        Reset the singleton instance.
+        
+        This method is primarily used for testing purposes.
+        It removes the singleton instance from the instances dictionary,
+        allowing a new instance to be created on the next call to get_instance.
+        
+        Returns:
+            bool: True if an instance was reset, False if no instance existed.
+        """
+        with cls._lock:
+            if cls in cls._instances:
+                del cls._instances[cls]
+                return True
+            return False
