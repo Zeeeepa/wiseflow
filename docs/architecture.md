@@ -14,6 +14,7 @@ This document provides a detailed overview of the WiseFlow architecture, includi
 - [Dashboard Architecture](#dashboard-architecture)
 - [Database Schema](#database-schema)
 - [Security Considerations](#security-considerations)
+- [Class Relationships](#class-relationships)
 
 ## System Overview
 
@@ -67,7 +68,7 @@ Key features:
 - Resource allocation
 - Graceful shutdown
 
-### Task Management (`core/task_manager.py`, `core/thread_pool_manager.py`)
+### Task Management (`core/task_management/task_manager.py`, `core/thread_pool_manager.py`)
 
 The task management components handle the execution of tasks, including scheduling, concurrency control, and resource monitoring.
 
@@ -147,6 +148,36 @@ Key features:
 - Webhook integration
 - Export scheduling
 
+### Specialized Prompting (`core/llms/advanced/specialized_prompting.py`)
+
+The specialized prompting module provides content-aware prompting strategies for different types of data.
+
+Key features:
+- Content type detection
+- Specialized prompt templates
+- Multi-step reasoning
+- Chain-of-thought reasoning
+
+### Recovery Strategies (`core/utils/recovery_strategies.py`)
+
+The recovery strategies module provides mechanisms for handling failures and ensuring robust operation.
+
+Key features:
+- Retry strategies
+- Fallback strategies
+- Cache strategies
+- Composite strategies
+
+### Parallel Research (`core/plugins/connectors/research/parallel_manager.py`)
+
+The parallel research module enables concurrent research tasks for efficient information gathering.
+
+Key features:
+- Task creation and management
+- Multi-agent coordination
+- Resource allocation
+- State management
+
 ## Data Flow
 
 The data flow in WiseFlow follows a pipeline pattern, with data passing through several stages of processing.
@@ -201,7 +232,7 @@ Example: `EventSystem.subscribe()` and `EventSystem.publish()`
 
 The singleton pattern ensures that a class has only one instance and provides a global point of access to it. This is used for components that should be shared across the system.
 
-Example: `Config` and `PluginManager`
+Example: `TaskManager`, `ParallelResearchManager`, and `ContentProcessorManager`
 
 ### Adapter Pattern
 
@@ -318,7 +349,7 @@ def discover_plugins(plugin_dir):
                     spec.loader.exec_module(module)
                     
                     for name, obj in inspect.getmembers(module):
-                        if inspect.isclass(obj) and hasattr(obj, 'name') and not name.startswith('_'):
+                        if inspect.isclass(obj) and issubclass(obj, Plugin) and obj != Plugin:
                             plugins.append(obj)
                 except Exception as e:
                     logger.error(f"Error loading plugin from {module_path}: {e}")
@@ -328,13 +359,20 @@ def discover_plugins(plugin_dir):
 
 ### Plugin Lifecycle
 
-Plugins have a lifecycle that includes initialization, execution, and cleanup.
+Plugins have a defined lifecycle, with methods for initialization, execution, and cleanup.
 
 ```python
-class PluginBase:
-    def initialize(self, config=None):
-        """Initialize the plugin with the given configuration."""
-        return True
+class Plugin:
+    def __init__(self, config=None):
+        self.config = config or {}
+    
+    def initialize(self):
+        """Initialize the plugin."""
+        pass
+    
+    def execute(self, *args, **kwargs):
+        """Execute the plugin's main functionality."""
+        raise NotImplementedError("Plugin must implement execute method")
     
     def cleanup(self):
         """Clean up resources used by the plugin."""
@@ -343,105 +381,97 @@ class PluginBase:
 
 ## API Architecture
 
-The WiseFlow API is built using FastAPI and follows RESTful principles.
+The WiseFlow API provides a RESTful interface for interacting with the system. It is built using FastAPI and follows a layered architecture.
 
-### API Server
+### API Endpoints
 
-The API server (`api_server.py`) provides endpoints for content processing, batch processing, webhook management, and integration with other systems.
+The API provides endpoints for:
+
+- Content processing
+- Research task management
+- Webhook management
+- System status and health checks
+
+### API Models
+
+The API uses Pydantic models for request and response validation.
 
 ```python
-app = FastAPI(title="WiseFlow API", version="1.0.0")
+class ContentProcessRequest(BaseModel):
+    content: str
+    focus_point: str
+    explanation: Optional[str] = ""
+    content_type: str = CONTENT_TYPE_TEXT
+    metadata: Optional[Dict[str, Any]] = None
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+```
 
-@app.post("/api/v1/process")
-async def process_content(request: ProcessRequest, api_key: str = Header(None)):
+### API Controllers
+
+The API controllers handle request processing and response generation.
+
+```python
+@app.post("/api/v1/process", response_model=ContentProcessResponse)
+async def process_content(
+    request: ContentProcessRequest,
+    x_api_key: str = Header(...),
+    background_tasks: BackgroundTasks = None
+):
     # Validate API key
-    if api_key != config.get("WISEFLOW_API_KEY"):
+    if x_api_key != config.get("WISEFLOW_API_KEY"):
         raise HTTPException(status_code=401, detail="Invalid API key")
     
     # Process content
-    result = await process_content_with_llm(
-        content=request.content,
-        focus_point=request.focus_point,
-        explanation=request.explanation,
-        content_type=request.content_type,
-        use_multi_step_reasoning=request.use_multi_step_reasoning,
-        references=request.references,
-        metadata=request.metadata
-    )
-    
-    return result
+    try:
+        result = await content_processor.process(
+            content=request.content,
+            focus_point=request.focus_point,
+            explanation=request.explanation,
+            content_type=request.content_type,
+            metadata=request.metadata,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens
+        )
+        
+        # Trigger webhooks
+        if background_tasks:
+            background_tasks.add_task(
+                trigger_webhooks,
+                "content.processed",
+                {
+                    "request": request.dict(),
+                    "result": result
+                }
+            )
+        
+        return ContentProcessResponse(
+            result=result,
+            status="success"
+        )
+    except Exception as e:
+        logger.error(f"Error processing content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 ```
 
-### API Client
+### Middleware
 
-The API client (`core/api/client.py`) provides a Python interface to the WiseFlow API.
-
-```python
-class WiseFlowClient:
-    def __init__(self, base_url, api_key):
-        self.base_url = base_url
-        self.api_key = api_key
-        self.headers = {
-            "Content-Type": "application/json",
-            "X-API-Key": api_key
-        }
-    
-    def process_content(self, content, focus_point, explanation=None, content_type="text/plain", use_multi_step_reasoning=False, references=None, metadata=None):
-        url = f"{self.base_url}/api/v1/process"
-        data = {
-            "content": content,
-            "focus_point": focus_point,
-            "explanation": explanation,
-            "content_type": content_type,
-            "use_multi_step_reasoning": use_multi_step_reasoning,
-            "references": references,
-            "metadata": metadata or {}
-        }
-        
-        response = requests.post(url, headers=self.headers, json=data)
-        response.raise_for_status()
-        
-        return response.json()
-```
-
-### Webhook System
-
-The webhook system allows external systems to be notified when certain events occur in WiseFlow.
+The API uses middleware for cross-cutting concerns such as authentication, logging, and error handling.
 
 ```python
-class WebhookManager:
-    def __init__(self):
-        self.webhooks = {}
+@app.middleware("http")
+async def authenticate(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        api_key = request.headers.get("X-API-Key")
+        if api_key != config.get("WISEFLOW_API_KEY"):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid API key"}
+            )
     
-    def register_webhook(self, endpoint, events, headers=None, secret=None, description=None):
-        webhook_id = str(uuid.uuid4())
-        
-        self.webhooks[webhook_id] = {
-            "endpoint": endpoint,
-            "events": events,
-            "headers": headers or {},
-            "secret": secret,
-            "description": description,
-            "created_at": datetime.now().isoformat(),
-            "last_triggered": None,
-            "success_count": 0,
-            "failure_count": 0
-        }
-        
-        return webhook_id
-    
-    async def trigger_webhooks(self, event, data, async_mode=True):
-        responses = []
-        
-        for webhook_id, webhook in self.webhooks.items():
-            if event in webhook["events"]:
-                if async_mode:
-                    asyncio.create_task(self._trigger_webhook(webhook_id, webhook, event, data))
-                else:
-                    response = await self._trigger_webhook(webhook_id, webhook, event, data)
-                    responses.append(response)
-        
-        return responses
+    return await call_next(request)
 ```
 
 ## Dashboard Architecture
@@ -819,5 +849,96 @@ async def openai_llm(messages: List, model: str, logger=None, **kwargs) -> str:
                 wait_time *= 2
 ```
 
-These security features help protect WiseFlow and its data from unauthorized access and abuse.
+## Class Relationships
+
+WiseFlow's architecture is built around several key class relationships that enable its functionality. This section outlines the major class relationships and dependencies.
+
+### Task Management Relationships
+
+The task management system is built around several interrelated classes:
+
+- **TaskManager**: The central singleton that manages all tasks
+  - Uses **Task** objects to represent individual units of work
+  - Uses **Executor** implementations for different execution strategies
+  - Integrates with the **EventSystem** for task lifecycle events
+  - Manages dependencies between tasks
+
+- **Task**: Represents a unit of work to be executed
+  - Has a **TaskStatus** (pending, running, completed, failed)
+  - Has a **TaskPriority** (low, medium, high, critical)
+  - May have dependencies on other tasks
+
+- **Executor**: Abstract base class for task execution strategies
+  - **SequentialExecutor**: Executes tasks sequentially
+  - **ThreadPoolExecutor**: Executes tasks in a thread pool
+  - **AsyncExecutor**: Executes tasks asynchronously
+
+### LLM Integration Relationships
+
+The LLM integration system provides a unified interface to different LLM providers:
+
+- **LiteLLMWrapper**: Provides a unified interface to LiteLLM
+  - Uses **error_handling** for robust error handling
+  - Uses **caching** for efficient caching of LLM calls
+  - Uses **token_management** for token counting and optimization
+  - Uses **model_management** for model fallback and failover
+
+- **SpecializedPromptProcessor**: Provides content-aware prompting
+  - Uses **ContentTypePromptStrategy** for selecting appropriate prompts
+  - Uses **LiteLLMWrapper** for LLM calls
+  - Implements specialized reasoning methods (multi-step, chain-of-thought)
+
+### Plugin System Relationships
+
+The plugin system enables extensibility through a modular architecture:
+
+- **PluginManager**: Manages plugin discovery, registration, and lifecycle
+  - Uses **Plugin** as the base class for all plugins
+  - Implements plugin isolation and security
+
+- **Plugin**: Base class for all plugins
+  - Extended by **Connector**, **Processor**, and **Analyzer** plugins
+  - Implements a standard lifecycle (initialize, execute, cleanup)
+
+- **PluginLoader**: Handles dynamic loading of plugins
+  - Uses **PluginValidator** to ensure plugin compatibility
+  - Integrates with the **EventSystem** for plugin lifecycle events
+
+### Research System Relationships
+
+The research system enables parallel information gathering:
+
+- **ParallelResearchManager**: Manages parallel research tasks
+  - Uses **TaskManager** for executing research tasks
+  - Uses **Configuration** for research task settings
+  - Uses **ReportState** for managing research state
+  - Integrates with the **EventSystem** for task lifecycle events
+  - Uses **resource_manager** for resource allocation
+  - Uses **cache_manager** for caching research results
+
+- **ResearchConnector**: Base class for research connectors
+  - Extended by specific connector implementations (web, academic, etc.)
+  - Implements standard research methods (search, extract, analyze)
+
+### Recovery Strategy Relationships
+
+The recovery strategy system provides robust error handling:
+
+- **RecoveryStrategy**: Base class for recovery strategies
+  - Extended by specific strategy implementations
+  - Used by recovery decorators to apply recovery logic to functions
+
+- **RetryStrategy**: Retries failed operations with configurable backoff
+  - Used by the **with_retries** decorator
+
+- **FallbackStrategy**: Provides alternative implementations when primary ones fail
+  - Used by the **with_fallback** decorator
+
+- **CacheStrategy**: Uses cached results when operations fail
+  - Used by the **with_cache** decorator
+
+- **CompositeStrategy**: Combines multiple strategies for comprehensive recovery
+  - Used by the **with_composite_recovery** decorator
+
+These class relationships form the foundation of WiseFlow's architecture, enabling its modular, extensible, and robust design.
 
