@@ -11,6 +11,10 @@ class Singleton:
     Usage:
         class MyClass(Singleton):
             def __init__(self, *args, **kwargs):
+                # Skip initialization if already initialized
+                if hasattr(self, '_initialized') and self._initialized:
+                    return
+                    
                 # Your initialization code here
                 pass
                 
@@ -52,8 +56,15 @@ class Singleton:
         """
         with cls._lock:
             if cls not in cls._instances:
-                cls._instances[cls] = super(Singleton, cls).__new__(cls)
-                cls._instances[cls].__init__(*args, **kwargs)
-                # Set a flag to prevent __init__ from being called again
-                cls._instances[cls]._initialized = True
-        return cls._instances[cls]
+                # Create a new instance without calling __init__
+                instance = super(Singleton, cls).__new__(cls)
+                # Set the _initialized flag to False before initialization
+                instance._initialized = False
+                # Store the instance before initialization to prevent recursion
+                cls._instances[cls] = instance
+                # Now call __init__ which will check the _initialized flag
+                instance.__init__(*args, **kwargs)
+                # Set the flag to True after initialization
+                instance._initialized = True
+                return instance
+            return cls._instances[cls]
