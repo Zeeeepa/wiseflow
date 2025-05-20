@@ -134,6 +134,11 @@ class NotFoundError(WiseflowError):
     pass
 
 
+class TimeoutError(WiseflowError):
+    """Error raised when an operation times out."""
+    pass
+
+
 def handle_exceptions(
     error_types: Optional[List[Type[Exception]]] = None,
     default_message: str = "An error occurred",
