@@ -62,7 +62,8 @@ from core.utils.error_handling import (
     ValidationError,
     AuthenticationError,
     AuthorizationError,
-    NotFoundError
+    NotFoundError,
+    TaskError
 )
 from core.utils.recovery_strategies import (
     RetryStrategy,
