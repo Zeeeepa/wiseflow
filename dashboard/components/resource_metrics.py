@@ -156,5 +156,3 @@ def register_blueprint(app):
     """Register the blueprint with the Flask app."""
     app.register_blueprint(resource_metrics_bp)
     logger.info("Resource metrics blueprint registered")
-"""
-

@@ -2,6 +2,7 @@ from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from typing import Literal, Optional
 from fastapi.middleware.cors import CORSMiddleware
+from core.message_processing import message_manager
 
 
 # backend的操作也应该是针对 pb 操作的，即添加信源、兴趣点等都应该存入 pb，而不是另起一个进程实例
