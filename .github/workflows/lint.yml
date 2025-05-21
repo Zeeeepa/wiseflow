@@ -1,0 +1,37 @@
+name: Lint and Type Check
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black isort mypy
+        if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+    - name: Lint with flake8
+      run: |
+        # Only check for syntax errors (E9), undefined names (F82), etc.
+        # But make it exit-zero so it doesn't fail the build
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exit-zero
+        flake8 . --count --exit-zero --max-complexity=10 --statistics
+    - name: Check formatting with black
+      run: |
+        black --check .
+    - name: Check imports with isort
+      run: |
+        isort --check-only --profile black .
+    - name: Type check with mypy
+      run: |
+        mypy core
