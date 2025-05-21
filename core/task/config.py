@@ -11,6 +11,9 @@ from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 import uuid
 
+from core.utils.directory_utils import ensure_directory
+from core.config import config, PROJECT_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,8 +23,8 @@ class TaskConfig:
     def __init__(
         self,
         task_id: Optional[str] = None,
-        config_dir: str = 'configs',
-        references_dir: str = 'references'
+        config_dir: str = None,
+        references_dir: str = None
     ):
         """Initialize task configuration.
         
@@ -31,19 +34,26 @@ class TaskConfig:
             references_dir: Directory for storing reference files
         """
         self.task_id = task_id or str(uuid.uuid4())
+        
+        # Set default directories if not provided
+        if config_dir is None:
+            config_dir = os.path.join(PROJECT_DIR, 'configs')
+        if references_dir is None:
+            references_dir = os.path.join(PROJECT_DIR, 'references')
+            
         self.config_dir = config_dir
         self.references_dir = references_dir
         
         # Create directories if they don't exist
-        os.makedirs(self.config_dir, exist_ok=True)
-        os.makedirs(self.references_dir, exist_ok=True)
+        ensure_directory(self.config_dir)
+        ensure_directory(self.references_dir)
         
         # Task-specific directories
         self.task_config_dir = os.path.join(self.config_dir, self.task_id)
         self.task_references_dir = os.path.join(self.references_dir, self.task_id)
         
-        os.makedirs(self.task_config_dir, exist_ok=True)
-        os.makedirs(self.task_references_dir, exist_ok=True)
+        ensure_directory(self.task_config_dir)
+        ensure_directory(self.task_references_dir)
         
         # Configuration data
         self.config_data = {
@@ -349,6 +359,9 @@ class TaskConfig:
             export_path = os.path.join(self.config_dir, f"{self.task_id}.json")
             
         try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(os.path.abspath(export_path)), exist_ok=True)
+            
             with open(export_path, 'w') as f:
                 json.dump(self.config_data, f, indent=2)
             logger.info(f"Exported configuration to {export_path}")
@@ -411,4 +424,3 @@ class TaskConfig:
         except Exception as e:
             logger.error(f"Error cleaning up task: {str(e)}")
             return False
-
