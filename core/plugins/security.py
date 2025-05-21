@@ -10,9 +10,35 @@ import inspect
 import importlib
 import hashlib
 import logging
-from typing import Dict, Any, Optional, Tuple, List, Set
+import ast
+import re
+from typing import Dict, Any, Optional, Tuple, List, Set, Union
 
 logger = logging.getLogger(__name__)
+
+class SecurityViolation:
+    """Security violation information."""
+    
+    def __init__(self, violation_type: str, description: str, severity: str = "medium"):
+        """
+        Initialize security violation.
+        
+        Args:
+            violation_type: Type of violation
+            description: Description of the violation
+            severity: Severity level (low, medium, high, critical)
+        """
+        self.violation_type = violation_type
+        self.description = description
+        self.severity = severity
+    
+    def to_dict(self) -> Dict[str, str]:
+        """Convert to dictionary."""
+        return {
+            "violation_type": self.violation_type,
+            "description": self.description,
+            "severity": self.severity
+        }
 
 class PluginSecurityManager:
     """
@@ -36,11 +62,33 @@ class PluginSecurityManager:
             "multiprocessing", "ctypes", "importlib"
         ])
         
+        # Dangerous function patterns
+        self.dangerous_functions = [
+            r"eval\s*\(",
+            r"exec\s*\(",
+            r"__import__\s*\(",
+            r"globals\(\)",
+            r"locals\(\)",
+            r"getattr\s*\(.+?,\s*['\"]__",
+            r"setattr\s*\(.+?,\s*['\"]__"
+        ]
+        
         # Plugin file hashes
         self.file_hashes: Dict[str, str] = {}
         
         # Security enabled flag
         self.security_enabled = True
+        
+        # Permission system
+        self.plugin_permissions: Dict[str, Set[str]] = {}
+        self.available_permissions = {
+            "file_read": "Read files",
+            "file_write": "Write files",
+            "network": "Access network",
+            "process": "Create processes",
+            "system": "Access system information",
+            "database": "Access database"
+        }
     
     def calculate_file_hash(self, file_path: str) -> Optional[str]:
         """
@@ -174,6 +222,78 @@ class PluginSecurityManager:
         
         return True, ""
     
+    def check_code_security(self, source_code: str) -> Tuple[bool, List[SecurityViolation]]:
+        """
+        Check source code for security issues.
+        
+        Args:
+            source_code: Source code to check
+            
+        Returns:
+            Tuple of (is_secure, violations)
+        """
+        if not self.security_enabled:
+            return True, []
+        
+        violations = []
+        
+        try:
+            # Parse the source code
+            tree = ast.parse(source_code)
+            
+            # Check for dangerous imports
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for name in node.names:
+                        module_name = name.name.split('.')[0]
+                        if module_name in self.restricted_modules:
+                            violations.append(SecurityViolation(
+                                "restricted_import",
+                                f"Importing restricted module: {module_name}",
+                                "high"
+                            ))
+                
+                elif isinstance(node, ast.ImportFrom):
+                    module_name = node.module.split('.')[0] if node.module else ""
+                    if module_name in self.restricted_modules:
+                        violations.append(SecurityViolation(
+                            "restricted_import",
+                            f"Importing from restricted module: {module_name}",
+                            "high"
+                        ))
+                
+                # Check for dangerous function calls
+                elif isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Name):
+                        func_name = node.func.id
+                        if func_name in ["eval", "exec", "__import__"]:
+                            violations.append(SecurityViolation(
+                                "dangerous_function",
+                                f"Using dangerous function: {func_name}",
+                                "critical"
+                            ))
+            
+            # Check for dangerous patterns using regex
+            for pattern in self.dangerous_functions:
+                matches = re.findall(pattern, source_code)
+                if matches:
+                    violations.append(SecurityViolation(
+                        "dangerous_pattern",
+                        f"Dangerous code pattern detected: {pattern}",
+                        "high"
+                    ))
+            
+            return len(violations) == 0, violations
+        
+        except Exception as e:
+            logger.warning(f"Error checking code security: {e}")
+            violations.append(SecurityViolation(
+                "security_check_error",
+                f"Error checking code security: {str(e)}",
+                "medium"
+            ))
+            return False, violations
+    
     def set_security_enabled(self, enabled: bool) -> None:
         """
         Enable or disable security checks.
@@ -223,7 +343,63 @@ class PluginSecurityManager:
             Set of restricted module names
         """
         return self.restricted_modules.copy()
+    
+    def set_plugin_permissions(self, plugin_name: str, permissions: Set[str]) -> None:
+        """
+        Set permissions for a plugin.
+        
+        Args:
+            plugin_name: Name of the plugin
+            permissions: Set of permission names
+        """
+        # Validate permissions
+        invalid_permissions = permissions - set(self.available_permissions.keys())
+        if invalid_permissions:
+            logger.warning(f"Invalid permissions for plugin {plugin_name}: {invalid_permissions}")
+            permissions = permissions - invalid_permissions
+        
+        self.plugin_permissions[plugin_name] = permissions
+        logger.info(f"Set permissions for plugin {plugin_name}: {permissions}")
+    
+    def check_permission(self, plugin_name: str, permission: str) -> bool:
+        """
+        Check if a plugin has a specific permission.
+        
+        Args:
+            plugin_name: Name of the plugin
+            permission: Permission to check
+            
+        Returns:
+            True if the plugin has the permission, False otherwise
+        """
+        if not self.security_enabled:
+            return True
+        
+        if plugin_name not in self.plugin_permissions:
+            return False
+        
+        return permission in self.plugin_permissions[plugin_name]
+    
+    def get_plugin_permissions(self, plugin_name: str) -> Set[str]:
+        """
+        Get permissions for a plugin.
+        
+        Args:
+            plugin_name: Name of the plugin
+            
+        Returns:
+            Set of permission names
+        """
+        return self.plugin_permissions.get(plugin_name, set())
+    
+    def get_available_permissions(self) -> Dict[str, str]:
+        """
+        Get available permissions.
+        
+        Returns:
+            Dictionary mapping permission names to descriptions
+        """
+        return self.available_permissions.copy()
 
 # Global security manager instance
 security_manager = PluginSecurityManager()
-
