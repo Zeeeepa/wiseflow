@@ -1,501 +1,248 @@
 # WiseFlow Configuration Guide
 
-This guide provides detailed information on how to configure WiseFlow for your specific needs.
+This document provides a comprehensive guide to configuring the WiseFlow application.
 
-## Table of Contents
+## Configuration Overview
 
-- [Configuration Methods](#configuration-methods)
-- [Environment Variables](#environment-variables)
-- [Configuration File](#configuration-file)
-- [Configuration Categories](#configuration-categories)
-  - [LLM Configuration](#llm-configuration)
-  - [System Configuration](#system-configuration)
-  - [API Configuration](#api-configuration)
-  - [Database Configuration](#database-configuration)
-  - [Crawler Configuration](#crawler-configuration)
-  - [Task Configuration](#task-configuration)
-  - [Feature Flags](#feature-flags)
-- [Advanced Configuration](#advanced-configuration)
-  - [Logging Configuration](#logging-configuration)
-  - [Security Configuration](#security-configuration)
-  - [Performance Tuning](#performance-tuning)
-- [Configuration Examples](#configuration-examples)
+WiseFlow uses a flexible configuration system that supports:
 
-## Configuration Methods
+- Loading from environment variables
+- Loading from a JSON configuration file
+- Validation of configuration values
+- Encryption of sensitive values
+- Default values for missing settings
+- Derived values based on other settings
 
-WiseFlow can be configured using environment variables or a configuration file. The configuration system is managed by the `Config` class in `core/config.py`.
+## Configuration Sources
 
-### Environment Variables
+Configuration values are loaded from the following sources, in order of precedence:
 
-Environment variables are the simplest way to configure WiseFlow. You can set environment variables in your shell or in a `.env` file in the project directory.
+1. Environment variables
+2. JSON configuration file (if provided)
+3. Default values
 
-Example `.env` file:
+## Setting Up Configuration
 
+### Using Environment Variables
+
+The simplest way to configure WiseFlow is by setting environment variables. You can do this by:
+
+1. Creating a `.env` file in the project root directory
+2. Setting environment variables in your shell
+3. Setting environment variables in your deployment environment
+
+A template `.env.example` file is provided in the project root directory. Copy this file to `.env` and modify as needed:
+
+```bash
+cp .env.example .env
 ```
-LLM_API_KEY=your-api-key
-PRIMARY_MODEL=gpt-4
-MAX_CONCURRENT_TASKS=4
-ENABLE_MULTIMODAL=true
+
+### Using a JSON Configuration File
+
+You can also provide a JSON configuration file when initializing the application:
+
+```python
+from core.config import Config
+
+config = Config(config_file="path/to/config.json")
 ```
 
-### Configuration File
-
-WiseFlow can also be configured using a JSON configuration file. The configuration file is a JSON file with the same structure as the environment variables.
-
-Example `config.json` file:
+The JSON file should contain key-value pairs corresponding to configuration settings:
 
 ```json
 {
+  "PROJECT_DIR": "custom_work_dir",
+  "VERBOSE": true,
   "LLM_API_KEY": "your-api-key",
-  "PRIMARY_MODEL": "gpt-4",
-  "MAX_CONCURRENT_TASKS": 4,
-  "ENABLE_MULTIMODAL": true
+  "PRIMARY_MODEL": "gpt-4o"
 }
 ```
 
-To use a configuration file, set the `CONFIG_FILE` environment variable to the path of the configuration file:
+## Required Configuration
+
+The following configuration values are required for WiseFlow to function properly:
+
+- `PRIMARY_MODEL`: The primary LLM model to use
+- `PB_API_AUTH`: Authentication for PocketBase
+
+## Sensitive Values
+
+Sensitive values (like API keys) are encrypted in memory. By default, a new encryption key is generated on each startup, which means encrypted values cannot be decrypted after restart.
+
+To persist encrypted values across restarts, set the `WISEFLOW_ENCRYPTION_KEY` environment variable to a valid Fernet key:
 
 ```bash
-export CONFIG_FILE=/path/to/config.json
+# Generate a key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Set the key in your .env file
+WISEFLOW_ENCRYPTION_KEY="your-generated-key"
 ```
-
-## Environment Variables
-
-The following environment variables can be used to configure WiseFlow:
-
-### LLM Configuration
-
-- `LLM_API_KEY`: API key for the LLM provider
-- `LLM_API_BASE`: Base URL for the LLM API (default: "")
-- `PRIMARY_MODEL`: Primary LLM model to use
-- `SECONDARY_MODEL`: Secondary LLM model for specific tasks (default: same as PRIMARY_MODEL)
-- `VL_MODEL`: Vision-language model for multimodal analysis (default: same as PRIMARY_MODEL)
-- `LLM_CONCURRENT_NUMBER`: Maximum number of concurrent LLM requests (default: 1)
-
-### System Configuration
-
-- `PROJECT_DIR`: Directory for storing project files (default: "work_dir")
-- `VERBOSE`: Enable verbose logging (default: false)
-
-### API Configuration
-
-- `API_HOST`: Host for the API server (default: "0.0.0.0")
-- `API_PORT`: Port for the API server (default: 8000)
-- `API_RELOAD`: Enable auto-reload for the API server (default: false)
-- `WISEFLOW_API_KEY`: API key for the WiseFlow API (default: "dev-api-key")
-
-### Database Configuration
-
-- `PB_API_BASE`: PocketBase API base URL (default: "http://127.0.0.1:8090")
-- `PB_API_AUTH`: PocketBase authentication token
-
-### Crawler Configuration
-
-- `CRAWLER_TIMEOUT`: Timeout for crawler requests in seconds (default: 60)
-- `CRAWLER_MAX_DEPTH`: Maximum depth for crawler to follow links (default: 3)
-- `CRAWLER_MAX_PAGES`: Maximum number of pages for crawler to visit (default: 100)
-- `MAX_CONCURRENT_REQUESTS`: Maximum number of concurrent crawler requests (default: 5)
-
-### Task Configuration
-
-- `MAX_CONCURRENT_TASKS`: Maximum number of concurrent tasks (default: 4)
-- `AUTO_SHUTDOWN_ENABLED`: Enable automatic shutdown when idle (default: false)
-- `AUTO_SHUTDOWN_IDLE_TIME`: Idle time before automatic shutdown in seconds (default: 3600)
-- `AUTO_SHUTDOWN_CHECK_INTERVAL`: Interval for checking idle time in seconds (default: 300)
-
-### Feature Flags
-
-- `ENABLE_MULTIMODAL`: Enable multimodal analysis (default: false)
-- `ENABLE_KNOWLEDGE_GRAPH`: Enable knowledge graph construction (default: false)
-- `ENABLE_INSIGHTS`: Enable insight generation (default: true)
-- `ENABLE_REFERENCES`: Enable reference support (default: true)
-- `ENABLE_EVENT_SYSTEM`: Enable event system (default: true)
-
-### Search Configuration
-
-- `ZHIPU_API_KEY`: API key for Zhipu search
-- `EXA_API_KEY`: API key for Exa search
 
 ## Configuration Categories
 
-### LLM Configuration
-
-The LLM configuration controls the integration with Large Language Models (LLMs) such as OpenAI's GPT models.
-
-#### LLM_API_KEY
-
-The API key for the LLM provider. This is required for WiseFlow to function.
-
-```
-LLM_API_KEY=your-api-key
-```
-
-#### LLM_API_BASE
-
-The base URL for the LLM API. This is only required if you're using a custom LLM API endpoint.
-
-```
-LLM_API_BASE=https://api.openai.com/v1
-```
-
-#### PRIMARY_MODEL
-
-The primary LLM model to use for most tasks. This should be a model that is capable of handling complex reasoning tasks.
-
-```
-PRIMARY_MODEL=gpt-4
-```
-
-#### SECONDARY_MODEL
-
-The secondary LLM model to use for specific tasks. This is typically a faster or cheaper model used for simpler tasks.
-
-```
-SECONDARY_MODEL=gpt-3.5-turbo
-```
-
-#### VL_MODEL
-
-The vision-language model to use for multimodal analysis. This should be a model that is capable of processing both text and images.
-
-```
-VL_MODEL=gpt-4-vision-preview
-```
-
-#### LLM_CONCURRENT_NUMBER
-
-The maximum number of concurrent LLM requests. This controls the rate at which WiseFlow makes requests to the LLM API.
-
-```
-LLM_CONCURRENT_NUMBER=1
-```
-
-### System Configuration
-
-The system configuration controls general system settings.
-
-#### PROJECT_DIR
-
-The directory for storing project files. This is where WiseFlow will store data files, logs, and other artifacts.
-
-```
-PROJECT_DIR=work_dir
-```
-
-#### VERBOSE
-
-Enable verbose logging. This will increase the amount of information logged by WiseFlow.
-
-```
-VERBOSE=true
-```
-
-### API Configuration
-
-The API configuration controls the WiseFlow API server.
-
-#### API_HOST
-
-The host for the API server. Use "0.0.0.0" to listen on all interfaces.
-
-```
-API_HOST=0.0.0.0
-```
-
-#### API_PORT
-
-The port for the API server.
-
-```
-API_PORT=8000
-```
-
-#### API_RELOAD
-
-Enable auto-reload for the API server. This is useful during development.
-
-```
-API_RELOAD=true
-```
-
-#### WISEFLOW_API_KEY
-
-The API key for the WiseFlow API. This is used to authenticate API requests.
-
-```
-WISEFLOW_API_KEY=your-api-key
-```
-
-### Database Configuration
-
-The database configuration controls the connection to the PocketBase database.
-
-#### PB_API_BASE
-
-The base URL for the PocketBase API.
-
-```
-PB_API_BASE=http://127.0.0.1:8090
-```
-
-#### PB_API_AUTH
-
-The authentication token for the PocketBase API.
-
-```
-PB_API_AUTH=your-pb-auth-token
-```
-
-### Crawler Configuration
-
-The crawler configuration controls the behavior of the web crawler.
-
-#### CRAWLER_TIMEOUT
-
-The timeout for crawler requests in seconds.
-
-```
-CRAWLER_TIMEOUT=60
-```
-
-#### CRAWLER_MAX_DEPTH
-
-The maximum depth for the crawler to follow links.
-
-```
-CRAWLER_MAX_DEPTH=3
-```
-
-#### CRAWLER_MAX_PAGES
-
-The maximum number of pages for the crawler to visit.
-
-```
-CRAWLER_MAX_PAGES=100
-```
-
-#### MAX_CONCURRENT_REQUESTS
-
-The maximum number of concurrent crawler requests.
-
-```
-MAX_CONCURRENT_REQUESTS=5
-```
-
-### Task Configuration
-
-The task configuration controls the execution of tasks.
-
-#### MAX_CONCURRENT_TASKS
-
-The maximum number of concurrent tasks.
-
-```
-MAX_CONCURRENT_TASKS=4
-```
-
-#### AUTO_SHUTDOWN_ENABLED
-
-Enable automatic shutdown when idle.
-
-```
-AUTO_SHUTDOWN_ENABLED=true
-```
-
-#### AUTO_SHUTDOWN_IDLE_TIME
-
-The idle time before automatic shutdown in seconds.
-
-```
-AUTO_SHUTDOWN_IDLE_TIME=3600
-```
-
-#### AUTO_SHUTDOWN_CHECK_INTERVAL
-
-The interval for checking idle time in seconds.
-
-```
-AUTO_SHUTDOWN_CHECK_INTERVAL=300
-```
+### System Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `PROJECT_DIR` | string | `"work_dir"` | Directory for storing data, logs, etc. |
+| `VERBOSE` | boolean | `false` | Enable verbose logging |
+| `WISEFLOW_ENCRYPTION_KEY` | string | - | Encryption key for sensitive values |
+
+### LLM Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `LLM_API_BASE` | string | `"https://api.openai.com/v1"` | Base URL for LLM API |
+| `LLM_API_KEY` | string | `""` | API key for LLM service |
+| `PRIMARY_MODEL` | string | `""` | Primary model for most operations |
+| `SECONDARY_MODEL` | string | Same as `PRIMARY_MODEL` | Fallback model for less intensive operations |
+| `VL_MODEL` | string | Same as `PRIMARY_MODEL` | Vision-language model for multimodal tasks |
+| `LLM_CONCURRENT_NUMBER` | integer | `1` | Maximum number of concurrent LLM requests |
+
+### Database Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `PB_API_BASE` | string | `"http://127.0.0.1:8090"` | PocketBase API base URL |
+| `PB_API_AUTH` | string | `""` | PocketBase authentication (format: email\|password) |
+
+### Search Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `ZHIPU_API_KEY` | string | `""` | API key for Zhipu search provider |
+| `EXA_API_KEY` | string | `""` | API key for Exa search provider |
+
+### API Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `API_HOST` | string | `"0.0.0.0"` | API host |
+| `API_PORT` | integer | `8000` | API port |
+| `API_RELOAD` | boolean | `false` | Enable API auto-reload for development |
+| `WISEFLOW_API_KEY` | string | `"dev-api-key"` | API key for WiseFlow API authentication |
+
+### Crawler Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `CRAWLER_TIMEOUT` | integer | `60` | Crawler timeout in seconds |
+| `CRAWLER_MAX_DEPTH` | integer | `3` | Maximum depth for crawler to follow links |
+| `CRAWLER_MAX_PAGES` | integer | `100` | Maximum number of pages to crawl |
+| `MAX_CONCURRENT_REQUESTS` | integer | `5` | Maximum number of concurrent crawler requests |
+
+### Task Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `MAX_CONCURRENT_TASKS` | integer | `4` | Maximum number of concurrent tasks |
+| `AUTO_SHUTDOWN_ENABLED` | boolean | `false` | Enable auto-shutdown when idle |
+| `AUTO_SHUTDOWN_IDLE_TIME` | integer | `3600` | Idle time in seconds before shutdown |
+| `AUTO_SHUTDOWN_CHECK_INTERVAL` | integer | `300` | Check interval in seconds |
 
 ### Feature Flags
 
-The feature flags control which features are enabled in WiseFlow.
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `ENABLE_MULTIMODAL` | boolean | `false` | Enable multimodal (vision) capabilities |
+| `ENABLE_KNOWLEDGE_GRAPH` | boolean | `false` | Enable knowledge graph generation |
+| `ENABLE_INSIGHTS` | boolean | `true` | Enable insights generation |
+| `ENABLE_REFERENCES` | boolean | `true` | Enable reference tracking |
+| `ENABLE_EVENT_SYSTEM` | boolean | `true` | Enable event system |
 
-#### ENABLE_MULTIMODAL
+### Logging Settings
 
-Enable multimodal analysis. This allows WiseFlow to process images in addition to text.
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `LOG_LEVEL` | string | `"INFO"` | Log level (TRACE, DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL) |
+| `LOG_TO_FILE` | boolean | `true` | Write logs to file |
+| `LOG_TO_CONSOLE` | boolean | `true` | Write logs to console |
+| `LOG_DIR` | string | `PROJECT_DIR/logs` | Log directory |
+| `STRUCTURED_LOGGING` | boolean | `false` | Use structured (JSON) logging |
+| `LOG_ROTATION` | string | `"50 MB"` | Rotate logs when they reach this size |
+| `LOG_RETENTION` | string | `"10 days"` | Keep logs for this duration |
 
-```
-ENABLE_MULTIMODAL=true
-```
+### Memory Management
 
-#### ENABLE_KNOWLEDGE_GRAPH
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `MEMORY_THRESHOLD_PERCENT` | float | `80.0` | Critical memory threshold percentage |
+| `MEMORY_WARNING_PERCENT` | float | `70.0` | Warning memory threshold percentage |
 
-Enable knowledge graph construction. This allows WiseFlow to build and maintain a knowledge graph of entities and relationships.
+## Using Configuration in Code
 
-```
-ENABLE_KNOWLEDGE_GRAPH=true
-```
-
-#### ENABLE_INSIGHTS
-
-Enable insight generation. This allows WiseFlow to generate insights from extracted information.
-
-```
-ENABLE_INSIGHTS=true
-```
-
-#### ENABLE_REFERENCES
-
-Enable reference support. This allows WiseFlow to use reference materials for contextual understanding.
-
-```
-ENABLE_REFERENCES=true
-```
-
-#### ENABLE_EVENT_SYSTEM
-
-Enable the event system. This allows WiseFlow to publish and subscribe to events.
-
-```
-ENABLE_EVENT_SYSTEM=true
-```
-
-## Advanced Configuration
-
-### Logging Configuration
-
-WiseFlow uses the Python logging module for logging. You can configure logging using the standard Python logging configuration.
-
-Example logging configuration:
+### Basic Usage
 
 ```python
-import logging
+from core.config import config
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('wiseflow.log'),
-        logging.StreamHandler()
-    ]
-)
+# Get a configuration value
+api_key = config.get("LLM_API_KEY")
+
+# Get a configuration value with a default
+verbose = config.get("VERBOSE", False)
+
+# Set a configuration value
+config.set("MAX_CONCURRENT_TASKS", 4)
 ```
 
-### Security Configuration
+### Type-Safe Access
 
-WiseFlow includes several security features to protect sensitive data and prevent unauthorized access.
+```python
+from core.config import get_int_config, get_bool_config, get_str_config, get_float_config
 
-#### API Key Authentication
-
-All API requests require an API key for authentication. The API key is specified in the `WISEFLOW_API_KEY` environment variable or configuration file.
-
-#### Sensitive Data Encryption
-
-Sensitive configuration values, such as API keys, are encrypted in memory to prevent exposure in logs or error messages.
-
-#### Webhook Signatures
-
-Webhooks can be secured using a secret key. When a secret is provided, WiseFlow signs the webhook payload using HMAC-SHA256 and includes the signature in the `X-Webhook-Signature` header.
-
-### Performance Tuning
-
-WiseFlow can be tuned for performance by adjusting the concurrency settings.
-
-#### LLM Concurrency
-
-The `LLM_CONCURRENT_NUMBER` setting controls the maximum number of concurrent LLM requests. Increasing this value can improve throughput, but may also increase the risk of rate limiting by the LLM provider.
-
-#### Crawler Concurrency
-
-The `MAX_CONCURRENT_REQUESTS` setting controls the maximum number of concurrent crawler requests. Increasing this value can improve crawling speed, but may also increase the load on the target websites.
-
-#### Task Concurrency
-
-The `MAX_CONCURRENT_TASKS` setting controls the maximum number of concurrent tasks. Increasing this value can improve throughput, but may also increase resource usage.
-
-## Configuration Examples
-
-### Minimal Configuration
-
-This is a minimal configuration that includes only the required settings:
-
-```
-LLM_API_KEY=your-api-key
-PRIMARY_MODEL=gpt-4
-PB_API_AUTH=your-pb-auth-token
+# Get typed configuration values
+port = get_int_config("API_PORT", 8000)
+verbose = get_bool_config("VERBOSE", False)
+api_key = get_str_config("LLM_API_KEY", "")
+threshold = get_float_config("MEMORY_THRESHOLD_PERCENT", 80.0)
 ```
 
-### Development Configuration
+### Validation
 
-This configuration is suitable for development:
+```python
+from core.config import validate_config, ConfigValidationError
 
-```
-LLM_API_KEY=your-api-key
-PRIMARY_MODEL=gpt-4
-PB_API_AUTH=your-pb-auth-token
-VERBOSE=true
-API_RELOAD=true
-MAX_CONCURRENT_TASKS=2
-```
-
-### Production Configuration
-
-This configuration is suitable for production:
-
-```
-LLM_API_KEY=your-api-key
-PRIMARY_MODEL=gpt-4
-SECONDARY_MODEL=gpt-3.5-turbo
-VL_MODEL=gpt-4-vision-preview
-PB_API_AUTH=your-pb-auth-token
-API_HOST=0.0.0.0
-API_PORT=8000
-WISEFLOW_API_KEY=your-api-key
-MAX_CONCURRENT_TASKS=8
-MAX_CONCURRENT_REQUESTS=10
-LLM_CONCURRENT_NUMBER=3
-ENABLE_MULTIMODAL=true
-ENABLE_KNOWLEDGE_GRAPH=true
-ENABLE_INSIGHTS=true
-ENABLE_REFERENCES=true
-ENABLE_EVENT_SYSTEM=true
+try:
+    # Validate all configuration values
+    errors = validate_config(raise_on_error=True)
+except ConfigValidationError as e:
+    print(f"Configuration validation failed: {e}")
 ```
 
-### Configuration with All Features
+### Saving Configuration
 
-This configuration enables all features:
+```python
+from core.config import config
 
+# Save configuration to a file
+config.save_to_file("config.json")
 ```
-LLM_API_KEY=your-api-key
-LLM_API_BASE=https://api.openai.com/v1
-PRIMARY_MODEL=gpt-4
-SECONDARY_MODEL=gpt-3.5-turbo
-VL_MODEL=gpt-4-vision-preview
-LLM_CONCURRENT_NUMBER=3
-PROJECT_DIR=work_dir
-VERBOSE=true
-API_HOST=0.0.0.0
-API_PORT=8000
-API_RELOAD=false
-WISEFLOW_API_KEY=your-api-key
-PB_API_BASE=http://127.0.0.1:8090
-PB_API_AUTH=your-pb-auth-token
-ZHIPU_API_KEY=your-zhipu-api-key
-EXA_API_KEY=your-exa-api-key
-CRAWLER_TIMEOUT=60
-CRAWLER_MAX_DEPTH=5
-CRAWLER_MAX_PAGES=200
-MAX_CONCURRENT_REQUESTS=10
-MAX_CONCURRENT_TASKS=8
-AUTO_SHUTDOWN_ENABLED=true
-AUTO_SHUTDOWN_IDLE_TIME=3600
-AUTO_SHUTDOWN_CHECK_INTERVAL=300
-ENABLE_MULTIMODAL=true
-ENABLE_KNOWLEDGE_GRAPH=true
-ENABLE_INSIGHTS=true
-ENABLE_REFERENCES=true
-ENABLE_EVENT_SYSTEM=true
-```
+
+## Best Practices
+
+1. **Use Environment Variables for Deployment-Specific Settings**:
+   - API keys, hostnames, ports, etc.
+   - Create a `.env` file for local development
+
+2. **Use Default Values for Optional Settings**:
+   - Always provide a default value when getting a configuration value
+   - Use the type-safe access functions for better type checking
+
+3. **Validate Configuration Early**:
+   - Call `validate_config()` during application startup
+   - Fail fast if required configuration is missing
+
+4. **Document Configuration Changes**:
+   - Update the `.env.example` file when adding new configuration options
+   - Add comments explaining the purpose of each configuration option
+
+5. **Secure Sensitive Values**:
+   - Use the `WISEFLOW_ENCRYPTION_KEY` environment variable to persist encrypted values
+   - Never log sensitive values (they are automatically masked in logs)
+
+6. **Use Feature Flags for Experimental Features**:
+   - Add a feature flag for new features
+   - This allows for easy enabling/disabling of features in different environments
 
