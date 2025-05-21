@@ -124,7 +124,9 @@ class ConnectionPool:
             self.session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,
-                headers={"User-Agent": f"WiseFlow/{config.get('VERSION', '1.0.0')}"}
+                headers={
+                    "User-Agent": f"WiseFlow/{config.get('VERSION', '1.0.0')} ({platform.system()} {platform.release()})"
+                }
             )
         return self.session
     
