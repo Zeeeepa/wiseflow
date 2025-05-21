@@ -15,6 +15,7 @@ from datetime import datetime
 import hmac
 import hashlib
 import base64
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class WebhookManager:
         self.config_path = config_path
         self.webhooks = {}
         self.secret_key = os.environ.get("WEBHOOK_SECRET_KEY", "wiseflow-webhook-secret")
+        self._lock = threading.RLock()  # Add a lock for thread safety
         
         # Load webhooks if config file exists
         self._load_webhooks()
@@ -75,24 +77,25 @@ class WebhookManager:
         Returns:
             Webhook ID
         """
-        webhook_id = f"webhook_{len(self.webhooks) + 1}"
-        
-        self.webhooks[webhook_id] = {
-            "endpoint": endpoint,
-            "events": events,
-            "headers": headers or {},
-            "secret": secret,
-            "description": description or f"Webhook for {', '.join(events)}",
-            "created_at": datetime.now().isoformat(),
-            "last_triggered": None,
-            "success_count": 0,
-            "failure_count": 0
-        }
-        
-        self._save_webhooks()
-        
-        logger.info(f"Registered webhook {webhook_id} for events: {', '.join(events)}")
-        return webhook_id
+        with self._lock:
+            webhook_id = f"webhook_{len(self.webhooks) + 1}"
+            
+            self.webhooks[webhook_id] = {
+                "endpoint": endpoint,
+                "events": events,
+                "headers": headers or {},
+                "secret": secret,
+                "description": description or f"Webhook for {', '.join(events)}",
+                "created_at": datetime.now().isoformat(),
+                "last_triggered": None,
+                "success_count": 0,
+                "failure_count": 0
+            }
+            
+            self._save_webhooks()
+            
+            logger.info(f"Registered webhook {webhook_id} for events: {', '.join(events)}")
+            return webhook_id
     
     def update_webhook(self, 
                       webhook_id: str, 
@@ -115,33 +118,34 @@ class WebhookManager:
         Returns:
             True if updated, False otherwise
         """
-        if webhook_id not in self.webhooks:
-            logger.error(f"Webhook not found: {webhook_id}")
-            return False
-        
-        webhook = self.webhooks[webhook_id]
-        
-        if endpoint:
-            webhook["endpoint"] = endpoint
-        
-        if events:
-            webhook["events"] = events
-        
-        if headers:
-            webhook["headers"] = headers
-        
-        if secret is not None:  # Allow setting to empty string to remove secret
-            webhook["secret"] = secret
-        
-        if description:
-            webhook["description"] = description
-        
-        webhook["updated_at"] = datetime.now().isoformat()
-        
-        self._save_webhooks()
-        
-        logger.info(f"Updated webhook {webhook_id}")
-        return True
+        with self._lock:
+            if webhook_id not in self.webhooks:
+                logger.error(f"Webhook not found: {webhook_id}")
+                return False
+            
+            webhook = self.webhooks[webhook_id]
+            
+            if endpoint:
+                webhook["endpoint"] = endpoint
+            
+            if events:
+                webhook["events"] = events
+            
+            if headers:
+                webhook["headers"] = headers
+            
+            if secret is not None:  # Allow setting to empty string to remove secret
+                webhook["secret"] = secret
+            
+            if description:
+                webhook["description"] = description
+            
+            webhook["updated_at"] = datetime.now().isoformat()
+            
+            self._save_webhooks()
+            
+            logger.info(f"Updated webhook {webhook_id}")
+            return True
     
     def delete_webhook(self, webhook_id: str) -> bool:
         """
@@ -153,15 +157,16 @@ class WebhookManager:
         Returns:
             True if deleted, False otherwise
         """
-        if webhook_id not in self.webhooks:
-            logger.error(f"Webhook not found: {webhook_id}")
-            return False
-        
-        del self.webhooks[webhook_id]
-        self._save_webhooks()
-        
-        logger.info(f"Deleted webhook {webhook_id}")
-        return True
+        with self._lock:
+            if webhook_id not in self.webhooks:
+                logger.error(f"Webhook not found: {webhook_id}")
+                return False
+            
+            del self.webhooks[webhook_id]
+            self._save_webhooks()
+            
+            logger.info(f"Deleted webhook {webhook_id}")
+            return True
     
     def get_webhook(self, webhook_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -289,40 +294,50 @@ class WebhookManager:
         }
         
         try:
-            response = requests.post(
-                endpoint,
-                json=payload,
-                headers=headers,
-                timeout=10
-            )
-            
-            # Update webhook stats
-            self.webhooks[webhook_id]["last_triggered"] = datetime.now().isoformat()
-            
-            if response.status_code >= 200 and response.status_code < 300:
-                self.webhooks[webhook_id]["success_count"] = self.webhooks[webhook_id].get("success_count", 0) + 1
-                logger.info(f"Webhook {webhook_id} triggered successfully: {response.status_code}")
-            else:
-                self.webhooks[webhook_id]["failure_count"] = self.webhooks[webhook_id].get("failure_count", 0) + 1
-                logger.warning(f"Webhook {webhook_id} failed with status code: {response.status_code}")
-            
-            response_info.update({
-                "status_code": response.status_code,
-                "response": response.text[:1000],  # Limit response text
-                "success": response.status_code >= 200 and response.status_code < 300
-            })
-            
+            # Use a context manager to handle request exceptions
+            with contextlib.suppress(requests.exceptions.RequestException):
+                response = requests.post(
+                    endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=10
+                )
+                
+                # Update webhook stats with thread safety
+                with self._lock:
+                    self.webhooks[webhook_id]["last_triggered"] = datetime.now().isoformat()
+                    
+                    if response.status_code >= 200 and response.status_code < 300:
+                        self.webhooks[webhook_id]["success_count"] = self.webhooks[webhook_id].get("success_count", 0) + 1
+                        logger.info(f"Webhook {webhook_id} triggered successfully: {response.status_code}")
+                    else:
+                        self.webhooks[webhook_id]["failure_count"] = self.webhooks[webhook_id].get("failure_count", 0) + 1
+                        logger.warning(f"Webhook {webhook_id} failed with status code: {response.status_code}")
+                    
+                    # Save the updated webhook stats
+                    self._save_webhooks()
+                
+                response_info.update({
+                    "status_code": response.status_code,
+                    "response": response.text[:1000],  # Limit response text
+                    "success": response.status_code >= 200 and response.status_code < 300
+                })
+                
         except Exception as e:
-            self.webhooks[webhook_id]["failure_count"] = self.webhooks[webhook_id].get("failure_count", 0) + 1
+            # Update webhook stats with thread safety
+            with self._lock:
+                self.webhooks[webhook_id]["failure_count"] = self.webhooks[webhook_id].get("failure_count", 0) + 1
+                self.webhooks[webhook_id]["last_triggered"] = datetime.now().isoformat()
+                
+                # Save the updated webhook stats
+                self._save_webhooks()
+            
             logger.error(f"Failed to trigger webhook {webhook_id}: {str(e)}")
             
             response_info.update({
                 "error": str(e),
                 "success": False
             })
-        
-        # Save updated webhook stats
-        self._save_webhooks()
         
         return response_info
     
@@ -337,13 +352,17 @@ class WebhookManager:
         Returns:
             Signature string
         """
-        payload_str = json.dumps(payload, sort_keys=True)
-        hmac_obj = hmac.new(
-            secret.encode('utf-8'),
-            payload_str.encode('utf-8'),
-            hashlib.sha256
-        )
-        return base64.b64encode(hmac_obj.digest()).decode('utf-8')
+        try:
+            payload_str = json.dumps(payload, sort_keys=True)
+            hmac_obj = hmac.new(
+                secret.encode('utf-8'),
+                payload_str.encode('utf-8'),
+                hashlib.sha256
+            )
+            return base64.b64encode(hmac_obj.digest()).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Error generating signature: {str(e)}")
+            return ""
     
     def verify_signature(self, 
                         payload: Dict[str, Any], 
@@ -360,8 +379,12 @@ class WebhookManager:
         Returns:
             True if signature is valid, False otherwise
         """
-        expected_signature = self._generate_signature(payload, secret)
-        return hmac.compare_digest(signature, expected_signature)
+        try:
+            expected_signature = self._generate_signature(payload, secret)
+            return hmac.compare_digest(signature, expected_signature)
+        except Exception as e:
+            logger.error(f"Error verifying signature: {str(e)}")
+            return False
 
 # Create a singleton instance
 webhook_manager = WebhookManager()
